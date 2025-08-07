@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Telegraph Downloader{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
+</head>
+<body>
+    <header>
+        <h1>Telegraph Downloader</h1>
+    </header>
+    <div class="container">
+        <nav>
+            <a href="{{ url_for('index') }}" hx-get="{{ url_for('index') }}" hx-target="#content" hx-push-url="true">Home</a>
+            <a href="{{ url_for('logs') }}" hx-get="{{ url_for('logs') }}" hx-target="#content" hx-push-url="true">Logs</a>
+            <a href="{{ url_for('settings') }}" hx-get="{{ url_for('settings') }}" hx-target="#content" hx-push-url="true">Settings</a>
+        </nav>
+        <main id="content">
+            <div class="card">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+</body>
+</html>

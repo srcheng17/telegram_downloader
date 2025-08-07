@@ -1,0 +1,17 @@
+# Python
+*.pyc
+__pycache__/
+.venv/
+env/
+
+# Downloads
+downloaded_images/
+temp_downloads/
+*.zip
+
+# macOS
+.DS_Store
+
+# IDE / Editor
+.idea/
+.vscode/

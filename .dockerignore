@@ -1,0 +1,16 @@
+# 忽略虚拟环境
+.venv/
+
+# 忽略下载的文件
+downloaded_images/
+temp_downloads/
+
+# 忽略 Python 缓存文件
+*.pyc
+__pycache__/
+
+# 忽略 macOS 特定文件
+.DS_Store
+
+# 忽略项目文档
+PROJECT_STRUCTURE.md

@@ -1,0 +1,24 @@
+{% extends "htmx_base.html" if request.headers.get('HX-Request') else "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+    <h2>Settings</h2>
+    <form action="/settings" method="post">
+        <div class="form-group">
+            <label for="concurrency">Concurrency (Number of parallel downloads)</label>
+            <input type="number" id="concurrency" name="concurrency" value="{{ settings.get('concurrency', 2) }}" min="1" max="10">
+        </div>
+        <div class="form-group">
+            <label for="timeout">Download Timeout (seconds)</label>
+            <input type="number" id="timeout" name="timeout" value="{{ settings.get('timeout', 10) }}" min="1">
+        </div>
+        <div class="form-group">
+            <label for="retries">Download Retries</label>
+            <input type="number" id="retries" name="retries" value="{{ settings.get('retries', 5) }}" min="0">
+        </div>
+        <div class="form-group">
+            <label for="log_retention_days">Log Retention (days)</label>
+            <input type="number" id="log_retention_days" name="log_retention_days" value="{{ settings.get('log_retention_days', 7) }}" min="1">
+        </div>
+        <button type="submit">Save Settings</button>
+    </form>
+{% endblock %}

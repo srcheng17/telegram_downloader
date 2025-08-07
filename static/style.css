@@ -1,0 +1,252 @@
+:root {
+    --primary-color: #007bff;
+    --secondary-color: #6c757d;
+    --success-color: #28a745;
+    --danger-color: #dc3545;
+    --warning-color: #ffc107;
+    --light-color: #f8f9fa;
+    --dark-color: #343a40;
+    --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+body {
+    font-family: var(--font-family);
+    margin: 0;
+    background-color: var(--light-color);
+    color: var(--dark-color);
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 960px;
+    margin: 1rem auto;
+    padding: 1rem;
+}
+
+header {
+    background: var(--dark-color);
+    color: white;
+    padding: 1rem 0;
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+header h1 {
+    margin: 0;
+}
+
+nav {
+    background-color: var(--primary-color);
+    padding: 0.5rem;
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    border-radius: 5px;
+}
+
+nav a {
+    color: white;
+    text-decoration: none;
+    padding: 0.5rem 1rem;
+    border-radius: 5px;
+    transition: background-color 0.3s;
+}
+
+nav a:hover {
+    background-color: #0056b3;
+}
+
+.card {
+    background: white;
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    margin-bottom: 2rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+input[type="text"],
+input[type="number"] {
+    width: 100%;
+    padding: 0.75rem;
+    box-sizing: border-box;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+button {
+    width: 100%;
+    padding: 0.75rem;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    font-weight: 600;
+    transition: background-color 0.3s;
+}
+
+button:hover {
+    background-color: #0056b3;
+}
+
+.logs-controls {
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.table-container {
+    overflow-x: auto;
+}
+
+th, td {
+    padding: 1rem;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+    word-wrap: break-word;
+    vertical-align: middle;
+}
+
+th {
+    background-color: #f9f9f9;
+    font-weight: 600;
+    color: #333;
+    text-transform: uppercase;
+    font-size: 0.85em;
+    letter-spacing: 0.05em;
+}
+
+.pagination {
+    margin-top: 1rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+}
+
+.pagination button {
+    width: auto;
+    padding: 0.5rem 1rem;
+}
+
+.pagination button:disabled {
+    background-color: var(--secondary-color);
+    cursor: not-allowed;
+}
+
+.log-entry {
+    border-left: 4px solid var(--secondary-color);
+    padding: 1rem;
+    margin-bottom: 1rem;
+    background-color: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.log-entry p {
+    margin: 0.5rem 0;
+    word-wrap: break-word; /* This is key for long URLs */
+    overflow-wrap: break-word;
+}
+
+.log-entry strong {
+    color: var(--dark-color);
+}
+
+.log-entry .status {
+    font-weight: bold;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    color: white;
+    display: inline-block;
+}
+
+.status-badge {
+    padding: 0.3em 0.6em;
+    border-radius: 1em;
+    font-size: 0.8em;
+    font-weight: 600;
+    color: white;
+    display: inline-block;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+}
+
+.status-pending { background-color: var(--warning-color); }
+.status-in_progress { background-color: var(--primary-color); }
+.status-success { background-color: var(--success-color); }
+.status-failed { background-color: var(--danger-color); }
+
+@media (max-width: 768px) {
+    .container {
+        padding: 0.5rem;
+    }
+    nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    table, thead, tbody, th, td, tr {
+        display: block;
+    }
+
+    thead tr {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+    }
+
+    tr {
+        border: 1px solid #ccc;
+        margin-bottom: 0.5rem;
+    }
+
+    td {
+        border: none;
+        border-bottom: 1px solid #eee;
+        position: relative;
+        padding-left: 50%;
+        white-space: normal;
+        text-align: left;
+    }
+
+    td:before {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        width: 45%;
+        padding-right: 10px;
+        white-space: nowrap;
+        text-align: left;
+        font-weight: bold;
+    }
+
+    td:nth-of-type(1):before { content: "Task ID"; }
+    td:nth-of-type(2):before { content: "URL"; }
+    td:nth-of-type(3):before { content: "Status"; }
+    td:nth-of-type(4):before { content: "Progress"; }
+    td:nth-of-type(5):before { content: "Start Time"; }
+    td:nth-of-type(6):before { content: "Error"; }
+}

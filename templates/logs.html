@@ -1,0 +1,106 @@
+{% extends "htmx_base.html" if request.headers.get('HX-Request') else "base.html" %}
+
+{% block title %}Download Logs{% endblock %}
+
+{% block content %}
+<h2>Download Logs</h2>
+<div class="table-container">
+    <table>
+        <thead>
+            <tr>
+                <th>Task ID</th>
+                <th>URL</th>
+                <th>Status</th>
+                <th>Progress</th>
+                <th>Start Time</th>
+                <th>Error</th>
+            </tr>
+        </thead>
+        <tbody id="log-body">
+            <!-- Log rows will be inserted here by JavaScript -->
+        </tbody>
+    </table>
+</div>
+<div class="pagination">
+    <button id="prev-page" disabled>Previous</button>
+    <span id="page-info">Page 1 of 1</span>
+    <button id="next-page" disabled>Next</button>
+</div>
+<script>
+    let currentPage = 1;
+    let totalPages = 1;
+    const perPage = 25;
+    let logInterval;
+
+    async function fetchLogs(page = 1) {
+        try {
+            const response = await fetch(`/api/logs?page=${page}&per_page=${perPage}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            
+            const logBody = document.getElementById('log-body');
+            if (!logBody) return; // Stop if element is not on the page
+            logBody.innerHTML = '';
+
+            data.logs.forEach(log => {
+                const row = document.createElement('tr');
+                
+                const progress = log.total_images > 0 ? `${log.progress} / ${log.total_images}` : 'N/A';
+
+                row.innerHTML = `
+                    <td>${log.id}</td>
+                    <td><a href="${log.url}" target="_blank">${log.url}</a></td>
+                    <td><span class="status-badge status-${log.status.toLowerCase()}">${log.status}</span></td>
+                    <td>${progress}</td>
+                    <td>${new Date(log.start_time * 1000).toLocaleString()}</td>
+                    <td>${log.error || ''}</td>
+                `;
+                logBody.appendChild(row);
+            });
+
+            currentPage = data.page;
+            totalPages = Math.ceil(data.total / data.per_page);
+
+            document.getElementById('page-info').textContent = `Page ${currentPage} of ${totalPages}`;
+            document.getElementById('prev-page').disabled = currentPage === 1;
+            document.getElementById('next-page').disabled = currentPage >= totalPages;
+        } catch (error) {
+            console.error('Error fetching logs:', error);
+            const logBody = document.getElementById('log-body');
+            if (logBody) {
+                logBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: red;">Error loading logs. Please check the console for details.</td></tr>';
+            }
+        }
+    }
+
+    function startLogFetching() {
+        if (document.getElementById('log-body')) {
+            fetchLogs();
+            logInterval = setInterval(() => fetchLogs(currentPage), 2000);
+        }
+    }
+
+    function stopLogFetching() {
+        clearInterval(logInterval);
+    }
+
+    // Handle HTMX navigation
+    document.body.addEventListener('htmx:beforeSwap', function(evt) {
+        if (evt.detail.target.id === 'content') {
+            stopLogFetching();
+        }
+    });
+
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+        if (evt.detail.target.id === 'content') {
+            startLogFetching();
+        }
+    });
+    
+    // Initial setup
+    startLogFetching();
+
+</script>
+{% endblock %}
