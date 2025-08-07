@@ -51,7 +51,7 @@
 
                 row.innerHTML = `
                     <td>${log.id}</td>
-                    <td><a href="${log.url}" target="_blank">${log.url}</a></td>
+                    <td><a href="${log.url}" target="_blank">${log.url.split('/').pop().split('?')[0]}</a></td>
                     <td><span class="status-badge status-${log.status.toLowerCase()}">${log.status}</span></td>
                     <td>${progress}</td>
                     <td>${new Date(log.start_time * 1000).toLocaleString()}</td>

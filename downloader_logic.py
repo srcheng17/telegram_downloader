@@ -62,6 +62,7 @@ def download_images(url, timeout=10, retries=5, task_id=None, tasks_db=None):
     folder_name = temp_folder
     try:
         with requests.Session() as s:
+            s.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
             page_content = s.get(url, timeout=timeout).text
             soup = BeautifulSoup(page_content, 'html.parser')
             
@@ -99,7 +100,8 @@ def download_images(url, timeout=10, retries=5, task_id=None, tasks_db=None):
             downloaded_images = [None] * len(image_urls)
             
             # The app's executor controls how many *tasks* run, not images per task.
-            with ThreadPoolExecutor(max_workers=20) as executor:
+            concurrency = tasks_db.get(task_id, {}).get('concurrency', 5) if task_id and tasks_db else 5
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
                 future_to_path = {}
                 for i, img_url in enumerate(image_urls):
                     file_extension = os.path.splitext(img_url)[1] or '.jpg'

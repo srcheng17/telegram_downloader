@@ -97,6 +97,7 @@ def download():
         return redirect(url_for('index'))
 
     task_id = str(uuid.uuid4())
+    settings = session.get('settings', app_settings)
     tasks[task_id] = {
         'id': task_id,
         'url': url,
@@ -104,12 +105,12 @@ def download():
         'start_time': time.time(),
         'error': None,
         'progress': 0,
-        'total_images': 0
+        'total_images': 0,
+        'concurrency': settings['concurrency']
     }
     
     app.logger.info(f"New task created: {task_id} for URL: {url}")
 
-    settings = session.get('settings', app_settings)
     executor.submit(run_download, task_id, url, settings['timeout'], settings['retries'])
     return redirect(url_for('logs'))
 
