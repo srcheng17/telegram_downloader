@@ -1,23 +1,34 @@
 {% extends "htmx_base.html" if request.headers.get('HX-Request') else "base.html" %}
 {% block title %}Settings{% endblock %}
 {% block content %}
-    <h2>Settings</h2>
-    <form action="/settings" method="post">
-        <div class="form-group">
-            <label for="concurrency">Concurrency (Number of parallel downloads)</label>
-            <input type="number" id="concurrency" name="concurrency" value="{{ settings.get('concurrency', 2) }}" min="1" max="10">
+    <div class="section-header">
+        <h2>Settings</h2>
+        <p class="muted">Tune performance and retention. Changes affect new tasks.</p>
+    </div>
+    <form action="/settings" method="post" class="settings-form">
+        <div class="form-group settings-grid-item">
+            <label for="task_concurrency">Task Concurrency (Number of parallel tasks)</label>
+            <input type="number" id="task_concurrency" name="task_concurrency" value="{{ settings.get('task_concurrency', 2) }}" min="1" max="10">
         </div>
-        <div class="form-group">
+        <div class="form-group settings-grid-item">
+            <label for="image_concurrency">Image Concurrency (Per-task download workers)</label>
+            <input type="number" id="image_concurrency" name="image_concurrency" value="{{ settings.get('image_concurrency', 2) }}" min="1" max="20">
+        </div>
+        <div class="form-group settings-grid-item">
             <label for="timeout">Download Timeout (seconds)</label>
-            <input type="number" id="timeout" name="timeout" value="{{ settings.get('timeout', 10) }}" min="1">
+            <input type="number" id="timeout" name="timeout" value="{{ settings.get('timeout', 30) }}" min="1">
         </div>
-        <div class="form-group">
+        <div class="form-group settings-grid-item">
             <label for="retries">Download Retries</label>
-            <input type="number" id="retries" name="retries" value="{{ settings.get('retries', 5) }}" min="0">
+            <input type="number" id="retries" name="retries" value="{{ settings.get('retries', 10) }}" min="0">
         </div>
-        <div class="form-group">
+        <div class="form-group settings-grid-item settings-grid-item-full">
             <label for="log_retention_days">Log Retention (days)</label>
             <input type="number" id="log_retention_days" name="log_retention_days" value="{{ settings.get('log_retention_days', 7) }}" min="1">
+        </div>
+        <div class="form-group settings-grid-item settings-grid-item-full">
+            <label for="file_retention_days">File Cache Retention (days)</label>
+            <input type="number" id="file_retention_days" name="file_retention_days" value="{{ settings.get('file_retention_days', 7) }}" min="1">
         </div>
         <button type="submit">Save Settings</button>
     </form>

@@ -1,12 +1,15 @@
 {% extends "htmx_base.html" if request.headers.get('HX-Request') else "base.html" %}
 {% block title %}Home{% endblock %}
 {% block content %}
-    <h2>Start a New Download</h2>
+    <div class="section-header">
+        <h2>Start a New Download</h2>
+        <p class="muted">Paste a Telegraph page URL, then monitor progress in Logs.</p>
+    </div>
     <form action="/download" method="post">
         <div class="form-group">
             <label for="url">Telegraph URL</label>
-            <input type="text" id="url" name="url" placeholder="e.g., https://telegra.ph/..." required>
+            <input type="text" id="url" name="url" placeholder="https://telegra.ph/..." required>
         </div>
-        <button type="submit">Start Download</button>
+        <button type="submit">Queue Download</button>
     </form>
 {% endblock %}

@@ -3,11 +3,18 @@
 __pycache__/
 .venv/
 env/
+.env
+.env.*
 
 # Downloads
 downloaded_images/
 temp_downloads/
 *.zip
+
+# Runtime state
+data/*.db
+data/*.db-shm
+data/*.db-wal
 
 # macOS
 .DS_Store
@@ -15,3 +22,6 @@ temp_downloads/
 # IDE / Editor
 .idea/
 .vscode/
+
+# Logs
+*.log
