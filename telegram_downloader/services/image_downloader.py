@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -24,14 +25,19 @@ REQUEST_HEADERS = {
     )
 }
 INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
+INVALID_XML_10_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\uD800-\uDFFF\uFFFE\uFFFF]")
 VALID_EXTENSION_PATTERN = re.compile(r"\.[a-z0-9]{1,5}")
 MAX_TITLE_LENGTH = 120
+MAX_FILENAME_LENGTH_BYTES = 255
+MAX_METADATA_FILENAME_PART_BYTES = 100
 RETRY_BACKOFF_BASE_SECONDS = 0.5
 RETRY_BACKOFF_MAX_SECONDS = 5
 TRANSIENT_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 CANCEL_STATUS_POLL_INTERVAL_SECONDS = 0.25
 DEFAULT_AUTHOR_PLACEHOLDER = "未知作者"
 DEFAULT_COMIC_NAME_PLACEHOLDER = "未命名漫画"
+DEFAULT_NAME_FALLBACK = "download"
+CBZ_EXTENSION = ".cbz"
 _SESSION_LOCAL = threading.local()
 _ZIP_PATH_LOCK = threading.Lock()
 
@@ -156,7 +162,9 @@ def _reserve_zip_output_path(base_folder, safe_title):
     with _ZIP_PATH_LOCK:
         suffix = 1
         while True:
-            name = f"{safe_title}.cbz" if suffix == 1 else f"{safe_title} ({suffix}).cbz"
+            suffix_text = "" if suffix == 1 else f" ({suffix})"
+            trimmed_title = _trim_name_for_suffix(safe_title, suffix_text, CBZ_EXTENSION)
+            name = f"{trimmed_title}{suffix_text}{CBZ_EXTENSION}"
             candidate = os.path.join(base_folder, name)
             try:
                 fd = os.open(candidate, flags)
@@ -169,23 +177,56 @@ def _reserve_zip_output_path(base_folder, safe_title):
 
 def _build_paths(temp_folder, base_folder, safe_title, task_id):
     task_suffix = (task_id or str(int(time.time() * 1000)))[:8]
-    temp_folder_path = os.path.join(temp_folder, f"{safe_title}-{task_suffix}")
+    temp_folder_name = _trim_name_for_suffix(safe_title, f"-{task_suffix}", "")
+    temp_folder_path = os.path.join(temp_folder, f"{temp_folder_name}-{task_suffix}")
     final_zip_path = _reserve_zip_output_path(base_folder, safe_title)
     return temp_folder_path, final_zip_path
 
 
-def _normalize_metadata_text(value):
+def _trim_to_max_bytes(value, max_bytes):
+    if value is None:
+        return ""
+    text = str(value)
+    if max_bytes <= 0:
+        return ""
+    if len(text.encode("utf-8")) <= max_bytes:
+        return text
+    collected = []
+    used_bytes = 0
+    for char in text:
+        char_bytes = len(char.encode("utf-8"))
+        if used_bytes + char_bytes > max_bytes:
+            break
+        collected.append(char)
+        used_bytes += char_bytes
+    return "".join(collected)
+
+
+def _trim_name_for_suffix(value, suffix, extension):
+    reserved_bytes = len(f"{suffix}{extension}".encode("utf-8"))
+    max_name_bytes = MAX_FILENAME_LENGTH_BYTES - reserved_bytes
+    trimmed = _trim_to_max_bytes(value, max_name_bytes).rstrip(" .")
+    if trimmed not in {"", ".", ".."}:
+        return trimmed
+    fallback = _trim_to_max_bytes(DEFAULT_NAME_FALLBACK, max_name_bytes).rstrip(" .")
+    if fallback and fallback not in {".", ".."}:
+        return fallback
+    return "d"
+
+
+def _normalize_metadata_text(value, allow_empty=False):
     if value is None:
         return None
     normalized = str(value).strip()
-    return normalized or None
+    if normalized == "" and not allow_empty:
+        return None
+    return normalized
 
 
 def _normalize_tags(value):
-    normalized = _normalize_metadata_text(value)
-    if not normalized:
+    if value is None:
         return ""
-    normalized = normalized.replace("，", ",")
+    normalized = str(value).replace("，", ",")
     parts = [item.strip() for item in normalized.split(",")]
     filtered = [item for item in parts if item]
     return ",".join(filtered)
@@ -196,28 +237,49 @@ def _sanitize_filename_part(value, fallback):
     safe_value = re.sub(r"\s+", " ", safe_value).strip(" .")
     if safe_value in {"", ".", ".."}:
         safe_value = fallback
+    safe_value = _trim_to_max_bytes(safe_value, MAX_METADATA_FILENAME_PART_BYTES).rstrip(" .")
+    if safe_value in {"", ".", ".."}:
+        safe_value = _trim_to_max_bytes(fallback, MAX_METADATA_FILENAME_PART_BYTES).rstrip(" .")
+    if safe_value in {"", ".", ".."}:
+        safe_value = DEFAULT_NAME_FALLBACK
     return safe_value[:MAX_TITLE_LENGTH]
 
 
 def _resolve_task_metadata(metadata, tasks_db, tasks_lock, task_id):
     metadata = metadata if isinstance(metadata, dict) else {}
 
-    def _read_field(field_name):
-        from_args = _normalize_metadata_text(metadata.get(field_name))
-        if from_args is not None:
-            return from_args
-        return _normalize_metadata_text(_get_task_field(tasks_db, tasks_lock, task_id, field_name, None))
+    def _read_field(field_name, allow_empty=False):
+        if field_name in metadata:
+            return _normalize_metadata_text(metadata.get(field_name), allow_empty=allow_empty)
+        return _normalize_metadata_text(
+            _get_task_field(tasks_db, tasks_lock, task_id, field_name, None),
+            allow_empty=allow_empty,
+        )
 
-    author = _read_field("author") or DEFAULT_AUTHOR_PLACEHOLDER
-    comic_name = _read_field("comic_name") or DEFAULT_COMIC_NAME_PLACEHOLDER
-    summary = _read_field("summary") or ""
-    tags_normalized = _normalize_tags(_read_field("tags_normalized") or _read_field("tags_raw"))
+    author = _read_field("author", allow_empty=True) or DEFAULT_AUTHOR_PLACEHOLDER
+    comic_name = _read_field("comic_name", allow_empty=True) or DEFAULT_COMIC_NAME_PLACEHOLDER
+    summary = _read_field("summary", allow_empty=True) or ""
+    if "tags_normalized" in metadata:
+        tags_source = _read_field("tags_normalized", allow_empty=True)
+    elif "tags_raw" in metadata:
+        tags_source = _read_field("tags_raw", allow_empty=True)
+    else:
+        tags_source = _read_field("tags_normalized", allow_empty=True)
+        if tags_source is None:
+            tags_source = _read_field("tags_raw", allow_empty=True)
+    tags_normalized = _normalize_tags(tags_source)
     return {
         "author": author,
         "comic_name": comic_name,
         "summary": summary,
         "tags_normalized": tags_normalized,
     }
+
+
+def _sanitize_xml_text(value):
+    if value is None:
+        return ""
+    return INVALID_XML_10_CHARS.sub("", str(value))
 
 
 def _write_comicinfo_xml(folder_path, metadata):
@@ -231,7 +293,7 @@ def _write_comicinfo_xml(folder_path, metadata):
         ("Genre", metadata.get("tags_normalized") or ""),
     ):
         element = ET.SubElement(root, tag_name)
-        element.text = value
+        element.text = _sanitize_xml_text(value)
     xml_path = os.path.join(folder_path, "ComicInfo.xml")
     ET.ElementTree(root).write(xml_path, encoding="utf-8", xml_declaration=True)
 
@@ -379,9 +441,14 @@ def zip_folder(source_folder, dest_zip_path):
     try:
         dest_dir = os.path.dirname(dest_zip_path)
         os.makedirs(dest_dir, exist_ok=True)
-        temp_archive_base = f"{os.path.splitext(dest_zip_path)[0]}.__tmp__"
-        temp_archive_path = f"{temp_archive_base}.zip"
+        temp_archive_fd, temp_archive_path = tempfile.mkstemp(
+            prefix="cbz-tmp-",
+            suffix=".zip",
+            dir=dest_dir,
+        )
+        os.close(temp_archive_fd)
         _cleanup_file(temp_archive_path)
+        temp_archive_base = os.path.splitext(temp_archive_path)[0]
         generated_archive_path = shutil.make_archive(temp_archive_base, "zip", source_folder)
         os.replace(generated_archive_path, dest_zip_path)
         shutil.rmtree(source_folder)
