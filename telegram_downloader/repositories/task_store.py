@@ -104,10 +104,16 @@ class TaskStore:
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
 
     def _normalize_task_payload(self, task):
+        url = task["url"]
+        normalized_url = url.strip()
+        raw_canonical_url = task.get("canonical_url")
+        canonical_url = (raw_canonical_url or "").strip() if raw_canonical_url is not None else ""
+        if not canonical_url:
+            canonical_url = normalized_url
         return {
             "id": task["id"],
-            "url": task["url"],
-            "canonical_url": task.get("canonical_url") or task["url"],
+            "url": url,
+            "canonical_url": canonical_url,
             "status": task["status"],
             "start_time": float(task["start_time"]),
             "error": task.get("error"),

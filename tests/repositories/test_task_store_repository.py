@@ -10,8 +10,8 @@ from telegram_downloader.repositories.task_store import TaskStore
 class TaskStoreRepositoryTests(unittest.TestCase):
     def setUp(self):
         self._temp_dir = tempfile.TemporaryDirectory()
-        db_path = Path(self._temp_dir.name) / "tasks.db"
-        self.store = TaskStore(str(db_path))
+        self._db_path = Path(self._temp_dir.name) / "tasks.db"
+        self.store = TaskStore(str(self._db_path))
 
     def tearDown(self):
         self._temp_dir.cleanup()
@@ -304,6 +304,28 @@ class TaskStoreRepositoryTests(unittest.TestCase):
         self.assertEqual(hit["id"], "new-success")
         self.assertEqual(hit["result_zip_path"], "/tmp/new.zip")
 
+    def test_find_latest_success_by_canonical_url_normalizes_whitespace(self):
+        canonical_url = "https://telegra.ph/strip-me"
+        self.store.create_task(
+            {
+                "id": "strip-success",
+                "url": canonical_url,
+                "canonical_url": f"  {canonical_url}  ",
+                "status": "SUCCESS",
+                "start_time": 100,
+                "error": None,
+                "progress": 1,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": "/tmp/strip.zip",
+            }
+        )
+
+        hit = self.store.find_latest_success_by_canonical_url(canonical_url)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["id"], "strip-success")
+        self.assertEqual(hit["canonical_url"], canonical_url)
+
     def test_find_latest_success_by_canonical_url_supports_legacy_rows_without_canonical_url(self):
         canonical_url = "https://telegra.ph/legacy-row"
         self.store.create_task(
@@ -382,10 +404,11 @@ class TaskStoreRepositoryTests(unittest.TestCase):
         canonical_url = "https://telegra.ph/atomic-race-01-01"
         active_statuses = {"PENDING", "IN_PROGRESS", "CANCEL_REQUESTED"}
         barrier = threading.Barrier(8)
+        stores = [self.store, TaskStore(str(self._db_path))]
 
         def worker(idx):
             barrier.wait()
-            return self.store.claim_download_task(
+            return stores[idx % len(stores)].claim_download_task(
                 {
                     "id": f"race-task-{idx}",
                     "url": canonical_url,
