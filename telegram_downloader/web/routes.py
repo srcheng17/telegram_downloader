@@ -345,7 +345,7 @@ def register_routes(app, runtime):
             zip_path,
             as_attachment=True,
             download_name=os.path.basename(zip_path),
-            mimetype="application/zip",
+            mimetype="application/vnd.comicbook+zip",
             conditional=True,
         )
 

@@ -193,9 +193,9 @@ class WebRoutesApiLogsTests(unittest.TestCase):
         with self.client.session_transaction() as flask_session:
             self.assertNotIn("settings", flask_session)
 
-    def test_download_task_file_endpoint_returns_zip(self):
+    def test_download_task_file_endpoint_returns_cbz_with_comic_mimetype(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            zip_path = Path(temp_dir) / "sample.zip"
+            zip_path = Path(temp_dir) / "sample.cbz"
             zip_path.write_bytes(b"PK\x03\x04fakezip")
             self._add_task(
                 task_id="done-with-file",
@@ -209,6 +209,8 @@ class WebRoutesApiLogsTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("attachment", response.headers.get("Content-Disposition", ""))
+        self.assertIn("sample.cbz", response.headers.get("Content-Disposition", ""))
+        self.assertEqual(response.mimetype, "application/vnd.comicbook+zip")
         response.close()
 
     def test_download_task_file_endpoint_supports_head_precheck(self):
