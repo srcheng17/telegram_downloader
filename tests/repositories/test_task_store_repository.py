@@ -1,5 +1,7 @@
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from telegram_downloader.repositories.task_store import TaskStore
@@ -57,6 +59,73 @@ class TaskStoreRepositoryTests(unittest.TestCase):
         self.assertEqual(rows[0]["id"], "task-4")
         self.assertEqual(rows[-1]["id"], "task-0")
 
+    def test_list_paginated_supports_status_and_keyword_filter(self):
+        self.store.create_task(
+            {
+                "id": "success-keep",
+                "url": "https://telegra.ph/success-keep",
+                "canonical_url": "https://telegra.ph/success-keep",
+                "status": "SUCCESS",
+                "start_time": 300,
+                "error": "none",
+                "progress": 1,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": None,
+            }
+        )
+        self.store.create_task(
+            {
+                "id": "failed-match",
+                "url": "https://telegra.ph/failed-match",
+                "canonical_url": "https://telegra.ph/failed-match",
+                "status": "FAILED",
+                "start_time": 200,
+                "error": "boom match token",
+                "progress": 0,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": None,
+            }
+        )
+        self.store.create_task(
+            {
+                "id": "failed-ignore",
+                "url": "https://telegra.ph/failed-ignore",
+                "canonical_url": "https://telegra.ph/failed-ignore",
+                "status": "FAILED",
+                "start_time": 100,
+                "error": "boom",
+                "progress": 0,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": None,
+            }
+        )
+
+        rows, total, total_pages, page = self.store.list_paginated(
+            page=1,
+            per_page=20,
+            status="FAILED",
+            keyword="match",
+        )
+        self.assertEqual(total, 1)
+        self.assertEqual(total_pages, 1)
+        self.assertEqual(page, 1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], "failed-match")
+
+    def test_get_status_counts_returns_aggregated_values(self):
+        self._add_task("pending-1", 300, status="PENDING")
+        self._add_task("pending-2", 250, status="PENDING")
+        self._add_task("success-1", 200, status="SUCCESS")
+        self._add_task("failed-1", 150, status="FAILED")
+
+        counts = self.store.get_status_counts()
+        self.assertEqual(counts["PENDING"], 2)
+        self.assertEqual(counts["SUCCESS"], 1)
+        self.assertEqual(counts["FAILED"], 1)
+
     def test_has_active_tasks_and_retention_cleanup(self):
         self._add_task("old-task", 100, status="SUCCESS")
         self._add_task("active-task", 200, status="IN_PROGRESS")
@@ -105,6 +174,34 @@ class TaskStoreRepositoryTests(unittest.TestCase):
             "/tmp/success.zip",
         )
 
+    def test_create_and_get_task_persists_cbz_metadata_fields(self):
+        self.store.create_task(
+            {
+                "id": "cbz-task",
+                "url": "https://telegra.ph/cbz-task",
+                "canonical_url": "https://telegra.ph/cbz-task",
+                "status": "SUCCESS",
+                "start_time": 123.0,
+                "error": None,
+                "progress": 1,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": "/tmp/cbz-task.zip",
+                "author": "author-name",
+                "comic_name": "comic-name",
+                "summary": "summary text",
+                "tags_raw": "tagA, tagB",
+                "tags_normalized": "taga,tagb",
+            }
+        )
+
+        task = self.store.get_task("cbz-task")
+        self.assertEqual(task["author"], "author-name")
+        self.assertEqual(task["comic_name"], "comic-name")
+        self.assertEqual(task["summary"], "summary text")
+        self.assertEqual(task["tags_raw"], "tagA, tagB")
+        self.assertEqual(task["tags_normalized"], "taga,tagb")
+
     def test_result_zip_helpers_support_cleanup_flow(self):
         self.store.create_task(
             {
@@ -142,6 +239,184 @@ class TaskStoreRepositoryTests(unittest.TestCase):
 
         self.store.clear_result_zip_path("task-a")
         self.assertEqual(self.store.get_field("task-a", "result_zip_path", None), None)
+
+    def test_find_latest_success_by_canonical_url_prefers_newest_success_with_file(self):
+        canonical_url = "https://telegra.ph/dedupe-article"
+        self.store.create_task(
+            {
+                "id": "old-success",
+                "url": canonical_url,
+                "canonical_url": canonical_url,
+                "status": "SUCCESS",
+                "start_time": 100,
+                "error": None,
+                "progress": 1,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": "/tmp/old.zip",
+            }
+        )
+        self.store.create_task(
+            {
+                "id": "new-failed",
+                "url": canonical_url,
+                "canonical_url": canonical_url,
+                "status": "FAILED",
+                "start_time": 150,
+                "error": "nope",
+                "progress": 0,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": "/tmp/failed.zip",
+            }
+        )
+        self.store.create_task(
+            {
+                "id": "new-success-no-file",
+                "url": canonical_url,
+                "canonical_url": canonical_url,
+                "status": "SUCCESS",
+                "start_time": 200,
+                "error": None,
+                "progress": 1,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": None,
+            }
+        )
+        self.store.create_task(
+            {
+                "id": "new-success",
+                "url": canonical_url,
+                "canonical_url": canonical_url,
+                "status": "SUCCESS",
+                "start_time": 250,
+                "error": None,
+                "progress": 1,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": "/tmp/new.zip",
+            }
+        )
+
+        hit = self.store.find_latest_success_by_canonical_url(canonical_url)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["id"], "new-success")
+        self.assertEqual(hit["result_zip_path"], "/tmp/new.zip")
+
+    def test_find_latest_success_by_canonical_url_supports_legacy_rows_without_canonical_url(self):
+        canonical_url = "https://telegra.ph/legacy-row"
+        self.store.create_task(
+            {
+                "id": "legacy-success",
+                "url": canonical_url,
+                "canonical_url": canonical_url,
+                "status": "SUCCESS",
+                "start_time": 100,
+                "error": None,
+                "progress": 1,
+                "total_images": 1,
+                "image_concurrency": 2,
+                "result_zip_path": "/tmp/legacy.zip",
+            }
+        )
+        self.store.update_task("legacy-success", canonical_url=None)
+
+        hit = self.store.find_latest_success_by_canonical_url(canonical_url)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["id"], "legacy-success")
+
+    def test_find_latest_active_by_canonical_url_returns_newest_active_task(self):
+        canonical_url = "https://telegra.ph/active-dedupe"
+        self.store.create_task(
+            {
+                "id": "pending-task",
+                "url": canonical_url,
+                "canonical_url": canonical_url,
+                "status": "PENDING",
+                "start_time": 100,
+                "error": None,
+                "progress": 0,
+                "total_images": 10,
+                "image_concurrency": 2,
+                "result_zip_path": None,
+            }
+        )
+        self.store.create_task(
+            {
+                "id": "active-task",
+                "url": canonical_url,
+                "canonical_url": canonical_url,
+                "status": "IN_PROGRESS",
+                "start_time": 150,
+                "error": None,
+                "progress": 2,
+                "total_images": 10,
+                "image_concurrency": 2,
+                "result_zip_path": None,
+            }
+        )
+        self.store.create_task(
+            {
+                "id": "done-task",
+                "url": canonical_url,
+                "canonical_url": canonical_url,
+                "status": "SUCCESS",
+                "start_time": 200,
+                "error": None,
+                "progress": 10,
+                "total_images": 10,
+                "image_concurrency": 2,
+                "result_zip_path": "/tmp/done.zip",
+            }
+        )
+
+        hit = self.store.find_latest_active_by_canonical_url(
+            canonical_url,
+            {"PENDING", "IN_PROGRESS", "CANCEL_REQUESTED"},
+        )
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["id"], "active-task")
+
+    def test_claim_download_task_is_atomic_under_race(self):
+        canonical_url = "https://telegra.ph/atomic-race-01-01"
+        active_statuses = {"PENDING", "IN_PROGRESS", "CANCEL_REQUESTED"}
+        barrier = threading.Barrier(8)
+
+        def worker(idx):
+            barrier.wait()
+            return self.store.claim_download_task(
+                {
+                    "id": f"race-task-{idx}",
+                    "url": canonical_url,
+                    "canonical_url": canonical_url,
+                    "status": "PENDING",
+                    "start_time": float(100 + idx),
+                    "error": None,
+                    "progress": 0,
+                    "total_images": 0,
+                    "image_concurrency": 2,
+                    "result_zip_path": None,
+                },
+                active_statuses,
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(worker, range(8)))
+
+        created = [result for result in results if result["decision"] == "created"]
+        reused_active = [result for result in results if result["decision"] == "reuse_active"]
+        self.assertEqual(len(created), 1)
+        self.assertEqual(len(reused_active), 7)
+
+        created_task_id = created[0]["task"]["id"]
+        self.assertTrue(all(result["task"]["id"] == created_task_id for result in results))
+
+        rows, total, _, _ = self.store.list_paginated(page=1, per_page=50)
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0]["id"], created_task_id)
+        self.assertEqual(rows[0]["status"], "PENDING")
+        self.assertEqual(rows[0]["canonical_url"], canonical_url)
 
 
 if __name__ == "__main__":
