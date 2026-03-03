@@ -3,12 +3,19 @@ import re
 import shutil
 import threading
 import time
+import xml.etree.ElementTree as ET
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
+
+from telegram_downloader.constants import (
+    MAX_IMAGES_PER_TASK,
+    MAX_IMAGE_BYTES,
+    MAX_TOTAL_DOWNLOAD_BYTES,
+)
 
 REQUEST_HEADERS = {
     "User-Agent": (
@@ -22,6 +29,9 @@ MAX_TITLE_LENGTH = 120
 RETRY_BACKOFF_BASE_SECONDS = 0.5
 RETRY_BACKOFF_MAX_SECONDS = 5
 TRANSIENT_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+CANCEL_STATUS_POLL_INTERVAL_SECONDS = 0.25
+DEFAULT_AUTHOR_PLACEHOLDER = "未知作者"
+DEFAULT_COMIC_NAME_PLACEHOLDER = "未命名漫画"
 _SESSION_LOCAL = threading.local()
 _ZIP_PATH_LOCK = threading.Lock()
 
@@ -32,6 +42,16 @@ class DownloadCancelledError(Exception):
 
 class PartialDownloadError(Exception):
     """Raised when at least one image succeeds but some still fail."""
+
+
+class DownloadLimitExceededError(Exception):
+    """Raised when a configured download guardrail is exceeded."""
+
+
+def _format_bytes(size):
+    if size is None:
+        return "0 bytes"
+    return f"{int(size)} bytes ({int(size) / (1024 * 1024):.2f} MiB)"
 
 
 def _set_task_fields(tasks_db, tasks_lock, task_id, **fields):
@@ -136,7 +156,7 @@ def _reserve_zip_output_path(base_folder, safe_title):
     with _ZIP_PATH_LOCK:
         suffix = 1
         while True:
-            name = f"{safe_title}.zip" if suffix == 1 else f"{safe_title} ({suffix}).zip"
+            name = f"{safe_title}.cbz" if suffix == 1 else f"{safe_title} ({suffix}).cbz"
             candidate = os.path.join(base_folder, name)
             try:
                 fd = os.open(candidate, flags)
@@ -152,6 +172,68 @@ def _build_paths(temp_folder, base_folder, safe_title, task_id):
     temp_folder_path = os.path.join(temp_folder, f"{safe_title}-{task_suffix}")
     final_zip_path = _reserve_zip_output_path(base_folder, safe_title)
     return temp_folder_path, final_zip_path
+
+
+def _normalize_metadata_text(value):
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _normalize_tags(value):
+    normalized = _normalize_metadata_text(value)
+    if not normalized:
+        return ""
+    normalized = normalized.replace("，", ",")
+    parts = [item.strip() for item in normalized.split(",")]
+    filtered = [item for item in parts if item]
+    return ",".join(filtered)
+
+
+def _sanitize_filename_part(value, fallback):
+    safe_value = INVALID_FILENAME_CHARS.sub(" ", (value or fallback))
+    safe_value = re.sub(r"\s+", " ", safe_value).strip(" .")
+    if safe_value in {"", ".", ".."}:
+        safe_value = fallback
+    return safe_value[:MAX_TITLE_LENGTH]
+
+
+def _resolve_task_metadata(metadata, tasks_db, tasks_lock, task_id):
+    metadata = metadata if isinstance(metadata, dict) else {}
+
+    def _read_field(field_name):
+        from_args = _normalize_metadata_text(metadata.get(field_name))
+        if from_args is not None:
+            return from_args
+        return _normalize_metadata_text(_get_task_field(tasks_db, tasks_lock, task_id, field_name, None))
+
+    author = _read_field("author") or DEFAULT_AUTHOR_PLACEHOLDER
+    comic_name = _read_field("comic_name") or DEFAULT_COMIC_NAME_PLACEHOLDER
+    summary = _read_field("summary") or ""
+    tags_normalized = _normalize_tags(_read_field("tags_normalized") or _read_field("tags_raw"))
+    return {
+        "author": author,
+        "comic_name": comic_name,
+        "summary": summary,
+        "tags_normalized": tags_normalized,
+    }
+
+
+def _write_comicinfo_xml(folder_path, metadata):
+    root = ET.Element("ComicInfo")
+    for tag_name, value in (
+        ("Writer", metadata.get("author") or ""),
+        ("Series", metadata.get("comic_name") or ""),
+        ("Title", metadata.get("comic_name") or ""),
+        ("Summary", metadata.get("summary") or ""),
+        ("Tags", metadata.get("tags_normalized") or ""),
+        ("Genre", metadata.get("tags_normalized") or ""),
+    ):
+        element = ET.SubElement(root, tag_name)
+        element.text = value
+    xml_path = os.path.join(folder_path, "ComicInfo.xml")
+    ET.ElementTree(root).write(xml_path, encoding="utf-8", xml_declaration=True)
 
 
 def _cleanup_file(path):
@@ -184,6 +266,32 @@ def _is_task_cancelled(tasks_db, tasks_lock, task_id):
 
 def _raise_if_task_cancelled(tasks_db, tasks_lock, task_id):
     if _is_task_cancelled(tasks_db, tasks_lock, task_id):
+        raise DownloadCancelledError("Cancellation requested by user.")
+
+
+def _build_cancel_checker(tasks_db, tasks_lock, task_id):
+    if not task_id:
+        return lambda: False
+
+    last_checked_at = 0.0
+    is_cancelled = False
+
+    def _should_cancel():
+        nonlocal last_checked_at, is_cancelled
+        if is_cancelled:
+            return True
+        now = time.monotonic()
+        if (now - last_checked_at) < CANCEL_STATUS_POLL_INTERVAL_SECONDS:
+            return False
+        last_checked_at = now
+        is_cancelled = _is_task_cancelled(tasks_db, tasks_lock, task_id)
+        return is_cancelled
+
+    return _should_cancel
+
+
+def _raise_if_cancelled(should_cancel):
+    if should_cancel and should_cancel():
         raise DownloadCancelledError("Cancellation requested by user.")
 
 
@@ -282,10 +390,20 @@ def zip_folder(source_folder, dest_zip_path):
         raise Exception(f"Error during zip or delete process: {e}")
 
 
-def fetch_image(url, timeout, retries, save_path, pool_size, should_cancel=None):
+def fetch_image(
+    url,
+    timeout,
+    retries,
+    save_path,
+    pool_size,
+    should_cancel=None,
+    max_image_bytes=None,
+    track_total_bytes=None,
+):
     """Fetches a single image with retries and saves it directly to disk."""
     attempts = max(1, retries + 1)
     session = _get_thread_session(pool_size)
+    image_byte_limit = int(max_image_bytes) if max_image_bytes else None
     for attempt in range(attempts):
         if should_cancel and should_cancel():
             _cleanup_file(save_path)
@@ -293,14 +411,30 @@ def fetch_image(url, timeout, retries, save_path, pool_size, should_cancel=None)
         try:
             with session.get(url, timeout=timeout, stream=True) as response:
                 response.raise_for_status()
+                downloaded_bytes = 0
                 with open(save_path, "wb") as file_obj:
                     for chunk in response.iter_content(chunk_size=8192):
                         if should_cancel and should_cancel():
                             raise DownloadCancelledError("Cancellation requested by user.")
                         if chunk:
+                            chunk_size = len(chunk)
+                            downloaded_bytes += chunk_size
+                            if image_byte_limit and downloaded_bytes > image_byte_limit:
+                                raise DownloadLimitExceededError(
+                                    (
+                                        "Image exceeds max size limit: "
+                                        f"{_format_bytes(downloaded_bytes)} downloaded from {url}, "
+                                        f"limit is {_format_bytes(image_byte_limit)}."
+                                    )
+                                )
+                            if track_total_bytes:
+                                track_total_bytes(chunk_size)
                             file_obj.write(chunk)
                 return save_path
         except DownloadCancelledError:
+            _cleanup_file(save_path)
+            raise
+        except DownloadLimitExceededError:
             _cleanup_file(save_path)
             raise
         except (
@@ -325,7 +459,16 @@ def fetch_image(url, timeout, retries, save_path, pool_size, should_cancel=None)
     raise Exception(f"Failed to download {url} after {attempts} retries.")
 
 
-def fetch_image_with_fallback(candidate_urls, timeout, retries, save_path, pool_size, should_cancel=None):
+def fetch_image_with_fallback(
+    candidate_urls,
+    timeout,
+    retries,
+    save_path,
+    pool_size,
+    should_cancel=None,
+    max_image_bytes=None,
+    track_total_bytes=None,
+):
     if not candidate_urls:
         raise Exception("No candidate URLs available for this image.")
     last_error = None
@@ -338,6 +481,8 @@ def fetch_image_with_fallback(candidate_urls, timeout, retries, save_path, pool_
                 save_path=save_path,
                 pool_size=pool_size,
                 should_cancel=should_cancel,
+                max_image_bytes=max_image_bytes,
+                track_total_bytes=track_total_bytes,
             )
         except DownloadCancelledError:
             raise
@@ -354,6 +499,7 @@ def download_images(
     image_concurrency=None,
     tasks_db=None,
     tasks_lock=None,
+    metadata=None,
 ):
     """
     Concurrently downloads all images from a Telegraph page into a temporary directory,
@@ -367,13 +513,28 @@ def download_images(
 
     temp_folder_path = None
     final_zip_path = None
+    should_cancel = _build_cancel_checker(tasks_db, tasks_lock, task_id)
     try:
-        _raise_if_task_cancelled(tasks_db, tasks_lock, task_id)
-        soup = _fetch_page_soup(url, timeout=timeout, retries=retries)
-        _raise_if_task_cancelled(tasks_db, tasks_lock, task_id)
+        _raise_if_cancelled(should_cancel)
+        resolved_metadata = _resolve_task_metadata(
+            metadata=metadata,
+            tasks_db=tasks_db,
+            tasks_lock=tasks_lock,
+            task_id=task_id,
+        )
 
-        page_title = soup.title.string.strip() if soup.title and soup.title.string else "Untitled"
-        safe_title = sanitize_title(page_title)
+        soup = _fetch_page_soup(url, timeout=timeout, retries=retries)
+        _raise_if_cancelled(should_cancel)
+
+        safe_author = _sanitize_filename_part(
+            resolved_metadata["author"],
+            DEFAULT_AUTHOR_PLACEHOLDER,
+        )
+        safe_comic_name = _sanitize_filename_part(
+            resolved_metadata["comic_name"],
+            DEFAULT_COMIC_NAME_PLACEHOLDER,
+        )
+        safe_title = f"{safe_author}_{safe_comic_name}_{int(time.time())}"
         temp_folder_path, final_zip_path = _build_paths(temp_folder, base_folder, safe_title, task_id)
         os.makedirs(temp_folder_path, exist_ok=True)
 
@@ -381,7 +542,34 @@ def download_images(
         if not image_candidates:
             raise ValueError("No images found on the page.")
 
-        _set_task_fields(tasks_db, tasks_lock, task_id, total_images=len(image_candidates))
+        image_count = len(image_candidates)
+        _set_task_fields(tasks_db, tasks_lock, task_id, total_images=image_count)
+        if image_count > MAX_IMAGES_PER_TASK:
+            raise DownloadLimitExceededError(
+                (
+                    "Image count limit exceeded: "
+                    f"found {image_count} images, max allowed is {MAX_IMAGES_PER_TASK}."
+                )
+            )
+
+        total_downloaded_bytes = 0
+        total_downloaded_lock = threading.Lock()
+
+        def _track_total_bytes(chunk_size):
+            nonlocal total_downloaded_bytes
+            if chunk_size <= 0:
+                return
+            with total_downloaded_lock:
+                next_total = total_downloaded_bytes + int(chunk_size)
+                if next_total > MAX_TOTAL_DOWNLOAD_BYTES:
+                    raise DownloadLimitExceededError(
+                        (
+                            "Total download size limit exceeded: "
+                            f"attempted {_format_bytes(next_total)}, "
+                            f"max allowed is {_format_bytes(MAX_TOTAL_DOWNLOAD_BYTES)}."
+                        )
+                    )
+                total_downloaded_bytes = next_total
 
         if image_concurrency is None:
             concurrency = _get_task_field(tasks_db, tasks_lock, task_id, "image_concurrency", 5)
@@ -400,7 +588,7 @@ def download_images(
             failed_entries = []
             future_to_job = {}
             for i, candidate_urls in enumerate(image_candidates):
-                _raise_if_task_cancelled(tasks_db, tasks_lock, task_id)
+                _raise_if_cancelled(should_cancel)
                 parsed_path = urlparse(candidate_urls[0]).path
                 file_extension = os.path.splitext(parsed_path)[1].lower() or ".jpg"
                 if not VALID_EXTENSION_PATTERN.fullmatch(file_extension):
@@ -413,19 +601,21 @@ def download_images(
                     retries=retries,
                     save_path=image_path,
                     pool_size=concurrency,
-                    should_cancel=lambda: _is_task_cancelled(tasks_db, tasks_lock, task_id),
+                    should_cancel=should_cancel,
+                    max_image_bytes=MAX_IMAGE_BYTES,
+                    track_total_bytes=_track_total_bytes,
                 )
                 futures.add(future)
                 future_to_job[future] = (candidate_urls, image_path)
 
             while futures:
-                _raise_if_task_cancelled(tasks_db, tasks_lock, task_id)
+                _raise_if_cancelled(should_cancel)
                 done, pending = wait(futures, timeout=0.5, return_when=FIRST_COMPLETED)
                 if not done:
                     futures = pending
                     continue
                 for future in done:
-                    _raise_if_task_cancelled(tasks_db, tasks_lock, task_id)
+                    _raise_if_cancelled(should_cancel)
                     try:
                         future.result()
                         _increment_task_progress(tasks_db, tasks_lock, task_id)
@@ -439,7 +629,7 @@ def download_images(
                 futures = pending
 
             for candidate_urls, image_path in failed_entries:
-                _raise_if_task_cancelled(tasks_db, tasks_lock, task_id)
+                _raise_if_cancelled(should_cancel)
                 try:
                     fetch_image_with_fallback(
                         candidate_urls,
@@ -447,7 +637,9 @@ def download_images(
                         retries=max(retries, 3),
                         save_path=image_path,
                         pool_size=1,
-                        should_cancel=lambda: _is_task_cancelled(tasks_db, tasks_lock, task_id),
+                        should_cancel=should_cancel,
+                        max_image_bytes=MAX_IMAGE_BYTES,
+                        track_total_bytes=_track_total_bytes,
                     )
                     _increment_task_progress(tasks_db, tasks_lock, task_id)
                     successful_images += 1
@@ -491,6 +683,7 @@ def download_images(
         raise
 
     try:
+        _write_comicinfo_xml(temp_folder_path, resolved_metadata)
         zip_folder(temp_folder_path, final_zip_path)
     except Exception as e:
         _set_task_fields(

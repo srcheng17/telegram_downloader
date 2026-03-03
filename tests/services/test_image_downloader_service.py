@@ -1,6 +1,8 @@
 import os
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from unittest.mock import call, patch
 
@@ -84,14 +86,14 @@ class ImageDownloaderServiceTests(unittest.TestCase):
         self.assertEqual(saved_bytes, b"helloworld")
         sleep_mock.assert_has_calls([call(0.5), call(1.0)])
 
-    def test_build_paths_avoids_zip_name_collision(self):
+    def test_build_paths_avoids_cbz_name_collision(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir) / "tmp"
             base_root = Path(temp_dir) / "out"
             temp_root.mkdir(parents=True, exist_ok=True)
             base_root.mkdir(parents=True, exist_ok=True)
-            (base_root / "Title.zip").write_bytes(b"1")
-            (base_root / "Title (2).zip").write_bytes(b"1")
+            (base_root / "Title.cbz").write_bytes(b"1")
+            (base_root / "Title (2).cbz").write_bytes(b"1")
 
             temp_path, zip_path = logic._build_paths(
                 str(temp_root),
@@ -111,8 +113,126 @@ class ImageDownloaderServiceTests(unittest.TestCase):
             self.assertTrue(next_reserved_file.exists())
 
         self.assertTrue(temp_path.endswith("Title-abcdef12"))
-        self.assertTrue(zip_path.endswith("Title (3).zip"))
-        self.assertTrue(next_zip_path.endswith("Title (4).zip"))
+        self.assertTrue(zip_path.endswith("Title (3).cbz"))
+        self.assertTrue(next_zip_path.endswith("Title (4).cbz"))
+
+    def test_download_images_outputs_cbz_and_writes_comicinfo_from_metadata(self):
+        html = "<html><head><title>Ignored</title></head><body><img src='1.jpg'></body></html>"
+        soup = BeautifulSoup(html, "html.parser")
+        tasks = {
+            "task-meta": {
+                "status": "IN_PROGRESS",
+                "progress": 0,
+                "image_concurrency": 1,
+                "author": "old-author",
+                "comic_name": "old-comic",
+                "summary": "old-summary",
+                "tags_normalized": "old-tag",
+            }
+        }
+        metadata = {
+            "author": "作者A",
+            "comic_name": "漫画B",
+            "summary": "简介",
+            "tags_normalized": "标签1， 标签2, , 标签3",
+        }
+
+        with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:
+            def fake_fetch_image(
+                img_url,
+                timeout,
+                retries,
+                save_path,
+                pool_size,
+                should_cancel=None,
+                max_image_bytes=None,
+                track_total_bytes=None,
+            ):
+                del img_url, timeout, retries, pool_size, should_cancel
+                del max_image_bytes, track_total_bytes
+                Path(save_path).write_bytes(b"img")
+                return save_path
+
+            with patch.dict(os.environ, {"DOWNLOAD_PATH": base_dir, "TEMP_PATH": temp_dir}, clear=False):
+                with patch("telegram_downloader.services.image_downloader._fetch_page_soup", return_value=soup):
+                    with patch("telegram_downloader.services.image_downloader.fetch_image", side_effect=fake_fetch_image):
+                        with patch("telegram_downloader.services.image_downloader.time.time", return_value=1700000000):
+                            cbz_path = logic.download_images(
+                                "https://telegra.ph/demo",
+                                timeout=5,
+                                retries=1,
+                                task_id="task-meta",
+                                image_concurrency=1,
+                                tasks_db=tasks,
+                                metadata=metadata,
+                            )
+
+            self.assertTrue(cbz_path.endswith(".cbz"))
+            self.assertEqual(Path(cbz_path).name, "作者A_漫画B_1700000000.cbz")
+            with zipfile.ZipFile(cbz_path) as cbz:
+                self.assertIn("ComicInfo.xml", cbz.namelist())
+                root = ET.fromstring(cbz.read("ComicInfo.xml"))
+            self.assertEqual(root.findtext("Writer"), "作者A")
+            self.assertEqual(root.findtext("Series"), "漫画B")
+            self.assertEqual(root.findtext("Title"), "漫画B")
+            self.assertEqual(root.findtext("Summary"), "简介")
+            self.assertEqual(root.findtext("Tags"), "标签1,标签2,标签3")
+            self.assertEqual(root.findtext("Genre"), "标签1,标签2,标签3")
+
+    def test_download_images_uses_task_metadata_fallback_and_placeholder_filename(self):
+        html = "<html><head><title>Ignored</title></head><body><img src='1.jpg'></body></html>"
+        soup = BeautifulSoup(html, "html.parser")
+        tasks = {
+            "task-fallback": {
+                "status": "IN_PROGRESS",
+                "progress": 0,
+                "image_concurrency": 1,
+                "author": " ",
+                "comic_name": None,
+                "summary": "task-summary",
+                "tags_raw": "标签甲， 标签乙, , 标签丙",
+                "tags_normalized": None,
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:
+            def fake_fetch_image(
+                img_url,
+                timeout,
+                retries,
+                save_path,
+                pool_size,
+                should_cancel=None,
+                max_image_bytes=None,
+                track_total_bytes=None,
+            ):
+                del img_url, timeout, retries, pool_size, should_cancel
+                del max_image_bytes, track_total_bytes
+                Path(save_path).write_bytes(b"img")
+                return save_path
+
+            with patch.dict(os.environ, {"DOWNLOAD_PATH": base_dir, "TEMP_PATH": temp_dir}, clear=False):
+                with patch("telegram_downloader.services.image_downloader._fetch_page_soup", return_value=soup):
+                    with patch("telegram_downloader.services.image_downloader.fetch_image", side_effect=fake_fetch_image):
+                        with patch("telegram_downloader.services.image_downloader.time.time", return_value=1700001111):
+                            cbz_path = logic.download_images(
+                                "https://telegra.ph/demo",
+                                timeout=5,
+                                retries=1,
+                                task_id="task-fallback",
+                                image_concurrency=1,
+                                tasks_db=tasks,
+                            )
+
+            self.assertEqual(Path(cbz_path).name, "未知作者_未命名漫画_1700001111.cbz")
+            with zipfile.ZipFile(cbz_path) as cbz:
+                root = ET.fromstring(cbz.read("ComicInfo.xml"))
+            self.assertEqual(root.findtext("Writer"), "未知作者")
+            self.assertEqual(root.findtext("Series"), "未命名漫画")
+            self.assertEqual(root.findtext("Title"), "未命名漫画")
+            self.assertEqual(root.findtext("Summary"), "task-summary")
+            self.assertEqual(root.findtext("Tags"), "标签甲,标签乙,标签丙")
+            self.assertEqual(root.findtext("Genre"), "标签甲,标签乙,标签丙")
 
     def test_fetch_image_honors_cancellation(self):
         logic._SESSION_LOCAL.session = _AlwaysSuccessSession()
@@ -137,8 +257,18 @@ class ImageDownloaderServiceTests(unittest.TestCase):
         tasks = {"task-1": {"status": "IN_PROGRESS", "progress": 0, "image_concurrency": 2}}
 
         with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:
-            def fake_fetch_image(img_url, timeout, retries, save_path, pool_size, should_cancel=None):
+            def fake_fetch_image(
+                img_url,
+                timeout,
+                retries,
+                save_path,
+                pool_size,
+                should_cancel=None,
+                max_image_bytes=None,
+                track_total_bytes=None,
+            ):
                 del timeout, retries, pool_size, should_cancel
+                del max_image_bytes, track_total_bytes
                 if img_url.endswith("missing.jpg"):
                     raise Exception(f"Request failed for {img_url}: 404")
                 Path(save_path).write_bytes(b"ok")
@@ -216,8 +346,18 @@ class ImageDownloaderServiceTests(unittest.TestCase):
         tasks = {"task-3": {"status": "IN_PROGRESS", "progress": 0, "image_concurrency": 1}}
 
         with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:
-            def fake_fetch_image(img_url, timeout, retries, save_path, pool_size, should_cancel=None):
+            def fake_fetch_image(
+                img_url,
+                timeout,
+                retries,
+                save_path,
+                pool_size,
+                should_cancel=None,
+                max_image_bytes=None,
+                track_total_bytes=None,
+            ):
                 del timeout, retries, pool_size, should_cancel
+                del max_image_bytes, track_total_bytes
                 if img_url.endswith(".webp"):
                     raise Exception("Request failed: 404")
                 Path(save_path).write_bytes(b"ok-jpg")
@@ -236,6 +376,61 @@ class ImageDownloaderServiceTests(unittest.TestCase):
                         )
                         self.assertTrue(Path(zip_path).is_file())
                         self.assertEqual(tasks["task-3"]["progress"], 1)
+
+    def test_download_images_fails_with_clear_error_when_image_count_limit_exceeded(self):
+        html = """
+        <html><head><title>Demo</title></head><body>
+            <img src='1.jpg'><img src='2.jpg'><img src='3.jpg'>
+        </body></html>
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        tasks = {"task-limit": {"status": "IN_PROGRESS", "progress": 0, "image_concurrency": 1}}
+
+        with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(os.environ, {"DOWNLOAD_PATH": base_dir, "TEMP_PATH": temp_dir}, clear=False):
+                with patch("telegram_downloader.services.image_downloader._fetch_page_soup", return_value=soup):
+                    with patch("telegram_downloader.services.image_downloader.MAX_IMAGES_PER_TASK", 2):
+                        with self.assertRaises(logic.DownloadLimitExceededError) as context:
+                            logic.download_images(
+                                "https://telegra.ph/demo",
+                                timeout=5,
+                                retries=1,
+                                task_id="task-limit",
+                                image_concurrency=1,
+                                tasks_db=tasks,
+                            )
+
+        self.assertIn("Image count limit exceeded", str(context.exception))
+        self.assertEqual(tasks["task-limit"]["status"], "FAILED")
+        self.assertIn("max allowed is 2", tasks["task-limit"]["error"])
+
+    def test_download_images_fails_with_clear_error_when_total_size_limit_exceeded(self):
+        html = "<html><head><title>Demo</title></head><body><img src='1.jpg'></body></html>"
+        soup = BeautifulSoup(html, "html.parser")
+        tasks = {"task-total-limit": {"status": "IN_PROGRESS", "progress": 0, "image_concurrency": 1}}
+
+        with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(os.environ, {"DOWNLOAD_PATH": base_dir, "TEMP_PATH": temp_dir}, clear=False):
+                with patch("telegram_downloader.services.image_downloader._fetch_page_soup", return_value=soup):
+                    with patch(
+                        "telegram_downloader.services.image_downloader._get_thread_session",
+                        return_value=_AlwaysSuccessSession(),
+                    ):
+                        with patch("telegram_downloader.services.image_downloader.MAX_TOTAL_DOWNLOAD_BYTES", 5):
+                            with patch("telegram_downloader.services.image_downloader.MAX_IMAGE_BYTES", 10_000):
+                                with self.assertRaises(Exception) as context:
+                                    logic.download_images(
+                                        "https://telegra.ph/demo",
+                                        timeout=5,
+                                        retries=0,
+                                        task_id="task-total-limit",
+                                        image_concurrency=1,
+                                        tasks_db=tasks,
+                                    )
+
+        self.assertIn("Total download size limit exceeded", str(context.exception))
+        self.assertEqual(tasks["task-total-limit"]["status"], "FAILED")
+        self.assertIn("Total download size limit exceeded", tasks["task-total-limit"]["error"])
 
 
 if __name__ == "__main__":
