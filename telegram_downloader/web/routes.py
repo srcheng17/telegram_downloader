@@ -2,16 +2,20 @@ import time
 import uuid
 import os
 
-from flask import jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import jsonify, redirect, render_template, request, send_file, url_for
 
 from telegram_downloader.constants import (
     ACTIVE_TASK_STATUSES,
     ALLOWED_TELEGRAPH_HOSTS,
     DEFAULT_LOGS_PER_PAGE,
+    DOWNLOAD_GUARDRAILS,
+    KNOWN_TASK_STATUSES,
     MAX_LOGS_PER_PAGE,
+    STATUS_CATALOG,
+    TERMINAL_TASK_STATUSES,
 )
 from telegram_downloader.settings import clamp_int, normalized_settings
-from telegram_downloader.url_validation import is_allowed_telegraph_url
+from telegram_downloader.url_validation import is_allowed_telegraph_url, normalize_telegraph_url
 
 
 def register_routes(app, runtime):
@@ -23,34 +27,210 @@ def register_routes(app, runtime):
         except ValueError:
             return False
 
-    @app.route("/")
-    def index():
-        return render_template("index.html")
+    def _claim_download_task(
+        url,
+        canonical_url,
+        image_concurrency,
+        reuse_success=True,
+        metadata=None,
+    ):
+        metadata = metadata or {}
 
-    @app.route("/download", methods=["POST"])
-    def download():
-        url = (request.form.get("url") or "").strip()
-        if not url:
-            return redirect(url_for("index"))
-        if not is_allowed_telegraph_url(url, ALLOWED_TELEGRAPH_HOSTS):
-            app.logger.warning("Rejected URL outside Telegraph domains: %s", url)
-            return redirect(url_for("index"))
-
-        settings = normalized_settings(session.get("settings", runtime.app_settings), runtime.app_settings)
-        task_id = str(uuid.uuid4())
-        runtime.task_store.create_task(
-            {
-                "id": task_id,
+        def _new_pending_task():
+            return {
+                "id": str(uuid.uuid4()),
                 "url": url,
+                "canonical_url": canonical_url,
                 "status": "PENDING",
                 "start_time": time.time(),
                 "error": None,
                 "progress": 0,
                 "total_images": 0,
-                "image_concurrency": settings["image_concurrency"],
+                "image_concurrency": image_concurrency,
                 "result_zip_path": None,
+                "author": metadata.get("author"),
+                "comic_name": metadata.get("comic_name"),
+                "summary": metadata.get("summary"),
+                "tags_raw": metadata.get("tags_raw"),
+                "tags_normalized": metadata.get("tags_normalized"),
             }
+
+        while True:
+            claim = runtime.task_store.claim_download_task(
+                _new_pending_task(),
+                ACTIVE_TASK_STATUSES,
+                reuse_success=reuse_success,
+            )
+            if claim["decision"] != "reuse_success":
+                return claim
+
+            reusable_task = claim["task"]
+            zip_path = reusable_task.get("result_zip_path")
+            if zip_path and _is_safe_download_path(zip_path) and os.path.isfile(zip_path):
+                return claim
+
+            task_id = reusable_task.get("id")
+            if not task_id:
+                return claim
+            runtime.task_store.clear_result_zip_path(task_id)
+
+    def _wants_json():
+        if request.is_json:
+            return True
+        return request.accept_mimetypes["application/json"] > request.accept_mimetypes["text/html"]
+
+    def _coerce_bool(value):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+    def _normalize_metadata_text(value):
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    def _extract_metadata(payload):
+        author = _normalize_metadata_text(payload.get("author"))
+        comic_name = _normalize_metadata_text(payload.get("comic_name"))
+        summary = _normalize_metadata_text(payload.get("summary"))
+        tags_raw = _normalize_metadata_text(payload.get("tags"))
+        tags_normalized = tags_raw.replace("，", ",") if tags_raw else None
+        return {
+            "author": author,
+            "comic_name": comic_name,
+            "summary": summary,
+            "tags_raw": tags_raw,
+            "tags_normalized": tags_normalized,
+        }
+
+    def _extract_download_request():
+        if request.is_json:
+            payload = request.get_json(silent=True) or {}
+            if isinstance(payload, dict):
+                return (
+                    (payload.get("url") or "").strip(),
+                    _coerce_bool(payload.get("force")),
+                    _extract_metadata(payload),
+                )
+            return "", False, _extract_metadata({})
+        return (
+            (request.form.get("url") or "").strip(),
+            _coerce_bool(request.form.get("force")),
+            _extract_metadata(request.form),
         )
+
+    def _json_or_redirect_error(message, status_code):
+        if _wants_json():
+            return jsonify({"ok": False, "message": message}), status_code
+        return redirect(url_for("index"))
+
+    def _redirect_after_download_submission():
+        return redirect(url_for("index"), code=303)
+
+    def _normalize_status_filter(raw_status):
+        normalized = (raw_status or "").strip().upper()
+        if normalized in KNOWN_TASK_STATUSES:
+            return normalized
+        return ""
+
+    def _build_summary_payload():
+        status_counts = runtime.task_store.get_status_counts()
+        summary = {
+            "total_tasks": int(sum(status_counts.values())),
+            "pending_tasks": int(status_counts.get("PENDING", 0)),
+            "in_progress_tasks": int(status_counts.get("IN_PROGRESS", 0)),
+            "cancel_requested_tasks": int(status_counts.get("CANCEL_REQUESTED", 0)),
+            "canceled_tasks": int(status_counts.get("CANCELED", 0)),
+            "success_tasks": int(status_counts.get("SUCCESS", 0)),
+            "failed_tasks": int(status_counts.get("FAILED", 0)),
+        }
+        summary["active_tasks"] = (
+            summary["pending_tasks"]
+            + summary["in_progress_tasks"]
+            + summary["cancel_requested_tasks"]
+        )
+        finished_tasks = (
+            summary["success_tasks"]
+            + summary["failed_tasks"]
+            + summary["canceled_tasks"]
+        )
+        summary["finished_tasks"] = finished_tasks
+        summary["success_rate"] = (
+            round((summary["success_tasks"] / finished_tasks) * 100, 1)
+            if finished_tasks
+            else None
+        )
+        summary["startup_recovery"] = runtime.get_startup_recovery()
+        return summary
+
+    @app.route("/")
+    def index():
+        return render_template("index.html", download_guardrails=dict(DOWNLOAD_GUARDRAILS))
+
+    @app.route("/download", methods=["POST"])
+    def download():
+        url, force_download, metadata = _extract_download_request()
+        if not url:
+            return _json_or_redirect_error("Please provide a Telegraph URL.", 400)
+        if not is_allowed_telegraph_url(url, ALLOWED_TELEGRAPH_HOSTS):
+            app.logger.warning("Rejected URL outside Telegraph domains: %s", url)
+            return _json_or_redirect_error("Only telegra.ph or graph.org URLs are supported.", 400)
+
+        canonical_url = normalize_telegraph_url(url) or url
+        settings = runtime.get_settings_snapshot()
+        claim = _claim_download_task(
+            url,
+            canonical_url,
+            settings["image_concurrency"],
+            reuse_success=not force_download,
+            metadata=metadata,
+        )
+        decision = claim["decision"]
+        selected_task = claim["task"]
+        task_id = selected_task["id"]
+
+        if decision == "reuse_success":
+            download_url = url_for("download_task_file", task_id=task_id)
+            app.logger.info(
+                "Duplicate download detected, reusing task %s for URL: %s",
+                task_id,
+                url,
+            )
+            if _wants_json():
+                return jsonify(
+                    {
+                        "ok": True,
+                        "duplicate": True,
+                        "needs_confirmation": True,
+                        "task_id": task_id,
+                        "download_url": download_url,
+                        "force_applied": force_download,
+                    }
+                )
+            return _redirect_after_download_submission()
+
+        if decision == "reuse_active":
+            logs_url = url_for("logs")
+            app.logger.info(
+                "Duplicate active task detected, reusing task %s for URL: %s",
+                task_id,
+                url,
+            )
+            if _wants_json():
+                return jsonify(
+                    {
+                        "ok": True,
+                        "duplicate": True,
+                        "active": True,
+                        "task_id": task_id,
+                        "logs_url": logs_url,
+                        "force_applied": force_download,
+                    }
+                )
+            return _redirect_after_download_submission()
 
         app.logger.info("New task created: %s for URL: %s", task_id, url)
         runtime.task_orchestrator.submit_download(
@@ -60,11 +240,29 @@ def register_routes(app, runtime):
             settings["retries"],
             settings["image_concurrency"],
         )
-        return redirect(url_for("logs"))
+        if _wants_json():
+            return (
+                jsonify(
+                    {
+                        "ok": True,
+                        "duplicate": False,
+                        "active": False,
+                        "task_id": task_id,
+                        "logs_url": url_for("logs"),
+                        "force_applied": force_download,
+                    }
+                ),
+                202,
+            )
+        return _redirect_after_download_submission()
 
     @app.route("/logs")
     def logs():
         return render_template("logs.html")
+
+    @app.route("/api/summary")
+    def api_summary():
+        return jsonify(_build_summary_payload())
 
     @app.route("/api/logs")
     def api_logs():
@@ -75,8 +273,15 @@ def register_routes(app, runtime):
             1,
             MAX_LOGS_PER_PAGE,
         )
+        status_filter = _normalize_status_filter(request.args.get("status"))
+        query_filter = (request.args.get("q") or "").strip()[:120]
 
-        paginated_logs, total_logs, total_pages, page = runtime.task_store.list_paginated(page, per_page)
+        paginated_logs, total_logs, total_pages, page = runtime.task_store.list_paginated(
+            page,
+            per_page,
+            status=status_filter,
+            keyword=query_filter,
+        )
         has_active_tasks = runtime.task_store.has_active_tasks(ACTIVE_TASK_STATUSES)
 
         return jsonify(
@@ -87,6 +292,12 @@ def register_routes(app, runtime):
                 "per_page": per_page,
                 "total_pages": total_pages,
                 "has_active_tasks": has_active_tasks,
+                "filters": {
+                    "status": status_filter,
+                    "q": query_filter,
+                },
+                "status_catalog": dict(STATUS_CATALOG),
+                "summary": _build_summary_payload(),
             }
         )
 
@@ -97,7 +308,7 @@ def register_routes(app, runtime):
             return jsonify({"ok": False, "message": "Task not found."}), 404
 
         status = task.get("status")
-        if status in {"SUCCESS", "FAILED", "CANCELED"}:
+        if status in TERMINAL_TASK_STATUSES:
             return jsonify({"ok": False, "message": f"Task already finished with status {status}."}), 409
 
         if status == "CANCEL_REQUESTED":
@@ -111,7 +322,7 @@ def register_routes(app, runtime):
         )
         return jsonify({"ok": True, "message": "Cancellation requested."}), 202
 
-    @app.route("/api/tasks/<task_id>/download", methods=["GET"])
+    @app.route("/api/tasks/<task_id>/download", methods=["GET", "HEAD"])
     def download_task_file(task_id):
         task = runtime.task_store.get_task(task_id)
         if task is None:
@@ -127,6 +338,9 @@ def register_routes(app, runtime):
         if not _is_safe_download_path(zip_path) or not os.path.isfile(zip_path):
             return jsonify({"ok": False, "message": "Stored file is unavailable."}), 404
 
+        if request.method == "HEAD":
+            return "", 200
+
         return send_file(
             zip_path,
             as_attachment=True,
@@ -138,13 +352,12 @@ def register_routes(app, runtime):
     @app.route("/settings", methods=["GET", "POST"])
     def settings():
         if request.method == "POST":
-            current_settings = normalized_settings(request.form, session.get("settings", runtime.app_settings))
-            session["settings"] = current_settings
+            current_settings = normalized_settings(request.form, runtime.get_settings_snapshot())
 
             runtime.update_settings(current_settings)
             app.logger.info("Settings updated: %s", current_settings)
             runtime.task_orchestrator.update_task_concurrency(current_settings["task_concurrency"])
             return redirect(url_for("settings"))
 
-        settings_view = normalized_settings(session.get("settings", runtime.app_settings), runtime.app_settings)
+        settings_view = runtime.get_settings_snapshot()
         return render_template("settings.html", settings=settings_view)
