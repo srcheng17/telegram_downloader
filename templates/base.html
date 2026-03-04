@@ -1,24 +1,27 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Telegraph Downloader{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for_static_bust_cache('style.css') }}">
     <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
+    <script src="{{ url_for_static_bust_cache('index.js') }}" defer></script>
+    <script src="{{ url_for_static_bust_cache('logs.js') }}" defer></script>
+    <script src="{{ url_for_static_bust_cache('app.js') }}" defer></script>
 </head>
 <body>
     <header class="app-header">
         <div class="header-inner">
             <h1>Telegraph Downloader</h1>
-            <p class="app-subtitle">Batch download Telegraph images and export ZIP files.</p>
+            <p class="app-subtitle">批量下载 Telegraph 图片并导出 ZIP/CBZ 文件。</p>
         </div>
     </header>
     <div class="container">
         <nav class="main-nav">
-            <a class="nav-link {% if request.path == url_for('index') %}active{% endif %}" href="{{ url_for('index') }}" hx-get="{{ url_for('index') }}" hx-target="#content" hx-push-url="true">Home</a>
-            <a class="nav-link {% if request.path == url_for('logs') %}active{% endif %}" href="{{ url_for('logs') }}" hx-get="{{ url_for('logs') }}" hx-target="#content" hx-push-url="true">Logs</a>
-            <a class="nav-link {% if request.path == url_for('settings') %}active{% endif %}" href="{{ url_for('settings') }}" hx-get="{{ url_for('settings') }}" hx-target="#content" hx-push-url="true">Settings</a>
+            <a class="nav-link {% if request.path == url_for('index') %}active{% endif %}" href="{{ url_for('index') }}" hx-get="{{ url_for('index') }}" hx-target="#content" hx-push-url="true">首页</a>
+            <a class="nav-link {% if request.path == url_for('logs') %}active{% endif %}" href="{{ url_for('logs') }}" hx-get="{{ url_for('logs') }}" hx-target="#content" hx-push-url="true">日志</a>
+            <a class="nav-link {% if request.path == url_for('settings') %}active{% endif %}" href="{{ url_for('settings') }}" hx-get="{{ url_for('settings') }}" hx-target="#content" hx-push-url="true">设置</a>
         </nav>
         <main id="content">
             <div class="card">
@@ -26,25 +29,5 @@
             </div>
         </main>
     </div>
-    <script>
-        (function () {
-            function syncActiveNav() {
-                const navLinks = document.querySelectorAll('.main-nav .nav-link');
-                const currentPath = window.location.pathname;
-                navLinks.forEach((link) => {
-                    const linkPath = new URL(link.href, window.location.origin).pathname;
-                    link.classList.toggle('active', linkPath === currentPath);
-                });
-            }
-
-            syncActiveNav();
-            window.addEventListener('popstate', syncActiveNav);
-            document.body.addEventListener('htmx:afterSwap', function (evt) {
-                if (evt.detail && evt.detail.target && evt.detail.target.id === 'content') {
-                    syncActiveNav();
-                }
-            });
-        })();
-    </script>
 </body>
 </html>
