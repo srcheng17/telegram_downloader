@@ -125,6 +125,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
                 "progress": 0,
                 "image_concurrency": 1,
                 "author": "old-author",
+                "series_name": "old-series",
                 "comic_name": "old-comic",
                 "summary": "old-summary",
                 "tags_normalized": "old-tag",
@@ -132,6 +133,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
         }
         metadata = {
             "author": "作者A",
+            "series_name": "系列S",
             "comic_name": "漫画B",
             "summary": "简介",
             "tags_normalized": "标签1， 标签2, , 标签3",
@@ -168,12 +170,12 @@ class ImageDownloaderServiceTests(unittest.TestCase):
                             )
 
             self.assertTrue(cbz_path.endswith(".cbz"))
-            self.assertEqual(Path(cbz_path).name, "作者A_漫画B_1700000000.cbz")
+            self.assertEqual(Path(cbz_path).name, "作者A_系列S_漫画B_1700000000.cbz")
             with zipfile.ZipFile(cbz_path) as cbz:
                 self.assertIn("ComicInfo.xml", cbz.namelist())
                 root = ET.fromstring(cbz.read("ComicInfo.xml"))
             self.assertEqual(root.findtext("Writer"), "作者A")
-            self.assertEqual(root.findtext("Series"), "漫画B")
+            self.assertEqual(root.findtext("Series"), "系列S")
             self.assertEqual(root.findtext("Title"), "漫画B")
             self.assertEqual(root.findtext("Summary"), "简介")
             self.assertEqual(root.findtext("Tags"), "标签1,标签2,标签3")
@@ -188,6 +190,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
                 "progress": 0,
                 "image_concurrency": 1,
                 "author": " ",
+                "series_name": "任务系列",
                 "comic_name": None,
                 "summary": "task-summary",
                 "tags_raw": "标签甲， 标签乙, , 标签丙",
@@ -224,11 +227,11 @@ class ImageDownloaderServiceTests(unittest.TestCase):
                                 tasks_db=tasks,
                             )
 
-            self.assertEqual(Path(cbz_path).name, "未知作者_未命名漫画_1700001111.cbz")
+            self.assertEqual(Path(cbz_path).name, "未知作者_任务系列_未命名漫画_1700001111.cbz")
             with zipfile.ZipFile(cbz_path) as cbz:
                 root = ET.fromstring(cbz.read("ComicInfo.xml"))
             self.assertEqual(root.findtext("Writer"), "未知作者")
-            self.assertEqual(root.findtext("Series"), "未命名漫画")
+            self.assertEqual(root.findtext("Series"), "任务系列")
             self.assertEqual(root.findtext("Title"), "未命名漫画")
             self.assertEqual(root.findtext("Summary"), "task-summary")
             self.assertEqual(root.findtext("Tags"), "标签甲,标签乙,标签丙")
@@ -285,6 +288,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
         tasks = {"task-xml": {"status": "IN_PROGRESS", "progress": 0, "image_concurrency": 1}}
         metadata = {
             "author": "作\x00者",
+            "series_name": "系\x00列",
             "comic_name": "漫\x08画",
             "summary": "摘\x0B要\x1Fok",
             "tags_normalized": "标\x00签1， 标\x1F签2",
@@ -323,7 +327,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
             with zipfile.ZipFile(cbz_path) as cbz:
                 root = ET.fromstring(cbz.read("ComicInfo.xml"))
             self.assertEqual(root.findtext("Writer"), "作者")
-            self.assertEqual(root.findtext("Series"), "漫画")
+            self.assertEqual(root.findtext("Series"), "系列")
             self.assertEqual(root.findtext("Summary"), "摘要ok")
             self.assertEqual(root.findtext("Tags"), "标签1,标签2")
             self.assertEqual(root.findtext("Genre"), "标签1,标签2")
@@ -337,6 +341,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
                 "progress": 0,
                 "image_concurrency": 1,
                 "author": "old-author",
+                "series_name": "old-series",
                 "comic_name": "old-comic",
                 "summary": "old-summary",
                 "tags_normalized": "old-tag",
@@ -345,6 +350,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
         }
         metadata = {
             "author": "",
+            "series_name": "",
             "summary": " ",
             "tags_normalized": "",
         }
@@ -383,7 +389,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
             with zipfile.ZipFile(cbz_path) as cbz:
                 root = ET.fromstring(cbz.read("ComicInfo.xml"))
             self.assertEqual(root.findtext("Writer"), "未知作者")
-            self.assertEqual(root.findtext("Series"), "old-comic")
+            self.assertIsNone(root.find("Series").text)
             self.assertIsNone(root.find("Summary").text)
             self.assertIsNone(root.find("Tags").text)
             self.assertIsNone(root.find("Genre").text)

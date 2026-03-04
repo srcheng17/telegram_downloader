@@ -221,6 +221,7 @@ class DownloadSubmissionIntegrationTests(unittest.TestCase):
 
             metadata_payload = {
                 "author": "  Author Name  ",
+                "series_name": "  Series Name ",
                 "comic_name": "  Comic Name ",
                 "summary": "  Summary line ",
                 "tags": "  tagA， tagB,tagC  ",
@@ -263,6 +264,7 @@ class DownloadSubmissionIntegrationTests(unittest.TestCase):
         self.assertEqual(total, 2)
         self.assertEqual(rows[0]["id"], force_payload["task_id"])
         self.assertEqual(rows[0]["author"], "Author Name")
+        self.assertEqual(rows[0]["series_name"], "Series Name")
         self.assertEqual(rows[0]["comic_name"], "Comic Name")
         self.assertEqual(rows[0]["summary"], "Summary line")
         self.assertEqual(rows[0]["tags_raw"], "tagA， tagB,tagC")

@@ -238,7 +238,7 @@ form > button {
 
 .home-metadata-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.75rem;
 }
 
@@ -314,13 +314,39 @@ textarea {
     border: 1px solid #d8e8ff;
     border-radius: var(--radius-lg);
     background: #f7fbff;
-    padding: 0.9rem 1rem;
+    padding: 0.6rem 0.85rem;
 }
 
-.guardrails-panel h3 {
+.guardrails-summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
     margin: 0;
+    padding: 0.2rem 0.2rem 0.25rem;
     font-size: 1rem;
+    font-weight: 700;
     letter-spacing: -0.01em;
+    color: #1e3a8a;
+}
+
+.guardrails-summary::-webkit-details-marker {
+    display: none;
+}
+
+.guardrails-summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 0.42rem;
+    transform-origin: center;
+    transition: transform 0.2s ease;
+}
+
+.guardrails-panel[open] .guardrails-summary::before {
+    transform: rotate(90deg);
+}
+
+.guardrails-content {
+    margin-top: 0.42rem;
 }
 
 .guardrails-description {

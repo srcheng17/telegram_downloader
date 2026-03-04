@@ -22,6 +22,15 @@ test.beforeEach(() => {
   execFileSync(pythonBin, [prepareScript], { cwd: rootDir, stdio: 'inherit' });
 });
 
+test('首页：下载护栏默认折叠，避免遮挡表单输入', async ({ page }) => {
+  await page.goto('/');
+
+  const guardrailsPanel = page.locator('details.guardrails-panel');
+  await expect(guardrailsPanel).toBeVisible();
+  await expect(guardrailsPanel).not.toHaveAttribute('open', '');
+  await expect(page.locator('.guardrails-description')).toBeHidden();
+});
+
 test('首页 duplicate SUCCESS 取消分支：展示确认并仅下载已有文件', async ({ page }) => {
   const submissions = recordDownloadSubmissions(page);
 
@@ -32,6 +41,7 @@ test('首页 duplicate SUCCESS 取消分支：展示确认并仅下载已有文�
 
   await page.locator('#url').fill('https://www.telegra.ph/E2E-Success-01-01');
   await page.locator('#author').fill('E2E作者');
+  await page.locator('#series_name').fill('E2E系列');
   await page.locator('#comic_name').fill('E2E漫画');
   await page.locator('#summary').fill('E2E简介');
   await page.locator('#tags').fill('科幻,冒险，连载');
@@ -46,6 +56,7 @@ test('首页 duplicate SUCCESS 取消分支：展示确认并仅下载已有文�
   expect(submissions[0]).toMatchObject({
     url: 'https://www.telegra.ph/E2E-Success-01-01',
     author: 'E2E作者',
+    series_name: 'E2E系列',
     comic_name: 'E2E漫画',
     summary: 'E2E简介',
     tags: '科幻,冒险，连载',
@@ -72,6 +83,7 @@ test('首页 duplicate SUCCESS 确认分支：force=true 二次提交创建新�
 
   await page.locator('#url').fill('https://www.telegra.ph/E2E-Success-01-01');
   await page.locator('#author').fill('二次提交作者');
+  await page.locator('#series_name').fill('二次提交系列');
   await page.locator('#comic_name').fill('二次提交漫画');
   await page.locator('#summary').fill('二次提交简介');
   await page.locator('#tags').fill('剧情,动作');
@@ -86,6 +98,7 @@ test('首页 duplicate SUCCESS 确认分支：force=true 二次提交创建新�
     url: 'https://www.telegra.ph/E2E-Success-01-01',
     force: 'true',
     author: '二次提交作者',
+    series_name: '二次提交系列',
     comic_name: '二次提交漫画',
     summary: '二次提交简介',
     tags: '剧情,动作',

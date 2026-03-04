@@ -16,6 +16,7 @@ class TaskStore:
         image_concurrency,
         result_zip_path,
         author,
+        series_name,
         comic_name,
         summary,
         tags_raw,
@@ -33,6 +34,7 @@ class TaskStore:
         "image_concurrency",
         "result_zip_path",
         "author",
+        "series_name",
         "comic_name",
         "summary",
         "tags_raw",
@@ -70,6 +72,7 @@ class TaskStore:
                     image_concurrency INTEGER NOT NULL DEFAULT 2,
                     result_zip_path TEXT,
                     author TEXT,
+                    series_name TEXT,
                     comic_name TEXT,
                     summary TEXT,
                     tags_raw TEXT,
@@ -80,6 +83,7 @@ class TaskStore:
             self._ensure_column(conn, "tasks", "canonical_url", "TEXT")
             self._ensure_column(conn, "tasks", "result_zip_path", "TEXT")
             self._ensure_column(conn, "tasks", "author", "TEXT")
+            self._ensure_column(conn, "tasks", "series_name", "TEXT")
             self._ensure_column(conn, "tasks", "comic_name", "TEXT")
             self._ensure_column(conn, "tasks", "summary", "TEXT")
             self._ensure_column(conn, "tasks", "tags_raw", "TEXT")
@@ -122,6 +126,7 @@ class TaskStore:
             "image_concurrency": int(task.get("image_concurrency", 2)),
             "result_zip_path": task.get("result_zip_path"),
             "author": task.get("author"),
+            "series_name": task.get("series_name"),
             "comic_name": task.get("comic_name"),
             "summary": task.get("summary"),
             "tags_raw": task.get("tags_raw"),
@@ -134,8 +139,8 @@ class TaskStore:
             conn.execute(
                 """
                 INSERT INTO tasks (
-                    id, url, canonical_url, status, start_time, error, progress, total_images, image_concurrency, result_zip_path, author, comic_name, summary, tags_raw, tags_normalized
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, url, canonical_url, status, start_time, error, progress, total_images, image_concurrency, result_zip_path, author, series_name, comic_name, summary, tags_raw, tags_normalized
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     url=excluded.url,
                     canonical_url=excluded.canonical_url,
@@ -147,6 +152,7 @@ class TaskStore:
                     image_concurrency=excluded.image_concurrency,
                     result_zip_path=excluded.result_zip_path,
                     author=excluded.author,
+                    series_name=excluded.series_name,
                     comic_name=excluded.comic_name,
                     summary=excluded.summary,
                     tags_raw=excluded.tags_raw,
@@ -164,6 +170,7 @@ class TaskStore:
                     payload["image_concurrency"],
                     payload["result_zip_path"],
                     payload["author"],
+                    payload["series_name"],
                     payload["comic_name"],
                     payload["summary"],
                     payload["tags_raw"],
@@ -238,11 +245,12 @@ class TaskStore:
                     image_concurrency,
                     result_zip_path,
                     author,
+                    series_name,
                     comic_name,
                     summary,
                     tags_raw,
                     tags_normalized
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["id"],
@@ -256,6 +264,7 @@ class TaskStore:
                     payload["image_concurrency"],
                     payload["result_zip_path"],
                     payload["author"],
+                    payload["series_name"],
                     payload["comic_name"],
                     payload["summary"],
                     payload["tags_raw"],
@@ -359,6 +368,7 @@ class TaskStore:
                     image_concurrency,
                     result_zip_path,
                     author,
+                    series_name,
                     comic_name,
                     summary,
                     tags_raw,

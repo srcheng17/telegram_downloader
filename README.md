@@ -12,9 +12,9 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 
 *   **通过 URL 下载**：只需粘贴 Telegraph 页面的 URL 即可开始下载。
 *   **重复 URL 智能复用 + 强制重抓**：默认命中已下载文件时进入“确认生成新 CBZ”流程；可强制创建新任务。
-*   **CBZ 元数据**：首页支持手动填写作者、漫画名、简介、标签（可空），并写入 `ComicInfo.xml`（`Writer/Series/Title/Summary/Tags/Genre`）。
+*   **CBZ 元数据**：首页支持手动填写作者、漫画系列名、漫画名、简介、标签（可空），并写入 `ComicInfo.xml`（`Writer/Series/Title/Summary/Tags/Genre`，其中 `Series` 与 `Title` 双写）。
 *   **并发下载**：支持多线程并发下载图片，以提高效率。
-*   **自动打包**：下载完成后，所有图片会自动打包成 `.cbz`，文件名规则为 `作者_漫画名_时间戳.cbz`（空值自动占位）。
+*   **自动打包**：下载完成后，所有图片会自动打包成 `.cbz`，文件名规则为 `作者_[系列名]_漫画名_时间戳.cbz`（系列名为空则省略该段，作者/漫画名空值自动占位）。
 *   **后端暂存 + 手动下载**：任务完成后产物会先存储在后端，用户可在日志页面下载。
 *   **下载预检与页内错误反馈**：日志页下载按钮会先预检文件状态；如果文件不可用会在当前页给出明确错误，不会跳离 Logs 页面。
 *   **容错下载**：单张图片 404/失败会继续尝试其他图片；只要存在失败，该任务最终标记为失败并不给下载按钮。
@@ -95,7 +95,7 @@ npm run e2e:test
 ## 关键接口说明（新增）
 
 *   `POST /download`
-    *   支持元数据字段：`author`、`comic_name`、`summary`、`tags`（表单或 JSON）。
+    *   支持元数据字段：`author`、`series_name`、`comic_name`、`summary`、`tags`（表单或 JSON）。
     *   支持 `force` 参数（布尔语义）。
     *   命中已有成功文件时返回确认态（`needs_confirmation=true` + `download_url`）；用户可选择直接下载已有文件，或以 `force=true` 再次提交生成新 CBZ。
     *   若已有同 URL 活跃任务，仍会复用活跃任务避免重复并发。

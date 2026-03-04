@@ -337,6 +337,7 @@
         const payload = {
             url,
             author: readOptionalField(form, 'author'),
+            series_name: readOptionalField(form, 'series_name'),
             comic_name: readOptionalField(form, 'comic_name'),
             summary: readOptionalField(form, 'summary'),
             tags: readOptionalField(form, 'tags'),

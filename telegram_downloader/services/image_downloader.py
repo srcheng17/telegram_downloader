@@ -245,6 +245,20 @@ def _sanitize_filename_part(value, fallback):
     return safe_value[:MAX_TITLE_LENGTH]
 
 
+def _sanitize_optional_filename_part(value):
+    normalized = _normalize_metadata_text(value, allow_empty=True)
+    if normalized is None:
+        return ""
+    safe_value = INVALID_FILENAME_CHARS.sub(" ", normalized)
+    safe_value = re.sub(r"\s+", " ", safe_value).strip(" .")
+    if safe_value in {"", ".", ".."}:
+        return ""
+    safe_value = _trim_to_max_bytes(safe_value, MAX_METADATA_FILENAME_PART_BYTES).rstrip(" .")
+    if safe_value in {"", ".", ".."}:
+        return ""
+    return safe_value[:MAX_TITLE_LENGTH]
+
+
 def _resolve_task_metadata(metadata, tasks_db, tasks_lock, task_id):
     metadata = metadata if isinstance(metadata, dict) else {}
 
@@ -257,6 +271,7 @@ def _resolve_task_metadata(metadata, tasks_db, tasks_lock, task_id):
         )
 
     author = _read_field("author", allow_empty=True) or DEFAULT_AUTHOR_PLACEHOLDER
+    series_name = _read_field("series_name", allow_empty=True) or ""
     comic_name = _read_field("comic_name", allow_empty=True) or DEFAULT_COMIC_NAME_PLACEHOLDER
     summary = _read_field("summary", allow_empty=True) or ""
     if "tags_normalized" in metadata:
@@ -270,6 +285,7 @@ def _resolve_task_metadata(metadata, tasks_db, tasks_lock, task_id):
     tags_normalized = _normalize_tags(tags_source)
     return {
         "author": author,
+        "series_name": series_name,
         "comic_name": comic_name,
         "summary": summary,
         "tags_normalized": tags_normalized,
@@ -286,7 +302,7 @@ def _write_comicinfo_xml(folder_path, metadata):
     root = ET.Element("ComicInfo")
     for tag_name, value in (
         ("Writer", metadata.get("author") or ""),
-        ("Series", metadata.get("comic_name") or ""),
+        ("Series", metadata.get("series_name") or ""),
         ("Title", metadata.get("comic_name") or ""),
         ("Summary", metadata.get("summary") or ""),
         ("Tags", metadata.get("tags_normalized") or ""),
@@ -597,11 +613,16 @@ def download_images(
             resolved_metadata["author"],
             DEFAULT_AUTHOR_PLACEHOLDER,
         )
+        safe_series_name = _sanitize_optional_filename_part(resolved_metadata.get("series_name"))
         safe_comic_name = _sanitize_filename_part(
             resolved_metadata["comic_name"],
             DEFAULT_COMIC_NAME_PLACEHOLDER,
         )
-        safe_title = f"{safe_author}_{safe_comic_name}_{int(time.time())}"
+        title_parts = [safe_author]
+        if safe_series_name:
+            title_parts.append(safe_series_name)
+        title_parts.append(safe_comic_name)
+        safe_title = "_".join([*title_parts, str(int(time.time()))])
         temp_folder_path, final_zip_path = _build_paths(temp_folder, base_folder, safe_title, task_id)
         os.makedirs(temp_folder_path, exist_ok=True)
 

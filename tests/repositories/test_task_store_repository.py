@@ -188,6 +188,7 @@ class TaskStoreRepositoryTests(unittest.TestCase):
                 "image_concurrency": 2,
                 "result_zip_path": "/tmp/cbz-task.zip",
                 "author": "author-name",
+                "series_name": "series-name",
                 "comic_name": "comic-name",
                 "summary": "summary text",
                 "tags_raw": "tagA, tagB",
@@ -197,6 +198,7 @@ class TaskStoreRepositoryTests(unittest.TestCase):
 
         task = self.store.get_task("cbz-task")
         self.assertEqual(task["author"], "author-name")
+        self.assertEqual(task["series_name"], "series-name")
         self.assertEqual(task["comic_name"], "comic-name")
         self.assertEqual(task["summary"], "summary text")
         self.assertEqual(task["tags_raw"], "tagA, tagB")

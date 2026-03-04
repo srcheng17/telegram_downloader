@@ -49,6 +49,7 @@ def register_routes(app, runtime):
                 "image_concurrency": image_concurrency,
                 "result_zip_path": None,
                 "author": metadata.get("author"),
+                "series_name": metadata.get("series_name"),
                 "comic_name": metadata.get("comic_name"),
                 "summary": metadata.get("summary"),
                 "tags_raw": metadata.get("tags_raw"),
@@ -94,12 +95,14 @@ def register_routes(app, runtime):
 
     def _extract_metadata(payload):
         author = _normalize_metadata_text(payload.get("author"))
+        series_name = _normalize_metadata_text(payload.get("series_name"))
         comic_name = _normalize_metadata_text(payload.get("comic_name"))
         summary = _normalize_metadata_text(payload.get("summary"))
         tags_raw = _normalize_metadata_text(payload.get("tags"))
         tags_normalized = tags_raw.replace("，", ",") if tags_raw else None
         return {
             "author": author,
+            "series_name": series_name,
             "comic_name": comic_name,
             "summary": summary,
             "tags_raw": tags_raw,
