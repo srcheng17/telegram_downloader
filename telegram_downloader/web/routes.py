@@ -136,6 +136,14 @@ def register_routes(app, runtime):
             return normalized
         return ""
 
+    def _download_mimetype(file_path):
+        extension = os.path.splitext(file_path)[1].lower()
+        if extension == ".cbz":
+            return "application/vnd.comicbook+zip"
+        if extension == ".zip":
+            return "application/zip"
+        return "application/octet-stream"
+
     def _build_summary_payload():
         status_counts = runtime.task_store.get_status_counts()
         summary = {
@@ -345,7 +353,7 @@ def register_routes(app, runtime):
             zip_path,
             as_attachment=True,
             download_name=os.path.basename(zip_path),
-            mimetype="application/vnd.comicbook+zip",
+            mimetype=_download_mimetype(zip_path),
             conditional=True,
         )
 

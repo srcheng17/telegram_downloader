@@ -213,6 +213,25 @@ class WebRoutesApiLogsTests(unittest.TestCase):
         self.assertEqual(response.mimetype, "application/vnd.comicbook+zip")
         response.close()
 
+    def test_download_task_file_endpoint_returns_zip_mimetype_for_zip_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zip_path = Path(temp_dir) / "legacy.zip"
+            zip_path.write_bytes(b"PK\x03\x04fakezip")
+            self._add_task(
+                task_id="done-with-zip-file",
+                start_time=100,
+                status="SUCCESS",
+                result_zip_path=str(zip_path),
+            )
+
+            with patch.dict(os.environ, {"DOWNLOAD_PATH": temp_dir}):
+                response = self.client.get("/api/tasks/done-with-zip-file/download")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("legacy.zip", response.headers.get("Content-Disposition", ""))
+        self.assertEqual(response.mimetype, "application/zip")
+        response.close()
+
     def test_download_task_file_endpoint_supports_head_precheck(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             zip_path = Path(temp_dir) / "head-check.zip"
