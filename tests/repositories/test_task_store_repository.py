@@ -193,6 +193,8 @@ class TaskStoreRepositoryTests(unittest.TestCase):
                 "summary": "summary text",
                 "tags_raw": "tagA, tagB",
                 "tags_normalized": "taga,tagb",
+                "genres_raw": "genreA, genreB",
+                "genres_normalized": "genrea,genreb",
             }
         )
 
@@ -203,6 +205,8 @@ class TaskStoreRepositoryTests(unittest.TestCase):
         self.assertEqual(task["summary"], "summary text")
         self.assertEqual(task["tags_raw"], "tagA, tagB")
         self.assertEqual(task["tags_normalized"], "taga,tagb")
+        self.assertEqual(task["genres_raw"], "genreA, genreB")
+        self.assertEqual(task["genres_normalized"], "genrea,genreb")
 
     def test_result_zip_helpers_support_cleanup_flow(self):
         self.store.create_task(

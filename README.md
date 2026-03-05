@@ -12,7 +12,7 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 
 *   **通过 URL 下载**：只需粘贴 Telegraph 页面的 URL 即可开始下载。
 *   **重复 URL 智能复用 + 强制重抓**：默认命中已下载文件时进入“确认生成新 CBZ”流程；可强制创建新任务。
-*   **CBZ 元数据**：首页支持手动填写作者、漫画系列名、漫画名、简介、标签（可空），并写入 `ComicInfo.xml`（`Writer/Series/Title/Summary/Tags/Genre`，其中 `Series` 与 `Title` 双写）。
+*   **CBZ 元数据**：首页支持手动填写作者、漫画系列名、漫画名、简介、标签、类型（可空），并写入 `ComicInfo.xml`（`Writer/Series/Title/Summary/Tags/Genre`，其中 `Tags` 与 `Genre` 独立填写）。
 *   **并发下载**：支持多线程并发下载图片，以提高效率。
 *   **自动打包**：下载完成后，所有图片会自动打包成 `.cbz`，文件名规则为 `作者_[系列名]_漫画名_时间戳.cbz`（系列名为空则省略该段，作者/漫画名空值自动占位）。
 *   **后端暂存 + 手动下载**：任务完成后产物会先存储在后端，用户可在日志页面下载。
@@ -20,7 +20,7 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 *   **容错下载**：单张图片 404/失败会继续尝试其他图片；只要存在失败，该任务最终标记为失败并不给下载按钮。
 *   **下载资源护栏**：内置下载上限，防止资源失控（默认：单任务最多 `300` 张图、单图最多 `25 MiB`、总下载最多 `500 MiB`）。
 *   **下载日志**：提供一个日志页面，可以查看所有下载任务的状态（中文标签）、进度和错误信息。
-*   **任务看板与筛选**：首页/日志页提供任务概览指标；日志支持按状态与关键词筛选，便于快速定位问题任务。
+*   **任务看板与筛选**：首页/日志页提供任务概览指标；移动端默认折叠概览卡，日志支持按状态与关键词筛选，便于快速定位问题任务。
 *   **准确取消反馈**：取消操作为异步流程，前端会按后端真实响应显示状态与提示，减少误导。
 *   **可配置性**：
     *   可自定义并发数、下载超时和重试次数。
@@ -31,9 +31,9 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 
 ## 技术栈
 
-*   **后端**: Python, Flask
+*   **后端**: Python, Flask, Celery
 *   **前端**: HTML, CSS, htmx
-*   **部署**: Docker
+*   **部署**: Docker, Docker Compose, Redis, PostgreSQL
 
 ## 后端架构（重构后）
 
@@ -47,11 +47,14 @@ telegram_downloader/
   url_validation.py        # URL 安全校验
   runtime.py               # 运行时状态容器
   repositories/
-    task_store.py          # 任务持久化层（SQLite）
+    task_store.py          # 任务持久化层（SQLite / PostgreSQL）
   services/
-    task_orchestrator.py   # 任务调度与线程池管理
+    task_orchestrator.py   # 任务调度（线程池 / Celery）
+    download_worker.py     # 下载执行器（线程与 Celery 复用）
     image_downloader.py    # 图片抓取与打包业务逻辑
     log_cleanup.py         # 日志定期清理后台服务
+  celery_app.py            # Celery 配置入口
+  celery_tasks.py          # Celery 任务定义
   web/
     routes.py              # HTTP 路由层
     template_helpers.py    # 模板辅助函数
@@ -95,7 +98,7 @@ npm run e2e:test
 ## 关键接口说明（新增）
 
 *   `POST /download`
-    *   支持元数据字段：`author`、`series_name`、`comic_name`、`summary`、`tags`（表单或 JSON）。
+    *   支持元数据字段：`author`、`series_name`、`comic_name`、`summary`、`tags`、`genres`（表单或 JSON）。
     *   支持 `force` 参数（布尔语义）。
     *   命中已有成功文件时返回确认态（`needs_confirmation=true` + `download_url`）；用户可选择直接下载已有文件，或以 `force=true` 再次提交生成新 CBZ。
     *   若已有同 URL 活跃任务，仍会复用活跃任务避免重复并发。
@@ -132,6 +135,33 @@ docker run -d -p 5002:5000 \
 ### 3. 访问应用
 
 在浏览器中打开 `http://localhost:5002`。
+
+## 二期架构运行（Compose）
+
+```bash
+docker compose up -d --build
+```
+
+默认包含 `web + worker + redis + postgres` 四个服务。
+
+## SQLite 迁移到 Postgres（停机迁移）
+
+1. 停止旧服务（冻结写入）。
+2. 启动 `postgres` 容器。
+3. 执行迁移脚本：
+
+```bash
+.venv/bin/python scripts/migrate_sqlite_to_postgres.py \
+  --source-sqlite data/tasks.db \
+  --target-postgres "postgresql://telegraph:telegraph@localhost:5432/telegraph" \
+  --truncate-target
+```
+
+4. 使用 compose 启动新架构：
+
+```bash
+docker compose up -d --build
+```
 
 ## 更新后重建（镜像与容器）
 

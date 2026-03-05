@@ -25,6 +25,7 @@
         modalBackdropHandler: null,
         visibilityHandler: null,
         keyDownHandler: null,
+        summaryResizeHandler: null,
     };
     window.__telegraphLogsState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
@@ -622,6 +623,15 @@
         }
     }
 
+    function syncSummaryCollapseMode() {
+        const summaryCollapsible = document.getElementById('summary-collapsible-logs');
+        if (!summaryCollapsible || typeof window.matchMedia !== 'function') {
+            return;
+        }
+        const isMobile = window.matchMedia('(max-width: 768px)').matches;
+        summaryCollapsible.open = !isMobile;
+    }
+
     function updatePaginationUI() {
         const pageInfo = document.getElementById('page-info');
         const prevBtn = document.getElementById('prev-page');
@@ -801,6 +811,10 @@
         state.consecutiveFailures = 0;
         state.startupRecoveryDismissKey = '';
         state.modalRestoreFocusEl = null;
+        if (state.summaryResizeHandler) {
+            window.removeEventListener('resize', state.summaryResizeHandler);
+            state.summaryResizeHandler = null;
+        }
         renderStatusFilterOptions();
         syncFormWithFilters();
 
@@ -898,6 +912,9 @@
         }
         document.addEventListener('visibilitychange', state.visibilityHandler);
         document.addEventListener('keydown', state.keyDownHandler);
+        syncSummaryCollapseMode();
+        state.summaryResizeHandler = syncSummaryCollapseMode;
+        window.addEventListener('resize', state.summaryResizeHandler);
 
         fetchLogs(1);
     }
@@ -938,6 +955,9 @@
         if (state.keyDownHandler) {
             document.removeEventListener('keydown', state.keyDownHandler);
         }
+        if (state.summaryResizeHandler) {
+            window.removeEventListener('resize', state.summaryResizeHandler);
+        }
 
         state.formHandler = null;
         state.clearHandler = null;
@@ -948,6 +968,7 @@
         state.modalBackdropHandler = null;
         state.visibilityHandler = null;
         state.keyDownHandler = null;
+        state.summaryResizeHandler = null;
         state.statusCatalog = {};
         state.consecutiveFailures = 0;
         state.startupRecoveryDismissKey = '';

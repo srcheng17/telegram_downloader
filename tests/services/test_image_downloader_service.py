@@ -129,6 +129,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
                 "comic_name": "old-comic",
                 "summary": "old-summary",
                 "tags_normalized": "old-tag",
+                "genres_normalized": "old-genre",
             }
         }
         metadata = {
@@ -137,6 +138,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
             "comic_name": "漫画B",
             "summary": "简介",
             "tags_normalized": "标签1， 标签2, , 标签3",
+            "genres_normalized": "类型甲， 类型乙, , 类型丙",
         }
 
         with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:
@@ -179,7 +181,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
             self.assertEqual(root.findtext("Title"), "漫画B")
             self.assertEqual(root.findtext("Summary"), "简介")
             self.assertEqual(root.findtext("Tags"), "标签1,标签2,标签3")
-            self.assertEqual(root.findtext("Genre"), "标签1,标签2,标签3")
+            self.assertEqual(root.findtext("Genre"), "类型甲,类型乙,类型丙")
 
     def test_download_images_uses_task_metadata_fallback_and_placeholder_filename(self):
         html = "<html><head><title>Ignored</title></head><body><img src='1.jpg'></body></html>"
@@ -195,6 +197,8 @@ class ImageDownloaderServiceTests(unittest.TestCase):
                 "summary": "task-summary",
                 "tags_raw": "标签甲， 标签乙, , 标签丙",
                 "tags_normalized": None,
+                "genres_raw": "类型甲， 类型乙, , 类型丙",
+                "genres_normalized": None,
             }
         }
 
@@ -235,7 +239,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
             self.assertEqual(root.findtext("Title"), "未命名漫画")
             self.assertEqual(root.findtext("Summary"), "task-summary")
             self.assertEqual(root.findtext("Tags"), "标签甲,标签乙,标签丙")
-            self.assertEqual(root.findtext("Genre"), "标签甲,标签乙,标签丙")
+            self.assertEqual(root.findtext("Genre"), "类型甲,类型乙,类型丙")
 
     def test_download_images_truncates_long_cbz_filename_to_safe_length(self):
         html = "<html><head><title>Ignored</title></head><body><img src='1.jpg'></body></html>"
@@ -292,6 +296,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
             "comic_name": "漫\x08画",
             "summary": "摘\x0B要\x1Fok",
             "tags_normalized": "标\x00签1， 标\x1F签2",
+            "genres_normalized": "类\x00型1， 类\x1F型2",
         }
 
         with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:
@@ -330,7 +335,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
             self.assertEqual(root.findtext("Series"), "系列")
             self.assertEqual(root.findtext("Summary"), "摘要ok")
             self.assertEqual(root.findtext("Tags"), "标签1,标签2")
-            self.assertEqual(root.findtext("Genre"), "标签1,标签2")
+            self.assertEqual(root.findtext("Genre"), "类型1,类型2")
 
     def test_download_images_treats_explicit_empty_metadata_as_user_clear(self):
         html = "<html><head><title>Ignored</title></head><body><img src='1.jpg'></body></html>"
@@ -346,6 +351,8 @@ class ImageDownloaderServiceTests(unittest.TestCase):
                 "summary": "old-summary",
                 "tags_normalized": "old-tag",
                 "tags_raw": "old-tag-raw",
+                "genres_normalized": "old-genre",
+                "genres_raw": "old-genre-raw",
             }
         }
         metadata = {
@@ -353,6 +360,7 @@ class ImageDownloaderServiceTests(unittest.TestCase):
             "series_name": "",
             "summary": " ",
             "tags_normalized": "",
+            "genres_normalized": "",
         }
 
         with tempfile.TemporaryDirectory() as base_dir, tempfile.TemporaryDirectory() as temp_dir:

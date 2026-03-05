@@ -54,6 +54,8 @@ def register_routes(app, runtime):
                 "summary": metadata.get("summary"),
                 "tags_raw": metadata.get("tags_raw"),
                 "tags_normalized": metadata.get("tags_normalized"),
+                "genres_raw": metadata.get("genres_raw"),
+                "genres_normalized": metadata.get("genres_normalized"),
             }
 
         while True:
@@ -100,6 +102,8 @@ def register_routes(app, runtime):
         summary = _normalize_metadata_text(payload.get("summary"))
         tags_raw = _normalize_metadata_text(payload.get("tags"))
         tags_normalized = tags_raw.replace("，", ",") if tags_raw else None
+        genres_raw = _normalize_metadata_text(payload.get("genres"))
+        genres_normalized = genres_raw.replace("，", ",") if genres_raw else None
         return {
             "author": author,
             "series_name": series_name,
@@ -107,6 +111,8 @@ def register_routes(app, runtime):
             "summary": summary,
             "tags_raw": tags_raw,
             "tags_normalized": tags_normalized,
+            "genres_raw": genres_raw,
+            "genres_normalized": genres_normalized,
         }
 
     def _extract_download_request():

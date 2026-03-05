@@ -31,6 +31,15 @@ test('首页：下载护栏默认折叠，避免遮挡表单输入', async ({ pa
   await expect(page.locator('.guardrails-description')).toBeHidden();
 });
 
+test('移动端：首页与日志任务概览默认折叠', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await expect(page.locator('#summary-collapsible-home')).not.toHaveAttribute('open', '');
+
+  await page.goto('/logs');
+  await expect(page.locator('#summary-collapsible-logs')).not.toHaveAttribute('open', '');
+});
+
 test('首页 duplicate SUCCESS 取消分支：展示确认并仅下载已有文件', async ({ page }) => {
   const submissions = recordDownloadSubmissions(page);
 
@@ -45,6 +54,7 @@ test('首页 duplicate SUCCESS 取消分支：展示确认并仅下载已有文�
   await page.locator('#comic_name').fill('E2E漫画');
   await page.locator('#summary').fill('E2E简介');
   await page.locator('#tags').fill('科幻,冒险，连载');
+  await page.locator('#genres').fill('青年,悬疑，热血');
 
   await page.getByRole('button', { name: '开始下载' }).click();
 
@@ -60,6 +70,7 @@ test('首页 duplicate SUCCESS 取消分支：展示确认并仅下载已有文�
     comic_name: 'E2E漫画',
     summary: 'E2E简介',
     tags: '科幻,冒险，连载',
+    genres: '青年,悬疑，热血',
   });
 
   await page.getByRole('button', { name: '取消并下载已有文件' }).click();
@@ -87,6 +98,7 @@ test('首页 duplicate SUCCESS 确认分支：force=true 二次提交创建新�
   await page.locator('#comic_name').fill('二次提交漫画');
   await page.locator('#summary').fill('二次提交简介');
   await page.locator('#tags').fill('剧情,动作');
+  await page.locator('#genres').fill('冒险,奇幻');
 
   await page.getByRole('button', { name: '开始下载' }).click();
   await expect(page.locator('#download-feedback')).toContainText('该文件已有下载，是否生成新的CBZ文件？');
@@ -102,6 +114,7 @@ test('首页 duplicate SUCCESS 确认分支：force=true 二次提交创建新�
     comic_name: '二次提交漫画',
     summary: '二次提交简介',
     tags: '剧情,动作',
+    genres: '冒险,奇幻',
   });
 
   await expect(page.locator('#download-feedback')).toContainText('任务已加入队列');

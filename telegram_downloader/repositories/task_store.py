@@ -2,6 +2,13 @@ import os
 import sqlite3
 import threading
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:  # pragma: no cover - optional dependency for postgres deployments.
+    psycopg = None
+    dict_row = None
+
 
 class TaskStore:
     _TASK_SELECT_FIELDS = """
@@ -20,7 +27,9 @@ class TaskStore:
         comic_name,
         summary,
         tags_raw,
-        tags_normalized
+        tags_normalized,
+        genres_raw,
+        genres_normalized
     """
     _COLUMNS = {
         "id",
@@ -39,33 +48,59 @@ class TaskStore:
         "summary",
         "tags_raw",
         "tags_normalized",
+        "genres_raw",
+        "genres_normalized",
     }
 
     def __init__(self, db_path):
         self.db_path = db_path
+        self._is_postgres = str(db_path).startswith(("postgresql://", "postgres://"))
         self._lock = threading.RLock()
         self._ensure_db()
 
     def _connect(self):
+        if self._is_postgres:
+            if psycopg is None:
+                raise RuntimeError(
+                    "Postgres backend requested but psycopg is not installed. "
+                    "Install with `pip install psycopg[binary]`."
+                )
+            return psycopg.connect(self.db_path, autocommit=False, row_factory=dict_row)
         connection = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         return connection
 
+    def _sql(self, query):
+        if not self._is_postgres:
+            return query
+        return query.replace("?", "%s")
+
+    def _execute(self, conn, query, params=None):
+        normalized_params = () if params is None else params
+        if isinstance(normalized_params, list):
+            normalized_params = tuple(normalized_params)
+        return conn.execute(self._sql(query), normalized_params)
+
     def _ensure_db(self):
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+        if not self._is_postgres:
+            db_dir = os.path.dirname(self.db_path)
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
         with self._lock, self._connect() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute(
-                """
+            if not self._is_postgres:
+                self._execute(conn, "PRAGMA journal_mode=WAL")
+                self._execute(conn, "PRAGMA synchronous=NORMAL")
+
+            numeric_type = "DOUBLE PRECISION" if self._is_postgres else "REAL"
+            self._execute(
+                conn,
+                f"""
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
                     url TEXT NOT NULL,
                     canonical_url TEXT,
                     status TEXT NOT NULL,
-                    start_time REAL NOT NULL,
+                    start_time {numeric_type} NOT NULL,
                     error TEXT,
                     progress INTEGER NOT NULL DEFAULT 0,
                     total_images INTEGER NOT NULL DEFAULT 0,
@@ -76,9 +111,11 @@ class TaskStore:
                     comic_name TEXT,
                     summary TEXT,
                     tags_raw TEXT,
-                    tags_normalized TEXT
+                    tags_normalized TEXT,
+                    genres_raw TEXT,
+                    genres_normalized TEXT
                 )
-                """
+                """,
             )
             self._ensure_column(conn, "tasks", "canonical_url", "TEXT")
             self._ensure_column(conn, "tasks", "result_zip_path", "TEXT")
@@ -88,24 +125,44 @@ class TaskStore:
             self._ensure_column(conn, "tasks", "summary", "TEXT")
             self._ensure_column(conn, "tasks", "tags_raw", "TEXT")
             self._ensure_column(conn, "tasks", "tags_normalized", "TEXT")
-            conn.execute(
+            self._ensure_column(conn, "tasks", "genres_raw", "TEXT")
+            self._ensure_column(conn, "tasks", "genres_normalized", "TEXT")
+            self._execute(
+                conn,
                 "CREATE INDEX IF NOT EXISTS idx_tasks_start_time ON tasks(start_time DESC)"
             )
-            conn.execute(
+            self._execute(
+                conn,
                 "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)"
             )
-            conn.execute(
+            self._execute(
+                conn,
                 "CREATE INDEX IF NOT EXISTS idx_tasks_canonical_url_start_time "
                 "ON tasks(canonical_url, start_time DESC)"
             )
 
     def _ensure_column(self, conn, table_name, column_name, column_sql):
-        existing_columns = {
-            row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-        }
+        if self._is_postgres:
+            existing_columns = {
+                row["column_name"]
+                for row in self._execute(
+                    conn,
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema() AND table_name = ?
+                    """,
+                    (table_name,),
+                ).fetchall()
+            }
+        else:
+            existing_columns = {
+                row["name"]
+                for row in self._execute(conn, f"PRAGMA table_info({table_name})").fetchall()
+            }
         if column_name in existing_columns:
             return
-        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
+        self._execute(conn, f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
 
     def _normalize_task_payload(self, task):
         url = task["url"]
@@ -131,16 +188,19 @@ class TaskStore:
             "summary": task.get("summary"),
             "tags_raw": task.get("tags_raw"),
             "tags_normalized": task.get("tags_normalized"),
+            "genres_raw": task.get("genres_raw"),
+            "genres_normalized": task.get("genres_normalized"),
         }
 
     def create_task(self, task):
         payload = self._normalize_task_payload(task)
         with self._lock, self._connect() as conn:
-            conn.execute(
+            self._execute(
+                conn,
                 """
                 INSERT INTO tasks (
-                    id, url, canonical_url, status, start_time, error, progress, total_images, image_concurrency, result_zip_path, author, series_name, comic_name, summary, tags_raw, tags_normalized
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, url, canonical_url, status, start_time, error, progress, total_images, image_concurrency, result_zip_path, author, series_name, comic_name, summary, tags_raw, tags_normalized, genres_raw, genres_normalized
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     url=excluded.url,
                     canonical_url=excluded.canonical_url,
@@ -156,7 +216,9 @@ class TaskStore:
                     comic_name=excluded.comic_name,
                     summary=excluded.summary,
                     tags_raw=excluded.tags_raw,
-                    tags_normalized=excluded.tags_normalized
+                    tags_normalized=excluded.tags_normalized,
+                    genres_raw=excluded.genres_raw,
+                    genres_normalized=excluded.genres_normalized
                 """,
                 (
                     payload["id"],
@@ -175,6 +237,8 @@ class TaskStore:
                     payload["summary"],
                     payload["tags_raw"],
                     payload["tags_normalized"],
+                    payload["genres_raw"],
+                    payload["genres_normalized"],
                 ),
             )
 
@@ -188,10 +252,18 @@ class TaskStore:
 
         normalized_statuses = [status for status in (active_statuses or []) if status]
         with self._lock, self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            if self._is_postgres:
+                self._execute(
+                    conn,
+                    "SELECT pg_advisory_xact_lock(hashtext(?))",
+                    (canonical_url,),
+                )
+            else:
+                self._execute(conn, "BEGIN IMMEDIATE")
 
             if reuse_success:
-                success_row = conn.execute(
+                success_row = self._execute(
+                    conn,
                     f"""
                     SELECT {self._TASK_SELECT_FIELDS}
                     FROM tasks
@@ -213,7 +285,8 @@ class TaskStore:
 
             if normalized_statuses:
                 placeholders = ", ".join(["?"] * len(normalized_statuses))
-                active_row = conn.execute(
+                active_row = self._execute(
+                    conn,
                     f"""
                     SELECT {self._TASK_SELECT_FIELDS}
                     FROM tasks
@@ -231,7 +304,8 @@ class TaskStore:
                 if active_row is not None:
                     return {"decision": "reuse_active", "task": dict(active_row)}
 
-            conn.execute(
+            self._execute(
+                conn,
                 """
                 INSERT INTO tasks (
                     id,
@@ -249,8 +323,10 @@ class TaskStore:
                     comic_name,
                     summary,
                     tags_raw,
-                    tags_normalized
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tags_normalized,
+                    genres_raw,
+                    genres_normalized
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["id"],
@@ -269,9 +345,12 @@ class TaskStore:
                     payload["summary"],
                     payload["tags_raw"],
                     payload["tags_normalized"],
+                    payload["genres_raw"],
+                    payload["genres_normalized"],
                 ),
             )
-            created_row = conn.execute(
+            created_row = self._execute(
+                conn,
                 f"""
                 SELECT {self._TASK_SELECT_FIELDS}
                 FROM tasks
@@ -294,21 +373,24 @@ class TaskStore:
             values.append(value)
         values.append(task_id)
         with self._lock, self._connect() as conn:
-            conn.execute(
+            self._execute(
+                conn,
                 f"UPDATE tasks SET {', '.join(clauses)} WHERE id = ?",
                 values,
             )
 
     def increment_progress(self, task_id, step=1):
         with self._lock, self._connect() as conn:
-            conn.execute(
+            self._execute(
+                conn,
                 "UPDATE tasks SET progress = progress + ? WHERE id = ?",
                 (int(step), task_id),
             )
 
     def mark_in_progress(self, task_id):
         with self._lock, self._connect() as conn:
-            cursor = conn.execute(
+            cursor = self._execute(
+                conn,
                 "UPDATE tasks SET status = ? WHERE id = ? AND status = ?",
                 ("IN_PROGRESS", task_id, "PENDING"),
             )
@@ -318,7 +400,8 @@ class TaskStore:
         if field not in self._COLUMNS:
             return default
         with self._lock, self._connect() as conn:
-            row = conn.execute(
+            row = self._execute(
+                conn,
                 f"SELECT {field} FROM tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
@@ -347,14 +430,16 @@ class TaskStore:
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
         with self._lock, self._connect() as conn:
-            total = conn.execute(
+            total = self._execute(
+                conn,
                 f"SELECT COUNT(*) AS count FROM tasks {where_sql}",
                 where_values,
             ).fetchone()["count"]
             total_pages = max(1, (total + safe_per_page - 1) // safe_per_page)
             safe_page = min(safe_page, total_pages)
             offset = (safe_page - 1) * safe_per_page
-            rows = conn.execute(
+            rows = self._execute(
+                conn,
                 f"""
                 SELECT
                     id,
@@ -372,7 +457,9 @@ class TaskStore:
                     comic_name,
                     summary,
                     tags_raw,
-                    tags_normalized
+                    tags_normalized,
+                    genres_raw,
+                    genres_normalized
                 FROM tasks
                 {where_sql}
                 ORDER BY start_time DESC
@@ -385,7 +472,8 @@ class TaskStore:
 
     def get_status_counts(self):
         with self._lock, self._connect() as conn:
-            rows = conn.execute(
+            rows = self._execute(
+                conn,
                 """
                 SELECT status, COUNT(*) AS count
                 FROM tasks
@@ -396,7 +484,8 @@ class TaskStore:
 
     def get_task(self, task_id):
         with self._lock, self._connect() as conn:
-            row = conn.execute(
+            row = self._execute(
+                conn,
                 f"""
                 SELECT {self._TASK_SELECT_FIELDS}
                 FROM tasks
@@ -414,7 +503,8 @@ class TaskStore:
             return None
 
         with self._lock, self._connect() as conn:
-            row = conn.execute(
+            row = self._execute(
+                conn,
                 f"""
                 SELECT {self._TASK_SELECT_FIELDS}
                 FROM tasks
@@ -444,7 +534,8 @@ class TaskStore:
 
         placeholders = ", ".join(["?"] * len(normalized_statuses))
         with self._lock, self._connect() as conn:
-            row = conn.execute(
+            row = self._execute(
+                conn,
                 f"""
                 SELECT {self._TASK_SELECT_FIELDS}
                 FROM tasks
@@ -482,7 +573,7 @@ class TaskStore:
             values.extend(normalized_exclusions)
 
         with self._lock, self._connect() as conn:
-            rows = conn.execute(query, values).fetchall()
+            rows = self._execute(conn, query, values).fetchall()
         return [dict(row) for row in rows]
 
     def list_tasks_with_statuses_older_than(self, cutoff_start_time, statuses):
@@ -491,7 +582,8 @@ class TaskStore:
             return []
         placeholders = ", ".join(["?"] * len(normalized_statuses))
         with self._lock, self._connect() as conn:
-            rows = conn.execute(
+            rows = self._execute(
+                conn,
                 f"""
                 SELECT
                     id,
@@ -511,7 +603,8 @@ class TaskStore:
             return 0
         placeholders = ", ".join(["?"] * len(normalized_ids))
         with self._lock, self._connect() as conn:
-            cursor = conn.execute(
+            cursor = self._execute(
+                conn,
                 f"DELETE FROM tasks WHERE id IN ({placeholders})",
                 normalized_ids,
             )
@@ -523,7 +616,8 @@ class TaskStore:
             return False
         placeholders = ", ".join(["?"] * len(normalized_statuses))
         with self._lock, self._connect() as conn:
-            row = conn.execute(
+            row = self._execute(
+                conn,
                 f"SELECT 1 FROM tasks WHERE status IN ({placeholders}) LIMIT 1",
                 normalized_statuses,
             ).fetchone()
@@ -543,12 +637,13 @@ class TaskStore:
             values.extend(normalized_exclusions)
 
         with self._lock, self._connect() as conn:
-            rows = conn.execute(query, values).fetchall()
+            rows = self._execute(conn, query, values).fetchall()
         return [dict(row) for row in rows]
 
     def list_result_zip_paths(self):
         with self._lock, self._connect() as conn:
-            rows = conn.execute(
+            rows = self._execute(
+                conn,
                 """
                 SELECT DISTINCT result_zip_path
                 FROM tasks
@@ -559,7 +654,8 @@ class TaskStore:
 
     def clear_result_zip_path(self, task_id):
         with self._lock, self._connect() as conn:
-            conn.execute(
+            self._execute(
+                conn,
                 "UPDATE tasks SET result_zip_path = NULL WHERE id = ?",
                 (task_id,),
             )
@@ -574,9 +670,9 @@ class TaskStore:
             values.extend(normalized_exclusions)
 
         with self._lock, self._connect() as conn:
-            cursor = conn.execute(query, values)
+            cursor = self._execute(conn, query, values)
             return cursor.rowcount
 
     def clear(self):
         with self._lock, self._connect() as conn:
-            conn.execute("DELETE FROM tasks")
+            self._execute(conn, "DELETE FROM tasks")

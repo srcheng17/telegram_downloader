@@ -283,12 +283,22 @@ def _resolve_task_metadata(metadata, tasks_db, tasks_lock, task_id):
         if tags_source is None:
             tags_source = _read_field("tags_raw", allow_empty=True)
     tags_normalized = _normalize_tags(tags_source)
+    if "genres_normalized" in metadata:
+        genres_source = _read_field("genres_normalized", allow_empty=True)
+    elif "genres_raw" in metadata:
+        genres_source = _read_field("genres_raw", allow_empty=True)
+    else:
+        genres_source = _read_field("genres_normalized", allow_empty=True)
+        if genres_source is None:
+            genres_source = _read_field("genres_raw", allow_empty=True)
+    genres_normalized = _normalize_tags(genres_source)
     return {
         "author": author,
         "series_name": series_name,
         "comic_name": comic_name,
         "summary": summary,
         "tags_normalized": tags_normalized,
+        "genres_normalized": genres_normalized,
     }
 
 
@@ -306,7 +316,7 @@ def _write_comicinfo_xml(folder_path, metadata):
         ("Title", metadata.get("comic_name") or ""),
         ("Summary", metadata.get("summary") or ""),
         ("Tags", metadata.get("tags_normalized") or ""),
-        ("Genre", metadata.get("tags_normalized") or ""),
+        ("Genre", metadata.get("genres_normalized") or ""),
     ):
         element = ET.SubElement(root, tag_name)
         element.text = _sanitize_xml_text(value)

@@ -1,23 +1,54 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from telegram_downloader.services.image_downloader import (
-    DownloadCancelledError,
-    PartialDownloadError,
-    download_images,
-)
+from telegram_downloader.services.download_worker import execute_download_task
 
 
 class TaskOrchestrator:
     """Coordinates task execution and worker pool lifecycle."""
 
-    def __init__(self, task_store, logger, initial_task_concurrency):
+    def __init__(
+        self,
+        task_store,
+        logger,
+        initial_task_concurrency,
+        execution_backend="thread",
+        celery_app=None,
+    ):
         self._task_store = task_store
         self._logger = logger
         self._executor_lock = threading.Lock()
-        self._executor = ThreadPoolExecutor(max_workers=initial_task_concurrency)
+        self._execution_backend = (execution_backend or "thread").strip().lower()
+        self._celery_app = celery_app
+        self._executor = (
+            ThreadPoolExecutor(max_workers=initial_task_concurrency)
+            if self._execution_backend == "thread"
+            else None
+        )
+
+    def _resolve_celery_app(self):
+        if self._celery_app is not None:
+            return self._celery_app
+        from telegram_downloader.celery_app import celery_app
+
+        self._celery_app = celery_app
+        return self._celery_app
 
     def submit_download(self, task_id, url, timeout, retries, image_concurrency):
+        if self._execution_backend == "celery":
+            celery_app = self._resolve_celery_app()
+            celery_app.send_task(
+                "telegram_downloader.download_task",
+                kwargs={
+                    "task_id": task_id,
+                    "url": url,
+                    "timeout": timeout,
+                    "retries": retries,
+                    "image_concurrency": image_concurrency,
+                },
+            )
+            return
+
         with self._executor_lock:
             self._executor.submit(
                 self._run_download,
@@ -30,6 +61,13 @@ class TaskOrchestrator:
 
     def update_task_concurrency(self, new_task_concurrency):
         """Updates the worker count used to process download tasks."""
+        if self._execution_backend != "thread":
+            self._logger.info(
+                "Ignored task_concurrency=%s update for %s backend.",
+                new_task_concurrency,
+                self._execution_backend,
+            )
+            return
         with self._executor_lock:
             if self._executor._max_workers == new_task_concurrency:
                 return
@@ -38,6 +76,8 @@ class TaskOrchestrator:
         old_executor.shutdown(wait=False)
 
     def shutdown(self):
+        if self._execution_backend != "thread":
+            return
         with self._executor_lock:
             self._executor.shutdown(wait=False)
 
@@ -46,32 +86,12 @@ class TaskOrchestrator:
 
     def _run_download(self, task_id, url, timeout, retries, image_concurrency):
         """Wrapper function to run in a thread and update task status."""
-        try:
-            if not self._task_store.mark_in_progress(task_id):
-                current_status = self._task_store.get_field(task_id, "status", "")
-                if current_status == "CANCEL_REQUESTED":
-                    self._update_task(task_id, status="CANCELED", error="Cancelled before start.")
-                    self._logger.info("Task %s - Status: CANCELED before start", task_id)
-                return
-            self._logger.info("Task %s - Status: IN_PROGRESS", task_id)
-
-            result_zip_path = download_images(
-                url,
-                timeout=timeout,
-                retries=retries,
-                task_id=task_id,
-                image_concurrency=image_concurrency,
-                tasks_db=self._task_store,
-            )
-
-            self._logger.info("Task %s - Status: SUCCESS", task_id)
-            self._update_task(task_id, status="SUCCESS", result_zip_path=result_zip_path)
-        except DownloadCancelledError:
-            self._logger.info("Task %s - Status: CANCELED", task_id)
-            self._update_task(task_id, status="CANCELED", error="Cancelled by user.", result_zip_path=None)
-        except PartialDownloadError as exc:
-            self._logger.warning("Task %s - Status: FAILED (partial), Error: %s", task_id, exc)
-            self._update_task(task_id, status="FAILED", error=str(exc), result_zip_path=None)
-        except Exception as exc:
-            self._logger.error("Task %s - Status: FAILED, Error: %s", task_id, exc)
-            self._update_task(task_id, status="FAILED", error=str(exc), result_zip_path=None)
+        execute_download_task(
+            self._task_store,
+            task_id=task_id,
+            url=url,
+            timeout=timeout,
+            retries=retries,
+            image_concurrency=image_concurrency,
+            logger=self._logger,
+        )

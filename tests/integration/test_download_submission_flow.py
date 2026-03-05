@@ -225,6 +225,7 @@ class DownloadSubmissionIntegrationTests(unittest.TestCase):
                 "comic_name": "  Comic Name ",
                 "summary": "  Summary line ",
                 "tags": "  tagA， tagB,tagC  ",
+                "genres": "  genreA， genreB,genreC  ",
             }
             with patch.object(runtime.task_orchestrator, "submit_download") as submit_mock:
                 with patch.dict(os.environ, {"DOWNLOAD_PATH": str(download_root)}):
@@ -269,6 +270,8 @@ class DownloadSubmissionIntegrationTests(unittest.TestCase):
         self.assertEqual(rows[0]["summary"], "Summary line")
         self.assertEqual(rows[0]["tags_raw"], "tagA， tagB,tagC")
         self.assertEqual(rows[0]["tags_normalized"], "tagA, tagB,tagC")
+        self.assertEqual(rows[0]["genres_raw"], "genreA， genreB,genreC")
+        self.assertEqual(rows[0]["genres_normalized"], "genreA, genreB,genreC")
 
     def test_download_force_true_still_reuses_existing_active_task(self):
         task_store.create_task(

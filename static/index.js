@@ -7,6 +7,7 @@
         startupRecoveryDismissKey: '',
         startupRecoveryDismissHandler: null,
         pendingDuplicate: null,
+        summaryResizeHandler: null,
     };
     window.__telegraphHomeState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
@@ -170,6 +171,15 @@
         if (failedNode) {
             failedNode.textContent = String((summary.failed_tasks || 0) + (summary.canceled_tasks || 0));
         }
+    }
+
+    function syncSummaryCollapseMode() {
+        const summaryCollapsible = document.getElementById('summary-collapsible-home');
+        if (!summaryCollapsible || typeof window.matchMedia !== 'function') {
+            return;
+        }
+        const isMobile = window.matchMedia('(max-width: 768px)').matches;
+        summaryCollapsible.open = !isMobile;
     }
 
     function showFeedback(message, kind) {
@@ -341,6 +351,7 @@
             comic_name: readOptionalField(form, 'comic_name'),
             summary: readOptionalField(form, 'summary'),
             tags: readOptionalField(form, 'tags'),
+            genres: readOptionalField(form, 'genres'),
         };
         const forceValue = readForceValue(form);
         if (forceValue !== null) {
@@ -542,6 +553,10 @@
             startupRecoveryDismissBtn.removeEventListener('click', state.startupRecoveryDismissHandler);
         }
         clearTimers();
+        if (state.summaryResizeHandler) {
+            window.removeEventListener('resize', state.summaryResizeHandler);
+            state.summaryResizeHandler = null;
+        }
 
         if (form) {
             state.form = form;
@@ -561,6 +576,9 @@
         }
 
         if (summaryPanel) {
+            syncSummaryCollapseMode();
+            state.summaryResizeHandler = syncSummaryCollapseMode;
+            window.addEventListener('resize', state.summaryResizeHandler);
             fetchSummary();
             state.summaryTimer = window.setInterval(fetchSummary, 10000);
         } else {
@@ -580,6 +598,10 @@
         state.submitHandler = null;
         state.startupRecoveryDismissHandler = null;
         state.startupRecoveryDismissKey = '';
+        if (state.summaryResizeHandler) {
+            window.removeEventListener('resize', state.summaryResizeHandler);
+            state.summaryResizeHandler = null;
+        }
 
         if (state.inflightSummaryController) {
             state.inflightSummaryController.abort();
