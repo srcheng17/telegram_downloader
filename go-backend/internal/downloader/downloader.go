@@ -11,11 +11,15 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
 )
 
-const defaultWorkerCount = 4
+const (
+	defaultWorkerCount = 4
+	defaultHTTPTimeout = 30 * time.Second
+)
 
 type Service struct {
 	HTTPClient    *http.Client
@@ -99,41 +103,43 @@ type imageResult struct {
 	err   error
 }
 
+type imageSlot struct {
+	index      int
+	candidates []string
+}
+
 func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadResult, error) {
-	client := s.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := s.httpClient()
 
 	pageHTML, err := fetchPageHTML(ctx, client, pageURL)
 	if err != nil {
 		return domain.DownloadResult{}, err
 	}
 
-	imageURLs, err := extractImageURLs(pageURL, pageHTML)
+	imageSlots, err := extractImageCandidateSets(pageURL, pageHTML)
 	if err != nil {
 		return domain.DownloadResult{}, err
 	}
 
 	result := domain.DownloadResult{
-		Images:      make([]domain.DownloadedImage, 0, len(imageURLs)),
-		TotalImages: len(imageURLs),
+		Images:      make([]domain.DownloadedImage, 0, len(imageSlots)),
+		TotalImages: len(imageSlots),
 	}
 
-	if len(imageURLs) == 0 {
+	if len(imageSlots) == 0 {
 		return result, errors.New("no images found on page")
 	}
-	if s.MaxImages > 0 && len(imageURLs) > s.MaxImages {
+	if s.MaxImages > 0 && len(imageSlots) > s.MaxImages {
 		return result, &LimitExceededError{
 			Kind:   LimitKindImageCount,
 			Limit:  int64(s.MaxImages),
-			Actual: int64(len(imageURLs)),
+			Actual: int64(len(imageSlots)),
 		}
 	}
 
 	workerCount := defaultWorkerCount
-	if len(imageURLs) < workerCount {
-		workerCount = len(imageURLs)
+	if len(imageSlots) < workerCount {
+		workerCount = len(imageSlots)
 	}
 	if workerCount <= 0 {
 		workerCount = 1
@@ -142,13 +148,16 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	jobs := make(chan int, len(imageURLs))
-	for index := range imageURLs {
-		jobs <- index
+	jobs := make(chan imageSlot, len(imageSlots))
+	for index := range imageSlots {
+		jobs <- imageSlot{
+			index:      index,
+			candidates: imageSlots[index],
+		}
 	}
 	close(jobs)
 
-	results := make(chan imageResult, len(imageURLs))
+	results := make(chan imageResult, len(imageSlots))
 	var wg sync.WaitGroup
 	var totalBytes int64
 	var totalBytesMu sync.Mutex
@@ -157,26 +166,38 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for index := range jobs {
+			for slot := range jobs {
 				if err := ctx.Err(); err != nil {
 					return
 				}
 
-				imageURL := imageURLs[index]
-				image, downloadErr := s.downloadImage(ctx, client, imageURL, &totalBytes, &totalBytesMu)
+				imageURL := ""
+				if len(slot.candidates) > 0 {
+					imageURL = slot.candidates[0]
+				}
+				image, downloadErr := s.downloadImageSlot(
+					ctx,
+					client,
+					slot.candidates,
+					&totalBytes,
+					&totalBytesMu,
+				)
 				if downloadErr != nil {
 					if isLimitExceeded(downloadErr) {
 						cancel()
 					}
+					if isContextCancellation(downloadErr) {
+						cancel()
+					}
 					results <- imageResult{
-						index: index,
+						index: slot.index,
 						url:   imageURL,
 						err:   downloadErr,
 					}
 					continue
 				}
 				results <- imageResult{
-					index: index,
+					index: slot.index,
 					url:   imageURL,
 					image: image,
 				}
@@ -189,16 +210,20 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 		close(results)
 	}()
 
-	successByIndex := make([]domain.DownloadedImage, len(imageURLs))
-	successMarker := make([]bool, len(imageURLs))
+	successByIndex := make([]domain.DownloadedImage, len(imageSlots))
+	successMarker := make([]bool, len(imageSlots))
 	failures := make([]ImageFailure, 0)
 	var limitErr error
+	var cancelErr error
 
 	for item := range results {
 		if item.err != nil {
 			failures = append(failures, ImageFailure{URL: item.url, Err: item.err})
 			if limitErr == nil && isLimitExceeded(item.err) {
 				limitErr = item.err
+			}
+			if cancelErr == nil && isContextCancellation(item.err) {
+				cancelErr = item.err
 			}
 			continue
 		}
@@ -219,15 +244,49 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 	if limitErr != nil {
 		return result, limitErr
 	}
+	if cancelErr != nil {
+		return result, cancelErr
+	}
 	if len(failures) > 0 {
 		return result, &PartialFailureError{
-			Total:      len(imageURLs),
+			Total:      len(imageSlots),
 			Successful: len(result.Images),
 			Failures:   failures,
 		}
 	}
 
 	return result, nil
+}
+
+func (s Service) httpClient() *http.Client {
+	if s.HTTPClient != nil {
+		return s.HTTPClient
+	}
+	return &http.Client{Timeout: defaultHTTPTimeout}
+}
+
+func (s Service) downloadImageSlot(
+	ctx context.Context,
+	client *http.Client,
+	candidates []string,
+	totalBytes *int64,
+	totalBytesMu *sync.Mutex,
+) (domain.DownloadedImage, error) {
+	var lastErr error
+	for _, candidateURL := range candidates {
+		image, err := s.downloadImage(ctx, client, candidateURL, totalBytes, totalBytesMu)
+		if err == nil {
+			return image, nil
+		}
+		if isLimitExceeded(err) || isContextCancellation(err) {
+			return domain.DownloadedImage{}, err
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return domain.DownloadedImage{}, fmt.Errorf("all candidate urls failed: %w", lastErr)
+	}
+	return domain.DownloadedImage{}, errors.New("no candidate urls available for image")
 }
 
 func (s Service) downloadImage(
@@ -293,6 +352,9 @@ func (s Service) downloadImage(
 			break
 		}
 		if readErr != nil {
+			if ctx.Err() != nil {
+				return domain.DownloadedImage{}, ctx.Err()
+			}
 			return domain.DownloadedImage{}, fmt.Errorf("read image body %s: %w", imageURL, readErr)
 		}
 	}
@@ -312,6 +374,9 @@ func fetchPageHTML(ctx context.Context, client *http.Client, pageURL string) (st
 
 	resp, err := client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		return "", fmt.Errorf("fetch page %s: %w", pageURL, err)
 	}
 	defer resp.Body.Close()
@@ -329,86 +394,154 @@ func fetchPageHTML(ctx context.Context, client *http.Client, pageURL string) (st
 }
 
 var (
-	imgTagPattern        = regexp.MustCompile(`(?is)<img\b[^>]*>`)
-	imgCandidatePattern  = regexp.MustCompile(`(?is)(src|data-src|data-original|data-lazy-src|data-url)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
-	imgSrcsetAttrPattern = regexp.MustCompile(`(?is)(srcset|data-srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	pictureBlockPattern = regexp.MustCompile(`(?is)<picture\b[^>]*>.*?</picture>`)
+	imgTagPattern       = regexp.MustCompile(`(?is)<img\b[^>]*>`)
+	sourceTagPattern    = regexp.MustCompile(`(?is)<source\b[^>]*>`)
+	urlAttrPattern      = regexp.MustCompile(`(?is)\b(src|data-src|data-original|data-lazy-src|data-url)\b\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	srcsetAttrPattern   = regexp.MustCompile(`(?is)\b(srcset|data-srcset)\b\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
 )
 
-func extractImageURLs(pageURL, pageHTML string) ([]string, error) {
+func extractImageCandidateSets(pageURL, pageHTML string) ([][]string, error) {
 	baseURL, err := url.Parse(pageURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse page url %q: %w", pageURL, err)
 	}
 
-	imageURLs := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, imgTag := range imgTagPattern.FindAllString(pageHTML, -1) {
-		candidate := extractImageCandidate(imgTag)
-		if candidate == "" {
-			continue
+	candidateSets := make([][]string, 0)
+	cursor := 0
+	for _, match := range pictureBlockPattern.FindAllStringIndex(pageHTML, -1) {
+		start := match[0]
+		end := match[1]
+
+		if start > cursor {
+			segment := pageHTML[cursor:start]
+			candidateSets = append(candidateSets, extractStandaloneImageCandidateSets(baseURL, segment)...)
 		}
 
-		normalizedURL, ok := normalizeImageURL(baseURL, candidate)
-		if !ok {
-			continue
-		}
-		if _, exists := seen[normalizedURL]; exists {
-			continue
-		}
-
-		seen[normalizedURL] = struct{}{}
-		imageURLs = append(imageURLs, normalizedURL)
+		pictureBlock := pageHTML[start:end]
+		candidateSets = append(candidateSets, extractPictureBlockCandidateSets(baseURL, pictureBlock)...)
+		cursor = end
+	}
+	if cursor < len(pageHTML) {
+		candidateSets = append(candidateSets, extractStandaloneImageCandidateSets(baseURL, pageHTML[cursor:])...)
 	}
 
-	return imageURLs, nil
+	return candidateSets, nil
 }
 
-func extractImageCandidate(imgTag string) string {
-	attributeValues := make(map[string]string)
-	for _, match := range imgCandidatePattern.FindAllStringSubmatch(imgTag, -1) {
-		name := strings.ToLower(strings.TrimSpace(match[1]))
-		if _, exists := attributeValues[name]; exists {
+func extractStandaloneImageCandidateSets(baseURL *url.URL, htmlSegment string) [][]string {
+	candidateSets := make([][]string, 0)
+	for _, imgTag := range imgTagPattern.FindAllString(htmlSegment, -1) {
+		candidates := normalizeCandidateSet(baseURL, rawCandidatesFromTag(
+			imgTag,
+			[]string{"src", "data-src", "data-original", "data-lazy-src", "data-url"},
+			[]string{"srcset", "data-srcset"},
+		))
+		if len(candidates) == 0 {
 			continue
 		}
-		value := firstNonEmpty(match[2], match[3], match[4])
+		candidateSets = append(candidateSets, candidates)
+	}
+	return candidateSets
+}
+
+func extractPictureBlockCandidateSets(baseURL *url.URL, pictureBlock string) [][]string {
+	sourceCandidates := make([]string, 0)
+	for _, sourceTag := range sourceTagPattern.FindAllString(pictureBlock, -1) {
+		sourceCandidates = append(sourceCandidates, rawCandidatesFromTag(
+			sourceTag,
+			[]string{"src"},
+			[]string{"srcset", "data-srcset"},
+		)...)
+	}
+
+	candidateSets := make([][]string, 0)
+	for _, imgTag := range imgTagPattern.FindAllString(pictureBlock, -1) {
+		rawCandidates := rawCandidatesFromTag(
+			imgTag,
+			[]string{"src", "data-src", "data-original", "data-lazy-src", "data-url"},
+			[]string{"srcset", "data-srcset"},
+		)
+		rawCandidates = append(rawCandidates, sourceCandidates...)
+
+		candidates := normalizeCandidateSet(baseURL, rawCandidates)
+		if len(candidates) == 0 {
+			continue
+		}
+		candidateSets = append(candidateSets, candidates)
+	}
+	return candidateSets
+}
+
+func rawCandidatesFromTag(tag string, urlAttributeOrder, srcsetAttributeOrder []string) []string {
+	urlAttributeValues := readAttributeValues(tag, urlAttrPattern)
+	srcsetValues := readAttributeValues(tag, srcsetAttrPattern)
+
+	rawCandidates := make([]string, 0)
+	for _, attribute := range urlAttributeOrder {
+		value := strings.TrimSpace(urlAttributeValues[attribute])
 		if value == "" {
 			continue
 		}
-		attributeValues[name] = value
+		rawCandidates = append(rawCandidates, value)
 	}
 
-	for _, attribute := range []string{"src", "data-src", "data-original", "data-lazy-src", "data-url"} {
-		value := strings.TrimSpace(attributeValues[attribute])
-		if value != "" {
-			return value
-		}
-	}
-
-	for _, match := range imgSrcsetAttrPattern.FindAllStringSubmatch(imgTag, -1) {
-		rawSrcset := firstNonEmpty(match[2], match[3], match[4])
+	for _, attribute := range srcsetAttributeOrder {
+		rawSrcset := strings.TrimSpace(srcsetValues[attribute])
 		if rawSrcset == "" {
 			continue
 		}
-		if candidate := parseFirstSrcsetCandidate(rawSrcset); candidate != "" {
-			return candidate
-		}
+		rawCandidates = append(rawCandidates, parseSrcsetCandidates(rawSrcset)...)
 	}
-
-	return ""
+	return rawCandidates
 }
 
-func parseFirstSrcsetCandidate(rawSrcset string) string {
+func parseSrcsetCandidates(rawSrcset string) []string {
 	items := strings.Split(rawSrcset, ",")
+	candidates := make([]string, 0, len(items))
 	for _, item := range items {
 		fields := strings.Fields(strings.TrimSpace(item))
 		if len(fields) == 0 {
 			continue
 		}
 		if fields[0] != "" {
-			return fields[0]
+			candidates = append(candidates, fields[0])
 		}
 	}
-	return ""
+	return candidates
+}
+
+func readAttributeValues(tag string, pattern *regexp.Regexp) map[string]string {
+	values := make(map[string]string)
+	for _, match := range pattern.FindAllStringSubmatch(tag, -1) {
+		name := strings.ToLower(strings.TrimSpace(match[1]))
+		if _, exists := values[name]; exists {
+			continue
+		}
+		value := strings.TrimSpace(firstNonEmpty(match[2], match[3], match[4]))
+		if value == "" {
+			continue
+		}
+		values[name] = value
+	}
+	return values
+}
+
+func normalizeCandidateSet(baseURL *url.URL, rawCandidates []string) []string {
+	candidates := make([]string, 0, len(rawCandidates))
+	seen := make(map[string]struct{})
+	for _, rawCandidate := range rawCandidates {
+		normalizedURL, ok := normalizeImageURL(baseURL, rawCandidate)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[normalizedURL]; exists {
+			continue
+		}
+		seen[normalizedURL] = struct{}{}
+		candidates = append(candidates, normalizedURL)
+	}
+	return candidates
 }
 
 func normalizeImageURL(baseURL *url.URL, raw string) (string, bool) {
@@ -431,6 +564,10 @@ func normalizeImageURL(baseURL *url.URL, raw string) (string, bool) {
 func isLimitExceeded(err error) bool {
 	var limitErr *LimitExceededError
 	return errors.As(err, &limitErr)
+}
+
+func isContextCancellation(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func firstNonEmpty(values ...string) string {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestDownloadFailsWhenImageCountExceedsLimit(t *testing.T) {
@@ -118,5 +119,148 @@ func TestDownloadReturnsPartialFailureWhenAnyImageFails(t *testing.T) {
 	}
 	if result.Images[0].URL != server.URL+"/ok.jpg" {
 		t.Fatalf("expected successful image URL %q, got %q", server.URL+"/ok.jpg", result.Images[0].URL)
+	}
+}
+
+func TestDownloadUsesFallbackCandidateWhenPrimaryFails(t *testing.T) {
+	var primaryRequests atomic.Int32
+	var fallbackRequests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(
+				w,
+				`<html><body><picture><source srcset="/fallback.jpg 1x"><img src="/primary.webp"></picture></body></html>`,
+			)
+		case "/primary.webp":
+			primaryRequests.Add(1)
+			http.Error(w, "missing", http.StatusNotFound)
+		case "/fallback.jpg":
+			fallbackRequests.Add(1)
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := Service{
+		HTTPClient:    server.Client(),
+		MaxImages:     10,
+		MaxImageBytes: 1024,
+		MaxTotalBytes: 4096,
+	}
+
+	result, err := service.Download(context.Background(), server.URL+"/page")
+	if err != nil {
+		t.Fatalf("expected fallback success, got error: %v", err)
+	}
+
+	if primaryRequests.Load() != 1 {
+		t.Fatalf("expected one primary request, got %d", primaryRequests.Load())
+	}
+	if fallbackRequests.Load() != 1 {
+		t.Fatalf("expected one fallback request, got %d", fallbackRequests.Load())
+	}
+	if result.TotalImages != 1 {
+		t.Fatalf("expected total_images=1, got %d", result.TotalImages)
+	}
+	if result.DownloadedImages != 1 {
+		t.Fatalf("expected downloaded_images=1, got %d", result.DownloadedImages)
+	}
+	if len(result.Images) != 1 {
+		t.Fatalf("expected one downloaded image, got %d", len(result.Images))
+	}
+	if result.Images[0].URL != server.URL+"/fallback.jpg" {
+		t.Fatalf("expected fallback image url %q, got %q", server.URL+"/fallback.jpg", result.Images[0].URL)
+	}
+}
+
+func TestDownloadPropagatesDeadlineExceededInsteadOfPartialFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(w, `<html><body><img src="/fast.jpg"><img src="/slow.jpg"></body></html>`)
+		case "/fast.jpg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("ok"))
+		case "/slow.jpg":
+			time.Sleep(300 * time.Millisecond)
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("slow"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := Service{
+		HTTPClient:    server.Client(),
+		MaxImages:     10,
+		MaxImageBytes: 1024,
+		MaxTotalBytes: 4096,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	t.Cleanup(cancel)
+
+	_, err := service.Download(ctx, server.URL+"/page")
+	if err == nil {
+		t.Fatal("expected deadline exceeded error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %T: %v", err, err)
+	}
+
+	var partialErr *PartialFailureError
+	if errors.As(err, &partialErr) {
+		t.Fatalf("expected context deadline error, got partial failure: %#v", partialErr)
+	}
+}
+
+func TestDownloadPreservesRepeatedImageTags(t *testing.T) {
+	var imageRequests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(w, `<html><body><img src="/same.jpg"><img src="/same.jpg"></body></html>`)
+		case "/same.jpg":
+			imageRequests.Add(1)
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := Service{
+		HTTPClient:    server.Client(),
+		MaxImages:     10,
+		MaxImageBytes: 1024,
+		MaxTotalBytes: 4096,
+	}
+
+	result, err := service.Download(context.Background(), server.URL+"/page")
+	if err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if imageRequests.Load() != 2 {
+		t.Fatalf("expected 2 image requests, got %d", imageRequests.Load())
+	}
+	if result.TotalImages != 2 {
+		t.Fatalf("expected total_images=2, got %d", result.TotalImages)
+	}
+	if result.DownloadedImages != 2 {
+		t.Fatalf("expected downloaded_images=2, got %d", result.DownloadedImages)
+	}
+	if len(result.Images) != 2 {
+		t.Fatalf("expected two output images, got %d", len(result.Images))
+	}
+	if result.Images[0].URL != server.URL+"/same.jpg" || result.Images[1].URL != server.URL+"/same.jpg" {
+		t.Fatalf("expected repeated urls preserved, got %q and %q", result.Images[0].URL, result.Images[1].URL)
 	}
 }
