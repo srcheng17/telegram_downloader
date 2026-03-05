@@ -28,7 +28,6 @@ type StreamClient interface {
 type TaskStore interface {
 	TransitionPendingToInProgress(ctx context.Context, taskID, token, worker string) (bool, error)
 	TransitionToTerminal(ctx context.Context, input postgres.TransitionTerminalInput) error
-	MarkTaskFailed(ctx context.Context, taskID, message string) error
 }
 
 type Handler func(ctx context.Context, msg Message) error
@@ -112,17 +111,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 					msg.TaskID,
 					err,
 				)
-				failMessage := fmt.Sprintf("worker claim failed before task execution: %v", err)
-				if failErr := c.store.MarkTaskFailed(ctx, msg.TaskID, failMessage); failErr != nil {
-					log.Printf(
-						"worker consumer mark failed after claim error failed message_id=%s task_id=%s: %v",
-						msg.ID,
-						msg.TaskID,
-						failErr,
-					)
-					continue
-				}
-				c.ackMessage(ctx, msg, "claim_error_failed_marked")
 				continue
 			}
 			if !claimed {
@@ -226,10 +214,36 @@ func (s *RedisStream) ReadGroup(
 		return nil, errors.New("worker redis stream requires stream name")
 	}
 
+	group = strings.TrimSpace(group)
+	consumer = strings.TrimSpace(consumer)
+
+	pendingMessages, err := s.readGroupByID(ctx, group, consumer, count, -1, "0")
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	if len(pendingMessages) > 0 {
+		return pendingMessages, nil
+	}
+
+	newMessages, err := s.readGroupByID(ctx, group, consumer, count, block, ">")
+	if err != nil {
+		return nil, err
+	}
+	return newMessages, nil
+}
+
+func (s *RedisStream) readGroupByID(
+	ctx context.Context,
+	group string,
+	consumer string,
+	count int64,
+	block time.Duration,
+	messageID string,
+) ([]Message, error) {
 	streams, err := s.redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
-		Group:    strings.TrimSpace(group),
-		Consumer: strings.TrimSpace(consumer),
-		Streams:  []string{s.streamName, ">"},
+		Group:    group,
+		Consumer: consumer,
+		Streams:  []string{s.streamName, messageID},
 		Count:    count,
 		Block:    block,
 	}).Result()

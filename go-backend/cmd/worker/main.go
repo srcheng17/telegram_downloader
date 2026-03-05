@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -57,7 +58,10 @@ func main() {
 	if err != nil {
 		hostname = "go-worker"
 	}
-	consumerName := fmt.Sprintf("%s-%d", hostname, os.Getpid())
+	consumerName := strings.TrimSpace(cfg.ConsumerName)
+	if consumerName == "" {
+		consumerName = hostname
+	}
 
 	consumer := worker.NewConsumer(worker.ConsumerConfig{
 		Stream:   stream,

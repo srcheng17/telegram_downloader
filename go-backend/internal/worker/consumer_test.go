@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
@@ -199,7 +202,7 @@ func TestConsumerAcksUnclaimedMessageAndContinues(t *testing.T) {
 	}
 }
 
-func TestConsumerClaimErrorMarksFailedAndAcksThenContinues(t *testing.T) {
+func TestConsumerClaimErrorDoesNotAckAndContinues(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -238,28 +241,17 @@ func TestConsumerClaimErrorMarksFailedAndAcksThenContinues(t *testing.T) {
 		t.Fatalf("consumer run: %v", err)
 	}
 
-	if len(store.markFailedCalls) != 1 {
-		t.Fatalf("expected one mark-failed call, got %d", len(store.markFailedCalls))
+	if len(stream.ackCalls) != 1 {
+		t.Fatalf("expected only success-message ack, got %d", len(stream.ackCalls))
 	}
-	markFailed := store.markFailedCalls[0]
-	if markFailed.taskID != "task-claim-error" {
-		t.Fatalf("expected mark-failed task task-claim-error, got %q", markFailed.taskID)
-	}
-	if !strings.Contains(markFailed.message, "claim db timeout") {
-		t.Fatalf("expected mark-failed message to include claim error, got %q", markFailed.message)
-	}
-
-	if len(stream.ackCalls) != 2 {
-		t.Fatalf("expected two ack calls, got %d", len(stream.ackCalls))
-	}
-	if stream.ackCalls[0].ids[0] != "1-0" {
-		t.Fatalf("expected first ack id 1-0, got %#v", stream.ackCalls[0].ids)
-	}
-	if stream.ackCalls[1].ids[0] != "2-0" {
-		t.Fatalf("expected second ack id 2-0, got %#v", stream.ackCalls[1].ids)
+	if stream.ackCalls[0].ids[0] != "2-0" {
+		t.Fatalf("expected ack only for 2-0, got %#v", stream.ackCalls[0].ids)
 	}
 	if handlerCalls != 1 {
 		t.Fatalf("expected handler to run once for second message, got %d", handlerCalls)
+	}
+	if len(store.terminalCalls) != 0 {
+		t.Fatalf("expected no fail transition on claim-error path, got %d", len(store.terminalCalls))
 	}
 }
 
@@ -320,14 +312,75 @@ func TestConsumerHandlerErrorWithFailTransitionErrorDoesNotAckFailedMessage(t *t
 	}
 }
 
+func TestRedisStreamReadGroupReadsPendingFirstForConsumer(t *testing.T) {
+	ctx := context.Background()
+
+	mini, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	t.Cleanup(mini.Close)
+
+	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	streamName := "download_tasks"
+	group := "go-workers"
+	consumer := "worker-stable"
+
+	stream := NewRedisStream(client, streamName)
+	if err := stream.CreateGroup(ctx, group); err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+
+	firstID, err := client.XAdd(ctx, &redis.XAddArgs{
+		Stream: streamName,
+		Values: map[string]any{
+			"task_id":       "task-pending",
+			"enqueue_token": "token-1",
+		},
+	}).Result()
+	if err != nil {
+		t.Fatalf("xadd first: %v", err)
+	}
+
+	firstRead, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
+	if err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	if len(firstRead) != 1 || firstRead[0].ID != firstID {
+		t.Fatalf("expected first read id %s, got %#v", firstID, firstRead)
+	}
+
+	secondID, err := client.XAdd(ctx, &redis.XAddArgs{
+		Stream: streamName,
+		Values: map[string]any{
+			"task_id":       "task-new",
+			"enqueue_token": "token-2",
+		},
+	}).Result()
+	if err != nil {
+		t.Fatalf("xadd second: %v", err)
+	}
+
+	secondRead, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if len(secondRead) != 1 {
+		t.Fatalf("expected one message from second read, got %d", len(secondRead))
+	}
+	if secondRead[0].ID != firstID {
+		t.Fatalf("expected pending-first id %s, got %s (new id %s)", firstID, secondRead[0].ID, secondID)
+	}
+}
+
 type fakeTaskStore struct {
 	transitionResults []claimResult
 	defaultTransition bool
 	claimCalls        []claimCall
 	terminalCalls     []postgres.TransitionTerminalInput
 	terminalErr       error
-	markFailedCalls   []markFailedCall
-	markFailedErr     error
 }
 
 type claimResult struct {
@@ -339,11 +392,6 @@ type claimCall struct {
 	taskID string
 	token  string
 	worker string
-}
-
-type markFailedCall struct {
-	taskID  string
-	message string
 }
 
 func (f *fakeTaskStore) TransitionPendingToInProgress(_ context.Context, taskID, token, worker string) (bool, error) {
@@ -359,14 +407,6 @@ func (f *fakeTaskStore) TransitionPendingToInProgress(_ context.Context, taskID,
 func (f *fakeTaskStore) TransitionToTerminal(_ context.Context, input postgres.TransitionTerminalInput) error {
 	f.terminalCalls = append(f.terminalCalls, input)
 	return f.terminalErr
-}
-
-func (f *fakeTaskStore) MarkTaskFailed(_ context.Context, taskID, message string) error {
-	f.markFailedCalls = append(f.markFailedCalls, markFailedCall{
-		taskID:  taskID,
-		message: message,
-	})
-	return f.markFailedErr
 }
 
 type fakeStreamClient struct {

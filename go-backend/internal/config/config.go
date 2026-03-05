@@ -14,6 +14,7 @@ type Config struct {
 	RedisURL         string
 	StreamName       string
 	ConsumerGroup    string
+	ConsumerName     string
 	UpstreamBaseURL  string
 	InternalToken    string
 	DownloadTimeout  int
@@ -61,12 +62,15 @@ func LoadFromEnv() (Config, error) {
 		consumerGroup = "go-workers"
 	}
 
+	consumerName := strings.TrimSpace(os.Getenv("CONSUMER_NAME"))
+
 	return Config{
 		Addr:             addr,
 		DatabaseURL:      databaseURL,
 		RedisURL:         redisURL,
 		StreamName:       streamName,
 		ConsumerGroup:    consumerGroup,
+		ConsumerName:     consumerName,
 		UpstreamBaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("PYTHON_WEB_BASE_URL")), "/"),
 		InternalToken:    strings.TrimSpace(os.Getenv("INTERNAL_ENQUEUE_TOKEN")),
 		DownloadTimeout:  parseIntEnv("GO_DOWNLOAD_TIMEOUT", 30),
