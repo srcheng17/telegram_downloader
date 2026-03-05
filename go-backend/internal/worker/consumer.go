@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
 type Message struct {
@@ -23,6 +27,7 @@ type StreamClient interface {
 
 type TaskStore interface {
 	TransitionPendingToInProgress(ctx context.Context, taskID, token, worker string) (bool, error)
+	TransitionToTerminal(ctx context.Context, input postgres.TransitionTerminalInput) error
 }
 
 type Handler func(ctx context.Context, msg Message) error
@@ -93,29 +98,74 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("read group messages: %w", err)
+			log.Printf("worker consumer read group failed: %v", err)
+			continue
 		}
 
 		for _, msg := range messages {
 			claimed, err := c.store.TransitionPendingToInProgress(ctx, msg.TaskID, msg.EnqueueToken, c.consumer)
 			if err != nil {
-				return fmt.Errorf("claim task %s: %w", msg.TaskID, err)
+				log.Printf(
+					"worker consumer claim failed message_id=%s task_id=%s: %v",
+					msg.ID,
+					msg.TaskID,
+					err,
+				)
+				continue
 			}
 			if !claimed {
-				if err := c.stream.Ack(ctx, c.group, msg.ID); err != nil {
-					return fmt.Errorf("ack unclaimed message %s: %w", msg.ID, err)
-				}
+				c.ackMessage(ctx, msg, "unclaimed")
 				continue
 			}
 
 			if err := c.handler(ctx, msg); err != nil {
-				return fmt.Errorf("handle task %s: %w", msg.TaskID, err)
+				log.Printf(
+					"worker consumer handler failed message_id=%s task_id=%s: %v",
+					msg.ID,
+					msg.TaskID,
+					err,
+				)
+				errMsg := err.Error()
+				transitionErr := c.store.TransitionToTerminal(ctx, postgres.TransitionTerminalInput{
+					TaskID: msg.TaskID,
+					Worker: c.consumer,
+					Status: domain.StatusFailed,
+					Error:  &errMsg,
+				})
+				if transitionErr != nil {
+					log.Printf(
+						"worker consumer fail transition failed message_id=%s task_id=%s: %v",
+						msg.ID,
+						msg.TaskID,
+						transitionErr,
+					)
+				}
+				c.ackMessage(ctx, msg, "handler_error")
+				continue
 			}
 
-			if err := c.stream.Ack(ctx, c.group, msg.ID); err != nil {
-				return fmt.Errorf("ack message %s: %w", msg.ID, err)
-			}
+			c.ackMessage(ctx, msg, "success")
 		}
+	}
+}
+
+func (c *Consumer) ackMessage(ctx context.Context, msg Message, reason string) {
+	if strings.TrimSpace(msg.ID) == "" {
+		log.Printf(
+			"worker consumer skipping ack for empty message id task_id=%s reason=%s",
+			msg.TaskID,
+			reason,
+		)
+		return
+	}
+	if err := c.stream.Ack(ctx, c.group, msg.ID); err != nil {
+		log.Printf(
+			"worker consumer ack failed message_id=%s task_id=%s reason=%s: %v",
+			msg.ID,
+			msg.TaskID,
+			reason,
+			err,
+		)
 	}
 }
 

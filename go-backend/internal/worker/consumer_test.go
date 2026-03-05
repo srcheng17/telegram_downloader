@@ -2,8 +2,13 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
 func TestConsumerClaimsAndAcksMessageOnSuccess(t *testing.T) {
@@ -17,7 +22,7 @@ func TestConsumerClaimsAndAcksMessageOnSuccess(t *testing.T) {
 			EnqueueToken: "token-1",
 		}},
 	}
-	store := &fakeTaskStore{transitioned: true}
+	store := &fakeTaskStore{defaultTransition: true}
 
 	consumer := NewConsumer(ConsumerConfig{
 		Stream:   stream,
@@ -65,9 +70,146 @@ func TestConsumerClaimsAndAcksMessageOnSuccess(t *testing.T) {
 	}
 }
 
+func TestConsumerHandlerErrorAttemptsFailTransitionAndAckThenContinues(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	stream := &fakeStreamClient{
+		messages: []Message{
+			{ID: "1-0", TaskID: "task-1", EnqueueToken: "token-1"},
+			{ID: "2-0", TaskID: "task-2", EnqueueToken: "token-2"},
+		},
+	}
+	store := &fakeTaskStore{defaultTransition: true}
+
+	handlerCalls := 0
+	consumer := NewConsumer(ConsumerConfig{
+		Stream:   stream,
+		Store:    store,
+		Group:    "go-workers",
+		Consumer: "worker-1",
+		Block:    time.Millisecond,
+		Handler: func(_ context.Context, msg Message) error {
+			handlerCalls++
+			if msg.ID == "1-0" {
+				return errors.New("handler boom")
+			}
+			cancel()
+			return nil
+		},
+	})
+
+	err := consumer.Run(ctx)
+	if err != nil {
+		t.Fatalf("consumer run: %v", err)
+	}
+
+	if handlerCalls != 2 {
+		t.Fatalf("expected handler to run for both messages, got %d calls", handlerCalls)
+	}
+	if len(store.terminalCalls) != 1 {
+		t.Fatalf("expected one terminal transition attempt, got %d", len(store.terminalCalls))
+	}
+	terminal := store.terminalCalls[0]
+	if terminal.TaskID != "task-1" {
+		t.Fatalf("expected task-1 failed transition, got %q", terminal.TaskID)
+	}
+	if terminal.Worker != "worker-1" {
+		t.Fatalf("expected worker-1 in terminal transition, got %q", terminal.Worker)
+	}
+	if terminal.Status != domain.StatusFailed {
+		t.Fatalf("expected status FAILED, got %q", terminal.Status)
+	}
+	if terminal.Error == nil || !strings.Contains(*terminal.Error, "handler boom") {
+		t.Fatalf("expected failure error to contain handler boom, got %#v", terminal.Error)
+	}
+
+	if len(stream.ackCalls) != 2 {
+		t.Fatalf("expected 2 ack calls, got %d", len(stream.ackCalls))
+	}
+	if stream.ackCalls[0].ids[0] != "1-0" {
+		t.Fatalf("expected first ack for 1-0, got %#v", stream.ackCalls[0].ids)
+	}
+	if stream.ackCalls[1].ids[0] != "2-0" {
+		t.Fatalf("expected second ack for 2-0, got %#v", stream.ackCalls[1].ids)
+	}
+
+	if len(store.claimCalls) != 2 {
+		t.Fatalf("expected claim loop to continue, got %d claim calls", len(store.claimCalls))
+	}
+}
+
+func TestConsumerAcksUnclaimedMessageAndContinues(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	stream := &fakeStreamClient{
+		messages: []Message{
+			{ID: "1-0", TaskID: "task-unclaimed", EnqueueToken: "token-1"},
+			{ID: "2-0", TaskID: "task-claimed", EnqueueToken: "token-2"},
+		},
+	}
+	store := &fakeTaskStore{
+		transitionResults: []claimResult{
+			{claimed: false},
+			{claimed: true},
+		},
+	}
+
+	handlerCalls := 0
+	consumer := NewConsumer(ConsumerConfig{
+		Stream:   stream,
+		Store:    store,
+		Group:    "go-workers",
+		Consumer: "worker-1",
+		Block:    time.Millisecond,
+		Handler: func(_ context.Context, msg Message) error {
+			handlerCalls++
+			if msg.TaskID != "task-claimed" {
+				t.Fatalf("handler should run only for claimed message, got %q", msg.TaskID)
+			}
+			cancel()
+			return nil
+		},
+	})
+
+	err := consumer.Run(ctx)
+	if err != nil {
+		t.Fatalf("consumer run: %v", err)
+	}
+
+	if handlerCalls != 1 {
+		t.Fatalf("expected handler to run once, got %d", handlerCalls)
+	}
+	if len(store.claimCalls) != 2 {
+		t.Fatalf("expected 2 claim calls, got %d", len(store.claimCalls))
+	}
+	if len(store.terminalCalls) != 0 {
+		t.Fatalf("expected no terminal transition for unclaimed path, got %d", len(store.terminalCalls))
+	}
+
+	if len(stream.ackCalls) != 2 {
+		t.Fatalf("expected ack on both messages, got %d", len(stream.ackCalls))
+	}
+	if stream.ackCalls[0].ids[0] != "1-0" {
+		t.Fatalf("expected first ack for unclaimed 1-0, got %#v", stream.ackCalls[0].ids)
+	}
+	if stream.ackCalls[1].ids[0] != "2-0" {
+		t.Fatalf("expected second ack for claimed 2-0, got %#v", stream.ackCalls[1].ids)
+	}
+}
+
 type fakeTaskStore struct {
-	transitioned bool
-	claimCalls   []claimCall
+	transitionResults []claimResult
+	defaultTransition bool
+	claimCalls        []claimCall
+	terminalCalls     []postgres.TransitionTerminalInput
+	terminalErr       error
+}
+
+type claimResult struct {
+	claimed bool
+	err     error
 }
 
 type claimCall struct {
@@ -78,7 +220,17 @@ type claimCall struct {
 
 func (f *fakeTaskStore) TransitionPendingToInProgress(_ context.Context, taskID, token, worker string) (bool, error) {
 	f.claimCalls = append(f.claimCalls, claimCall{taskID: taskID, token: token, worker: worker})
-	return f.transitioned, nil
+	if len(f.transitionResults) > 0 {
+		result := f.transitionResults[0]
+		f.transitionResults = f.transitionResults[1:]
+		return result.claimed, result.err
+	}
+	return f.defaultTransition, nil
+}
+
+func (f *fakeTaskStore) TransitionToTerminal(_ context.Context, input postgres.TransitionTerminalInput) error {
+	f.terminalCalls = append(f.terminalCalls, input)
+	return f.terminalErr
 }
 
 type fakeStreamClient struct {
