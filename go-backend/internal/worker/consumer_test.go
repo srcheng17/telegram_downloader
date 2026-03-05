@@ -312,7 +312,7 @@ func TestConsumerHandlerErrorWithFailTransitionErrorDoesNotAckFailedMessage(t *t
 	}
 }
 
-func TestRedisStreamReadGroupReadsPendingFirstForConsumer(t *testing.T) {
+func TestRedisStreamReadGroupPrefersNewThenFallsBackToPending(t *testing.T) {
 	ctx := context.Background()
 
 	mini, err := miniredis.Run()
@@ -370,8 +370,19 @@ func TestRedisStreamReadGroupReadsPendingFirstForConsumer(t *testing.T) {
 	if len(secondRead) != 1 {
 		t.Fatalf("expected one message from second read, got %d", len(secondRead))
 	}
-	if secondRead[0].ID != firstID {
-		t.Fatalf("expected pending-first id %s, got %s (new id %s)", firstID, secondRead[0].ID, secondID)
+	if secondRead[0].ID != secondID {
+		t.Fatalf("expected new-first id %s, got %s", secondID, secondRead[0].ID)
+	}
+
+	thirdRead, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
+	if err != nil {
+		t.Fatalf("third read: %v", err)
+	}
+	if len(thirdRead) == 0 {
+		t.Fatalf("expected pending fallback messages, got none")
+	}
+	if thirdRead[0].ID != firstID {
+		t.Fatalf("expected pending fallback id %s, got %s", firstID, thirdRead[0].ID)
 	}
 }
 

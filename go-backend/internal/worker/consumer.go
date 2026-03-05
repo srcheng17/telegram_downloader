@@ -14,6 +14,11 @@ import (
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
+const (
+	baseErrorBackoff = 50 * time.Millisecond
+	maxErrorBackoff  = 2 * time.Second
+)
+
 type Message struct {
 	ID           string
 	TaskID       string
@@ -85,6 +90,8 @@ func (c *Consumer) Run(ctx context.Context) error {
 		return errors.New("worker consumer requires consumer name")
 	}
 
+	consecutiveErrors := 0
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
@@ -99,8 +106,12 @@ func (c *Consumer) Run(ctx context.Context) error {
 				return nil
 			}
 			log.Printf("worker consumer read group failed: %v", err)
+			if !waitWithBackoff(ctx, &consecutiveErrors) {
+				return nil
+			}
 			continue
 		}
+		consecutiveErrors = 0
 
 		for _, msg := range messages {
 			claimed, err := c.store.TransitionPendingToInProgress(ctx, msg.TaskID, msg.EnqueueToken, c.consumer)
@@ -111,10 +122,19 @@ func (c *Consumer) Run(ctx context.Context) error {
 					msg.TaskID,
 					err,
 				)
+				if !waitWithBackoff(ctx, &consecutiveErrors) {
+					return nil
+				}
 				continue
 			}
 			if !claimed {
-				c.ackMessage(ctx, msg, "unclaimed")
+				if err := c.ackMessage(ctx, msg, "unclaimed"); err != nil {
+					if !waitWithBackoff(ctx, &consecutiveErrors) {
+						return nil
+					}
+					continue
+				}
+				consecutiveErrors = 0
 				continue
 			}
 
@@ -139,25 +159,35 @@ func (c *Consumer) Run(ctx context.Context) error {
 						msg.TaskID,
 						transitionErr,
 					)
+					if !waitWithBackoff(ctx, &consecutiveErrors) {
+						return nil
+					}
 					continue
 				}
-				c.ackMessage(ctx, msg, "handler_error")
+				if err := c.ackMessage(ctx, msg, "handler_error"); err != nil {
+					if !waitWithBackoff(ctx, &consecutiveErrors) {
+						return nil
+					}
+					continue
+				}
+				consecutiveErrors = 0
 				continue
 			}
 
-			c.ackMessage(ctx, msg, "success")
+			if err := c.ackMessage(ctx, msg, "success"); err != nil {
+				if !waitWithBackoff(ctx, &consecutiveErrors) {
+					return nil
+				}
+				continue
+			}
+			consecutiveErrors = 0
 		}
 	}
 }
 
-func (c *Consumer) ackMessage(ctx context.Context, msg Message, reason string) {
+func (c *Consumer) ackMessage(ctx context.Context, msg Message, reason string) error {
 	if strings.TrimSpace(msg.ID) == "" {
-		log.Printf(
-			"worker consumer skipping ack for empty message id task_id=%s reason=%s",
-			msg.TaskID,
-			reason,
-		)
-		return
+		return fmt.Errorf("worker consumer cannot ack empty message id task_id=%s reason=%s", msg.TaskID, reason)
 	}
 	if err := c.stream.Ack(ctx, c.group, msg.ID); err != nil {
 		log.Printf(
@@ -167,6 +197,33 @@ func (c *Consumer) ackMessage(ctx context.Context, msg Message, reason string) {
 			reason,
 			err,
 		)
+		return err
+	}
+	return nil
+}
+
+func waitWithBackoff(ctx context.Context, consecutiveErrors *int) bool {
+	if consecutiveErrors == nil {
+		return true
+	}
+
+	*consecutiveErrors++
+	delay := baseErrorBackoff
+	for i := 1; i < *consecutiveErrors; i++ {
+		delay *= 2
+		if delay >= maxErrorBackoff {
+			delay = maxErrorBackoff
+			break
+		}
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -217,19 +274,22 @@ func (s *RedisStream) ReadGroup(
 	group = strings.TrimSpace(group)
 	consumer = strings.TrimSpace(consumer)
 
-	pendingMessages, err := s.readGroupByID(ctx, group, consumer, count, -1, "0")
+	newMessages, err := s.readGroupByID(ctx, group, consumer, count, block, ">")
 	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	if len(newMessages) > 0 {
+		return newMessages, nil
+	}
+
+	pendingMessages, err := s.readGroupByID(ctx, group, consumer, count, -1, "0")
+	if err != nil {
 		return nil, err
 	}
 	if len(pendingMessages) > 0 {
 		return pendingMessages, nil
 	}
-
-	newMessages, err := s.readGroupByID(ctx, group, consumer, count, block, ">")
-	if err != nil {
-		return nil, err
-	}
-	return newMessages, nil
+	return nil, redis.Nil
 }
 
 func (s *RedisStream) readGroupByID(
