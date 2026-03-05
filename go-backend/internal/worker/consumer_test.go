@@ -312,7 +312,7 @@ func TestConsumerHandlerErrorWithFailTransitionErrorDoesNotAckFailedMessage(t *t
 	}
 }
 
-func TestRedisStreamReadGroupPrefersNewThenFallsBackToPending(t *testing.T) {
+func TestRedisStreamReadGroupAlternatesNewAndPendingPriority(t *testing.T) {
 	ctx := context.Background()
 
 	mini, err := miniredis.Run()
@@ -333,56 +333,117 @@ func TestRedisStreamReadGroupPrefersNewThenFallsBackToPending(t *testing.T) {
 		t.Fatalf("create group: %v", err)
 	}
 
-	firstID, err := client.XAdd(ctx, &redis.XAddArgs{
+	pendingFirstID, err := client.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamName,
 		Values: map[string]any{
-			"task_id":       "task-pending",
-			"enqueue_token": "token-1",
+			"task_id":       "task-pending-1",
+			"enqueue_token": "token-pending-1",
 		},
 	}).Result()
 	if err != nil {
 		t.Fatalf("xadd first: %v", err)
 	}
 
-	firstRead, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
-	if err != nil {
-		t.Fatalf("first read: %v", err)
-	}
-	if len(firstRead) != 1 || firstRead[0].ID != firstID {
-		t.Fatalf("expected first read id %s, got %#v", firstID, firstRead)
-	}
-
-	secondID, err := client.XAdd(ctx, &redis.XAddArgs{
+	pendingSecondID, err := client.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamName,
 		Values: map[string]any{
-			"task_id":       "task-new",
-			"enqueue_token": "token-2",
+			"task_id":       "task-pending-2",
+			"enqueue_token": "token-pending-2",
 		},
 	}).Result()
 	if err != nil {
-		t.Fatalf("xadd second: %v", err)
+		t.Fatalf("xadd second pending: %v", err)
 	}
 
-	secondRead, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
+	bootstrapRead1, err := client.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: consumer,
+		Streams:  []string{streamName, ">"},
+		Count:    1,
+		Block:    time.Millisecond,
+	}).Result()
 	if err != nil {
-		t.Fatalf("second read: %v", err)
+		t.Fatalf("bootstrap read 1: %v", err)
 	}
-	if len(secondRead) != 1 {
-		t.Fatalf("expected one message from second read, got %d", len(secondRead))
-	}
-	if secondRead[0].ID != secondID {
-		t.Fatalf("expected new-first id %s, got %s", secondID, secondRead[0].ID)
+	if len(bootstrapRead1) != 1 || len(bootstrapRead1[0].Messages) != 1 || bootstrapRead1[0].Messages[0].ID != pendingFirstID {
+		t.Fatalf("expected bootstrap pending id %s, got %#v", pendingFirstID, bootstrapRead1)
 	}
 
-	thirdRead, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
+	bootstrapRead2, err := client.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: consumer,
+		Streams:  []string{streamName, ">"},
+		Count:    1,
+		Block:    time.Millisecond,
+	}).Result()
 	if err != nil {
-		t.Fatalf("third read: %v", err)
+		t.Fatalf("bootstrap read 2: %v", err)
 	}
-	if len(thirdRead) == 0 {
-		t.Fatalf("expected pending fallback messages, got none")
+	if len(bootstrapRead2) != 1 || len(bootstrapRead2[0].Messages) != 1 || bootstrapRead2[0].Messages[0].ID != pendingSecondID {
+		t.Fatalf("expected bootstrap pending id %s, got %#v", pendingSecondID, bootstrapRead2)
 	}
-	if thirdRead[0].ID != firstID {
-		t.Fatalf("expected pending fallback id %s, got %s", firstID, thirdRead[0].ID)
+
+	newFirstID, err := client.XAdd(ctx, &redis.XAddArgs{
+		Stream: streamName,
+		Values: map[string]any{
+			"task_id":       "task-new-1",
+			"enqueue_token": "token-new-1",
+		},
+	}).Result()
+	if err != nil {
+		t.Fatalf("xadd first new: %v", err)
+	}
+
+	newSecondID, err := client.XAdd(ctx, &redis.XAddArgs{
+		Stream: streamName,
+		Values: map[string]any{
+			"task_id":       "task-new-2",
+			"enqueue_token": "token-new-2",
+		},
+	}).Result()
+	if err != nil {
+		t.Fatalf("xadd second new: %v", err)
+	}
+
+	read1, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
+	if err != nil {
+		t.Fatalf("read 1: %v", err)
+	}
+	if len(read1) != 1 || read1[0].ID != newFirstID {
+		t.Fatalf("expected read 1 to prioritize new id %s, got %#v", newFirstID, read1)
+	}
+	if err := stream.Ack(ctx, group, read1[0].ID); err != nil {
+		t.Fatalf("ack read 1: %v", err)
+	}
+
+	read2, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
+	if err != nil {
+		t.Fatalf("read 2: %v", err)
+	}
+	if len(read2) == 0 || read2[0].ID != pendingFirstID {
+		t.Fatalf("expected read 2 to prioritize pending id %s, got %#v", pendingFirstID, read2)
+	}
+	if err := stream.Ack(ctx, group, read2[0].ID); err != nil {
+		t.Fatalf("ack read 2: %v", err)
+	}
+
+	read3, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
+	if err != nil {
+		t.Fatalf("read 3: %v", err)
+	}
+	if len(read3) != 1 || read3[0].ID != newSecondID {
+		t.Fatalf("expected read 3 to prioritize new id %s, got %#v", newSecondID, read3)
+	}
+	if err := stream.Ack(ctx, group, read3[0].ID); err != nil {
+		t.Fatalf("ack read 3: %v", err)
+	}
+
+	read4, err := stream.ReadGroup(ctx, group, consumer, 1, time.Millisecond)
+	if err != nil {
+		t.Fatalf("read 4: %v", err)
+	}
+	if len(read4) == 0 || read4[0].ID != pendingSecondID {
+		t.Fatalf("expected read 4 to prioritize pending id %s, got %#v", pendingSecondID, read4)
 	}
 }
 

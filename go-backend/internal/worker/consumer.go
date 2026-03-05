@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -111,8 +112,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		consecutiveErrors = 0
-
 		for _, msg := range messages {
 			claimed, err := c.store.TransitionPendingToInProgress(ctx, msg.TaskID, msg.EnqueueToken, c.consumer)
 			if err != nil {
@@ -207,7 +206,7 @@ func waitWithBackoff(ctx context.Context, consecutiveErrors *int) bool {
 		return true
 	}
 
-	*consecutiveErrors++
+	*consecutiveErrors = *consecutiveErrors + 1
 	delay := baseErrorBackoff
 	for i := 1; i < *consecutiveErrors; i++ {
 		delay *= 2
@@ -230,6 +229,8 @@ func waitWithBackoff(ctx context.Context, consecutiveErrors *int) bool {
 type RedisStream struct {
 	redisClient redis.Cmdable
 	streamName  string
+	mu          sync.Mutex
+	pendingNext bool
 }
 
 func NewRedisStream(redisClient redis.Cmdable, streamName string) *RedisStream {
@@ -274,22 +275,44 @@ func (s *RedisStream) ReadGroup(
 	group = strings.TrimSpace(group)
 	consumer = strings.TrimSpace(consumer)
 
-	newMessages, err := s.readGroupByID(ctx, group, consumer, count, block, ">")
+	pendingFirst := s.nextPendingFirst()
+
+	firstID := ">"
+	firstBlock := block
+	secondID := "0"
+	secondBlock := time.Duration(-1)
+	if pendingFirst {
+		firstID = "0"
+		firstBlock = -1
+		secondID = ">"
+		secondBlock = block
+	}
+
+	firstMessages, err := s.readGroupByID(ctx, group, consumer, count, firstBlock, firstID)
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
-	if len(newMessages) > 0 {
-		return newMessages, nil
+	if len(firstMessages) > 0 {
+		return firstMessages, nil
 	}
 
-	pendingMessages, err := s.readGroupByID(ctx, group, consumer, count, -1, "0")
-	if err != nil {
+	secondMessages, err := s.readGroupByID(ctx, group, consumer, count, secondBlock, secondID)
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
-	if len(pendingMessages) > 0 {
-		return pendingMessages, nil
+	if len(secondMessages) > 0 {
+		return secondMessages, nil
 	}
 	return nil, redis.Nil
+}
+
+func (s *RedisStream) nextPendingFirst() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	pendingFirst := s.pendingNext
+	s.pendingNext = !s.pendingNext
+	return pendingFirst
 }
 
 func (s *RedisStream) readGroupByID(
