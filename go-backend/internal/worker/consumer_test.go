@@ -328,6 +328,68 @@ func TestConsumerHandlerErrorWithFailTransitionErrorDoesNotAckFailedMessage(t *t
 	}
 }
 
+func TestConsumerHandlerErrorNoopFailTransitionLeavesNonTerminalDoesNotAck(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	stream := &fakeStreamClient{
+		messages: []Message{
+			{ID: "1-0", TaskID: "task-non-terminal", EnqueueToken: "token-1"},
+			{ID: "2-0", TaskID: "task-success", EnqueueToken: "token-2"},
+		},
+	}
+	store := &fakeTaskStore{
+		transitionResults: []claimResult{
+			{claimed: true},
+			{claimed: true},
+		},
+		beforeTerminalTransition: func(taskID string, input postgres.TransitionTerminalInput, current string) string {
+			if taskID == "task-non-terminal" && input.Status == domain.StatusFailed {
+				return domain.StatusCancelRequested
+			}
+			return current
+		},
+	}
+
+	handlerCalls := 0
+	consumer := NewConsumer(ConsumerConfig{
+		Stream:   stream,
+		Store:    store,
+		Group:    "go-workers",
+		Consumer: "worker-1",
+		Block:    time.Millisecond,
+		Handler: func(_ context.Context, msg Message) error {
+			handlerCalls++
+			if msg.TaskID == "task-non-terminal" {
+				return errors.New("handler boom")
+			}
+			cancel()
+			return nil
+		},
+	})
+
+	err := consumer.Run(ctx)
+	if err != nil {
+		t.Fatalf("consumer run: %v", err)
+	}
+
+	if len(store.terminalCalls) != 1 {
+		t.Fatalf("expected one fail transition attempt, got %d", len(store.terminalCalls))
+	}
+	if len(stream.ackCalls) != 1 {
+		t.Fatalf("expected only success message ack, got %d", len(stream.ackCalls))
+	}
+	if stream.ackCalls[0].ids[0] != "2-0" {
+		t.Fatalf("expected ack only for 2-0, got %#v", stream.ackCalls[0].ids)
+	}
+	if status := store.taskStatus("task-non-terminal"); status != domain.StatusCancelRequested {
+		t.Fatalf("expected non-terminal task to stay CANCEL_REQUESTED, got %q", status)
+	}
+	if handlerCalls != 2 {
+		t.Fatalf("expected handler to continue to second message, got %d", handlerCalls)
+	}
+}
+
 func TestRedisStreamReadGroupAlternatesNewAndPendingPriority(t *testing.T) {
 	ctx := context.Background()
 
@@ -464,11 +526,13 @@ func TestRedisStreamReadGroupAlternatesNewAndPendingPriority(t *testing.T) {
 }
 
 type fakeTaskStore struct {
-	transitionResults []claimResult
-	defaultTransition bool
-	claimCalls        []claimCall
-	terminalCalls     []postgres.TransitionTerminalInput
-	terminalErr       error
+	transitionResults        []claimResult
+	defaultTransition        bool
+	claimCalls               []claimCall
+	terminalCalls            []postgres.TransitionTerminalInput
+	terminalErr              error
+	statusByTask             map[string]string
+	beforeTerminalTransition func(taskID string, input postgres.TransitionTerminalInput, current string) string
 }
 
 type claimResult struct {
@@ -484,17 +548,72 @@ type claimCall struct {
 
 func (f *fakeTaskStore) TransitionPendingToInProgress(_ context.Context, taskID, token, worker string) (bool, error) {
 	f.claimCalls = append(f.claimCalls, claimCall{taskID: taskID, token: token, worker: worker})
+	f.ensureStatusMap()
 	if len(f.transitionResults) > 0 {
 		result := f.transitionResults[0]
 		f.transitionResults = f.transitionResults[1:]
+		if result.claimed {
+			f.statusByTask[taskID] = domain.StatusInProgress
+		}
 		return result.claimed, result.err
+	}
+	if f.defaultTransition {
+		f.statusByTask[taskID] = domain.StatusInProgress
 	}
 	return f.defaultTransition, nil
 }
 
 func (f *fakeTaskStore) TransitionToTerminal(_ context.Context, input postgres.TransitionTerminalInput) error {
 	f.terminalCalls = append(f.terminalCalls, input)
-	return f.terminalErr
+	if f.terminalErr != nil {
+		return f.terminalErr
+	}
+	f.ensureStatusMap()
+
+	current := f.taskStatus(input.TaskID)
+	if f.beforeTerminalTransition != nil {
+		current = f.beforeTerminalTransition(input.TaskID, input, current)
+		f.statusByTask[input.TaskID] = current
+	}
+
+	if !consumerFakeTransitionAllowed(current, input.Status) {
+		return nil
+	}
+	f.statusByTask[input.TaskID] = input.Status
+	return nil
+}
+
+func (f *fakeTaskStore) GetTask(_ context.Context, taskID string) (*domain.TaskLog, error) {
+	return &domain.TaskLog{
+		ID:     taskID,
+		Status: f.taskStatus(taskID),
+	}, nil
+}
+
+func (f *fakeTaskStore) ensureStatusMap() {
+	if f.statusByTask == nil {
+		f.statusByTask = map[string]string{}
+	}
+}
+
+func (f *fakeTaskStore) taskStatus(taskID string) string {
+	f.ensureStatusMap()
+	status := strings.ToUpper(strings.TrimSpace(f.statusByTask[taskID]))
+	if status == "" {
+		return domain.StatusInProgress
+	}
+	return status
+}
+
+func consumerFakeTransitionAllowed(currentStatus, targetStatus string) bool {
+	switch targetStatus {
+	case domain.StatusCanceled:
+		return currentStatus == domain.StatusInProgress || currentStatus == domain.StatusCancelRequested
+	case domain.StatusSuccess, domain.StatusFailed:
+		return currentStatus == domain.StatusInProgress
+	default:
+		return false
+	}
 }
 
 type fakeStreamClient struct {

@@ -171,6 +171,18 @@ func (c *Consumer) Run(ctx context.Context) error {
 					}
 					continue
 				}
+				if terminalErr := c.ensureFallbackTerminalStatus(ctx, msg.TaskID); terminalErr != nil {
+					log.Printf(
+						"worker consumer fail transition left non-terminal task message_id=%s task_id=%s: %v",
+						msg.ID,
+						msg.TaskID,
+						terminalErr,
+					)
+					if !waitWithBackoff(ctx, &consecutiveErrors) {
+						return nil
+					}
+					continue
+				}
 				if err := c.ackMessage(ctx, msg, "handler_error"); err != nil {
 					if !waitWithBackoff(ctx, &consecutiveErrors) {
 						return nil
@@ -205,6 +217,27 @@ func (c *Consumer) ackMessage(ctx context.Context, msg Message, reason string) e
 			err,
 		)
 		return err
+	}
+	return nil
+}
+
+func (c *Consumer) ensureFallbackTerminalStatus(ctx context.Context, taskID string) error {
+	statusStore, ok := c.store.(taskStatusStore)
+	if !ok {
+		return nil
+	}
+
+	task, err := statusStore.GetTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("load task status: %w", err)
+	}
+	if task == nil {
+		return fmt.Errorf("task %s not found after fallback transition", taskID)
+	}
+
+	status := strings.ToUpper(strings.TrimSpace(task.Status))
+	if !isTerminalStatus(status) {
+		return fmt.Errorf("task %s status is non-terminal after fallback transition: %s", taskID, status)
 	}
 	return nil
 }

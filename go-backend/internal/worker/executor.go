@@ -82,7 +82,16 @@ func (e *Executor) Handle(ctx context.Context, worker string, msg Message) error
 		return err
 	}
 	if cancelRequested {
-		return e.transitionCanceled(ctx, taskID, worker)
+		if err := e.transitionCanceled(ctx, taskID, worker); err != nil {
+			return err
+		}
+		return e.ensureExpectedTerminalState(
+			ctx,
+			statusStore,
+			taskID,
+			worker,
+			domain.StatusCanceled,
+		)
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -109,34 +118,29 @@ func (e *Executor) Handle(ctx context.Context, worker string, msg Message) error
 					return checkErr
 				}
 				if cancelRequested {
-					return e.transitionCanceled(ctx, taskID, worker)
+					if err := e.transitionCanceled(ctx, taskID, worker); err != nil {
+						return err
+					}
+					return e.ensureExpectedTerminalState(
+						ctx,
+						statusStore,
+						taskID,
+						worker,
+						domain.StatusCanceled,
+					)
 				}
 
 				if err := e.transitionFailed(ctx, taskID, worker, result.err); err != nil {
 					return err
 				}
-
-				status, err := e.taskStatus(ctx, statusStore, taskID)
-				if err != nil {
-					return err
-				}
-				if status == domain.StatusCancelRequested {
-					if err := e.transitionCanceled(ctx, taskID, worker); err != nil {
-						return err
-					}
-					status, err = e.taskStatus(ctx, statusStore, taskID)
-					if err != nil {
-						return err
-					}
-				}
-				if !isTerminalStatus(status) {
-					return fmt.Errorf(
-						"task %s remained non-terminal after failure transition: %s",
-						taskID,
-						status,
-					)
-				}
-				return nil
+				return e.ensureExpectedTerminalState(
+					ctx,
+					statusStore,
+					taskID,
+					worker,
+					domain.StatusFailed,
+					domain.StatusCanceled,
+				)
 			}
 
 			cancelRequested, err := e.isCancelRequested(ctx, statusStore, taskID)
@@ -144,21 +148,29 @@ func (e *Executor) Handle(ctx context.Context, worker string, msg Message) error
 				return err
 			}
 			if cancelRequested {
-				return e.transitionCanceled(ctx, taskID, worker)
+				if err := e.transitionCanceled(ctx, taskID, worker); err != nil {
+					return err
+				}
+				return e.ensureExpectedTerminalState(
+					ctx,
+					statusStore,
+					taskID,
+					worker,
+					domain.StatusCanceled,
+				)
 			}
 
 			if err := e.transitionSuccess(ctx, taskID, worker, result.resultPath); err != nil {
 				return err
 			}
-
-			cancelRequested, err = e.isCancelRequested(ctx, statusStore, taskID)
-			if err != nil {
-				return err
-			}
-			if cancelRequested {
-				return e.transitionCanceled(ctx, taskID, worker)
-			}
-			return nil
+			return e.ensureExpectedTerminalState(
+				ctx,
+				statusStore,
+				taskID,
+				worker,
+				domain.StatusSuccess,
+				domain.StatusCanceled,
+			)
 		case <-heartbeatTicker.C:
 			if err := heartbeatStore.UpdateTaskHeartbeat(ctx, taskID, worker); err != nil {
 				return fmt.Errorf("update task heartbeat: %w", err)
@@ -174,7 +186,16 @@ func (e *Executor) Handle(ctx context.Context, worker string, msg Message) error
 
 			cancel()
 			e.drainDownloadResult(resultCh)
-			return e.transitionCanceled(ctx, taskID, worker)
+			if err := e.transitionCanceled(ctx, taskID, worker); err != nil {
+				return err
+			}
+			return e.ensureExpectedTerminalState(
+				ctx,
+				statusStore,
+				taskID,
+				worker,
+				domain.StatusCanceled,
+			)
 		}
 	}
 }
@@ -223,6 +244,45 @@ func (e *Executor) taskStatus(ctx context.Context, store taskStatusStore, taskID
 		return "", fmt.Errorf("task %s not found while executing", taskID)
 	}
 	return strings.ToUpper(strings.TrimSpace(task.Status)), nil
+}
+
+func (e *Executor) ensureExpectedTerminalState(
+	ctx context.Context,
+	statusStore taskStatusStore,
+	taskID string,
+	worker string,
+	expectedStatuses ...string,
+) error {
+	status, err := e.taskStatus(ctx, statusStore, taskID)
+	if err != nil {
+		return err
+	}
+
+	if status == domain.StatusCancelRequested {
+		if err := e.transitionCanceled(ctx, taskID, worker); err != nil {
+			return err
+		}
+		status, err = e.taskStatus(ctx, statusStore, taskID)
+		if err != nil {
+			return err
+		}
+	}
+
+	if !isTerminalStatus(status) {
+		return fmt.Errorf(
+			"task %s remained non-terminal after terminal transition: %s",
+			taskID,
+			status,
+		)
+	}
+	if len(expectedStatuses) > 0 && !statusIn(status, expectedStatuses...) {
+		return fmt.Errorf(
+			"task %s reached unexpected terminal status: %s",
+			taskID,
+			status,
+		)
+	}
+	return nil
 }
 
 func (e *Executor) isCancelRequested(ctx context.Context, store taskStatusStore, taskID string) (bool, error) {
@@ -281,4 +341,14 @@ func isTerminalStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func statusIn(status string, expectedStatuses ...string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(status))
+	for _, expectedStatus := range expectedStatuses {
+		if normalized == strings.ToUpper(strings.TrimSpace(expectedStatus)) {
+			return true
+		}
+	}
+	return false
 }

@@ -199,6 +199,48 @@ func TestExecutorReturnsErrorWhenDownloadErrorLeavesTaskNonTerminal(t *testing.T
 	}
 }
 
+func TestExecutorReturnsErrorWhenSuccessTransitionLeavesNonTerminal(t *testing.T) {
+	store := &fakeExecutorStore{
+		status: domain.StatusInProgress,
+		statusSequence: []string{
+			domain.StatusInProgress,
+			domain.StatusInProgress,
+		},
+		beforeTransition: func(input postgres.TransitionTerminalInput, currentStatus string) string {
+			if input.Status == domain.StatusSuccess {
+				return domain.StatusPending
+			}
+			return currentStatus
+		},
+	}
+	downloader := &fakeExecutorDownloader{
+		executeFn: func(context.Context, string) (string, error) {
+			return "/tmp/success.cbz", nil
+		},
+	}
+	executor := &Executor{
+		Store:      store,
+		Downloader: downloader,
+	}
+
+	err := executor.Handle(context.Background(), "worker-1", Message{TaskID: "task-success-non-terminal"})
+	if err == nil {
+		t.Fatalf("expected success transition race to return error")
+	}
+	if !strings.Contains(err.Error(), "non-terminal") {
+		t.Fatalf("expected non-terminal error, got %v", err)
+	}
+	if len(store.terminalCalls) != 1 {
+		t.Fatalf("expected one success transition attempt, got %d", len(store.terminalCalls))
+	}
+	if store.terminalCalls[0].Status != domain.StatusSuccess {
+		t.Fatalf("expected attempted status SUCCESS, got %q", store.terminalCalls[0].Status)
+	}
+	if store.status != domain.StatusPending {
+		t.Fatalf("expected final status PENDING, got %q", store.status)
+	}
+}
+
 func TestExecutorSuccessRaceWithCancelRequestedEndsCanceled(t *testing.T) {
 	store := &fakeExecutorStore{
 		status: domain.StatusInProgress,
