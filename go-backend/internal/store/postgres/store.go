@@ -32,6 +32,12 @@ type TransitionTerminalInput struct {
 	ResultZipPath *string
 }
 
+var terminalStatuses = map[string]struct{}{
+	"SUCCESS":  {},
+	"FAILED":   {},
+	"CANCELED": {},
+}
+
 const taskSelectFields = `
 	id,
 	url,
@@ -392,6 +398,7 @@ func (s *Store) RequestTaskCancel(ctx context.Context, taskID string, cancelErro
 		UPDATE tasks
 		SET
 			status = 'CANCEL_REQUESTED',
+			cancel_requested_at = NOW(),
 			error = $2,
 			result_zip_path = NULL
 		WHERE id = $1
@@ -448,6 +455,11 @@ func (s *Store) UpdateTaskHeartbeat(ctx context.Context, taskID, worker string) 
 }
 
 func (s *Store) TransitionToTerminal(ctx context.Context, input TransitionTerminalInput) error {
+	normalizedStatus := strings.ToUpper(strings.TrimSpace(input.Status))
+	if _, ok := terminalStatuses[normalizedStatus]; !ok {
+		return fmt.Errorf("invalid terminal status %q", input.Status)
+	}
+
 	_, err := s.pool.Exec(
 		ctx,
 		`
@@ -466,7 +478,7 @@ func (s *Store) TransitionToTerminal(ctx context.Context, input TransitionTermin
 		`,
 		input.TaskID,
 		input.Worker,
-		input.Status,
+		normalizedStatus,
 		input.Error,
 		input.ResultZipPath,
 	)

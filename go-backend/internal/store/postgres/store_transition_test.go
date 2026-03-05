@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,18 +55,201 @@ func TestTransitionPendingToInProgressRequiresEnqueueToken(t *testing.T) {
 	if task.heartbeatAt.IsZero() {
 		t.Fatalf("expected heartbeat_at to be set")
 	}
+	if task.version != 1 {
+		t.Fatalf("expected version increment to 1, got %d", task.version)
+	}
+}
+
+func TestUpdateTaskHeartbeatHonorsClaimedWorker(t *testing.T) {
+	taskID := "task-heartbeat-1"
+	worker := "worker-a"
+	wrongWorker := "worker-b"
+	before := time.Unix(100, 0).UTC()
+
+	db := newFakeTransitionDB()
+	db.insertTask(taskID, fakeTransitionTask{
+		status:      "IN_PROGRESS",
+		claimedBy:   worker,
+		heartbeatAt: before,
+		version:     5,
+	})
+
+	store := &Store{pool: db}
+
+	if err := store.UpdateTaskHeartbeat(context.Background(), taskID, worker); err != nil {
+		t.Fatalf("heartbeat update: %v", err)
+	}
+
+	task := db.tasks[taskID]
+	if !task.heartbeatAt.After(before) {
+		t.Fatalf("expected heartbeat_at to advance, before=%v after=%v", before, task.heartbeatAt)
+	}
+	if task.version != 6 {
+		t.Fatalf("expected version increment to 6, got %d", task.version)
+	}
+
+	afterSuccess := task.heartbeatAt
+	if err := store.UpdateTaskHeartbeat(context.Background(), taskID, wrongWorker); err != nil {
+		t.Fatalf("heartbeat update with wrong worker: %v", err)
+	}
+
+	task = db.tasks[taskID]
+	if !task.heartbeatAt.Equal(afterSuccess) {
+		t.Fatalf("expected wrong-worker heartbeat to no-op")
+	}
+	if task.version != 6 {
+		t.Fatalf("expected wrong-worker heartbeat version to stay 6, got %d", task.version)
+	}
+}
+
+func TestTransitionToTerminalBehaviors(t *testing.T) {
+	t.Run("happy path", func(t *testing.T) {
+		taskID := "task-terminal-happy"
+		worker := "worker-a"
+		resultPath := "/tmp/file.cbz"
+		errMsg := "download failed"
+
+		db := newFakeTransitionDB()
+		db.insertTask(taskID, fakeTransitionTask{
+			status:    "IN_PROGRESS",
+			claimedBy: worker,
+			version:   2,
+		})
+
+		store := &Store{pool: db}
+		err := store.TransitionToTerminal(context.Background(), TransitionTerminalInput{
+			TaskID:        taskID,
+			Worker:        worker,
+			Status:        "FAILED",
+			Error:         stringPtr(errMsg),
+			ResultZipPath: stringPtr(resultPath),
+		})
+		if err != nil {
+			t.Fatalf("transition to terminal: %v", err)
+		}
+
+		task := db.tasks[taskID]
+		if task.status != "FAILED" {
+			t.Fatalf("expected FAILED, got %q", task.status)
+		}
+		if task.error == nil || *task.error != errMsg {
+			t.Fatalf("expected error message %q, got %#v", errMsg, task.error)
+		}
+		if task.resultZipPath == nil || *task.resultZipPath != resultPath {
+			t.Fatalf("expected result path %q, got %#v", resultPath, task.resultZipPath)
+		}
+		if task.endTime <= 0 {
+			t.Fatalf("expected end_time to be set, got %f", task.endTime)
+		}
+		if task.heartbeatAt.IsZero() {
+			t.Fatalf("expected heartbeat_at to be set")
+		}
+		if task.version != 3 {
+			t.Fatalf("expected version increment to 3, got %d", task.version)
+		}
+	})
+
+	t.Run("invalid status rejected before write", func(t *testing.T) {
+		taskID := "task-terminal-invalid"
+		worker := "worker-a"
+
+		db := newFakeTransitionDB()
+		db.insertTask(taskID, fakeTransitionTask{
+			status:    "IN_PROGRESS",
+			claimedBy: worker,
+		})
+
+		store := &Store{pool: db}
+		err := store.TransitionToTerminal(context.Background(), TransitionTerminalInput{
+			TaskID: taskID,
+			Worker: worker,
+			Status: "IN_PROGRESS",
+		})
+		if err == nil {
+			t.Fatalf("expected invalid status error")
+		}
+		if db.execCalls != 0 {
+			t.Fatalf("expected invalid status to skip db write, execCalls=%d", db.execCalls)
+		}
+		if db.tasks[taskID].status != "IN_PROGRESS" {
+			t.Fatalf("expected task status to remain unchanged")
+		}
+	})
+
+	t.Run("already terminal is idempotent no-op", func(t *testing.T) {
+		taskID := "task-terminal-noop-terminal"
+		worker := "worker-a"
+
+		db := newFakeTransitionDB()
+		db.insertTask(taskID, fakeTransitionTask{
+			status:    "SUCCESS",
+			claimedBy: worker,
+			version:   7,
+		})
+
+		store := &Store{pool: db}
+		err := store.TransitionToTerminal(context.Background(), TransitionTerminalInput{
+			TaskID: taskID,
+			Worker: worker,
+			Status: "FAILED",
+		})
+		if err != nil {
+			t.Fatalf("already terminal transition should be no-op, got %v", err)
+		}
+		task := db.tasks[taskID]
+		if task.status != "SUCCESS" {
+			t.Fatalf("expected status to remain SUCCESS, got %q", task.status)
+		}
+		if task.version != 7 {
+			t.Fatalf("expected version unchanged at 7, got %d", task.version)
+		}
+	})
+
+	t.Run("worker mismatch is idempotent no-op", func(t *testing.T) {
+		taskID := "task-terminal-noop-worker"
+		worker := "worker-a"
+
+		db := newFakeTransitionDB()
+		db.insertTask(taskID, fakeTransitionTask{
+			status:    "IN_PROGRESS",
+			claimedBy: worker,
+			version:   9,
+		})
+
+		store := &Store{pool: db}
+		err := store.TransitionToTerminal(context.Background(), TransitionTerminalInput{
+			TaskID: taskID,
+			Worker: "worker-b",
+			Status: "FAILED",
+		})
+		if err != nil {
+			t.Fatalf("worker mismatch transition should be no-op, got %v", err)
+		}
+		task := db.tasks[taskID]
+		if task.status != "IN_PROGRESS" {
+			t.Fatalf("expected status to remain IN_PROGRESS, got %q", task.status)
+		}
+		if task.version != 9 {
+			t.Fatalf("expected version unchanged at 9, got %d", task.version)
+		}
+	})
 }
 
 type fakeTransitionDB struct {
-	tasks map[string]*fakeTransitionTask
+	execCalls int
+	tasks     map[string]*fakeTransitionTask
 }
 
 type fakeTransitionTask struct {
-	status       string
-	enqueueToken string
-	claimedBy    string
-	claimedAt    time.Time
-	heartbeatAt  time.Time
+	status        string
+	enqueueToken  string
+	claimedBy     string
+	claimedAt     time.Time
+	heartbeatAt   time.Time
+	error         *string
+	resultZipPath *string
+	endTime       float64
+	version       int64
 }
 
 func newFakeTransitionDB() *fakeTransitionDB {
@@ -80,7 +265,27 @@ func (f *fakeTransitionDB) insertPending(taskID, enqueueToken string) {
 	}
 }
 
-func (f *fakeTransitionDB) Exec(_ context.Context, _ string, args ...any) (pgconn.CommandTag, error) {
+func (f *fakeTransitionDB) insertTask(taskID string, task fakeTransitionTask) {
+	copied := task
+	f.tasks[taskID] = &copied
+}
+
+func (f *fakeTransitionDB) Exec(_ context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	f.execCalls++
+
+	switch {
+	case strings.Contains(query, "AND enqueue_token = $2"):
+		return f.execTransitionPending(args...)
+	case strings.Contains(query, "AND claimed_by = $2") && strings.Contains(query, "status = 'IN_PROGRESS'"):
+		return f.execHeartbeat(args...)
+	case strings.Contains(query, "AND status IN ('IN_PROGRESS', 'CANCEL_REQUESTED')"):
+		return f.execTransitionTerminal(args...)
+	default:
+		panic(fmt.Sprintf("unexpected Exec query: %s", query))
+	}
+}
+
+func (f *fakeTransitionDB) execTransitionPending(args ...any) (pgconn.CommandTag, error) {
 	taskID := args[0].(string)
 	token := args[1].(string)
 	worker := args[2].(string)
@@ -98,7 +303,52 @@ func (f *fakeTransitionDB) Exec(_ context.Context, _ string, args ...any) (pgcon
 	task.claimedBy = worker
 	task.claimedAt = now
 	task.heartbeatAt = now
+	task.version++
 
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+func (f *fakeTransitionDB) execHeartbeat(args ...any) (pgconn.CommandTag, error) {
+	taskID := args[0].(string)
+	worker := args[1].(string)
+
+	task := f.tasks[taskID]
+	if task == nil {
+		return pgconn.NewCommandTag("UPDATE 0"), nil
+	}
+	if task.status != "IN_PROGRESS" || task.claimedBy != worker {
+		return pgconn.NewCommandTag("UPDATE 0"), nil
+	}
+
+	task.heartbeatAt = time.Now()
+	task.version++
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+func (f *fakeTransitionDB) execTransitionTerminal(args ...any) (pgconn.CommandTag, error) {
+	taskID := args[0].(string)
+	worker := args[1].(string)
+	status := args[2].(string)
+	errValue, _ := args[3].(*string)
+	pathValue, _ := args[4].(*string)
+
+	task := f.tasks[taskID]
+	if task == nil {
+		return pgconn.NewCommandTag("UPDATE 0"), nil
+	}
+	if task.claimedBy != worker {
+		return pgconn.NewCommandTag("UPDATE 0"), nil
+	}
+	if task.status != "IN_PROGRESS" && task.status != "CANCEL_REQUESTED" {
+		return pgconn.NewCommandTag("UPDATE 0"), nil
+	}
+
+	task.status = status
+	task.error = errValue
+	task.resultZipPath = pathValue
+	task.endTime = float64(time.Now().Unix())
+	task.heartbeatAt = time.Now()
+	task.version++
 	return pgconn.NewCommandTag("UPDATE 1"), nil
 }
 
