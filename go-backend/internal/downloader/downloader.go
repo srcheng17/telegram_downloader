@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -266,8 +267,8 @@ func (s Service) PackageCBZ(images []domain.DownloadedImage, metadata TaskMetada
 	localImages := make([]LocalImage, 0, len(images))
 	for index, image := range images {
 		localImages = append(localImages, LocalImage{
-			Name: fmt.Sprintf("%d%s", index+1, imageArchiveExtension(image.URL)),
-			Data: bytes.Clone(image.Data),
+			Name: fmt.Sprintf("%d%s", index+1, imageArchiveExtension(image.URL, image.ContentType)),
+			Data: image.Data,
 		})
 	}
 
@@ -437,19 +438,50 @@ var (
 	sourceTagPattern    = regexp.MustCompile(`(?is)<source\b[^>]*>`)
 	urlAttrPattern      = regexp.MustCompile(`(?is)\b(src|data-src|data-original|data-lazy-src|data-url)\b\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
 	srcsetAttrPattern   = regexp.MustCompile(`(?is)\b(srcset|data-srcset)\b\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
-	validImageExtRegex  = regexp.MustCompile(`^\.[a-z0-9]{1,5}$`)
 )
 
-func imageArchiveExtension(rawURL string) string {
+var imageArchiveExtensions = map[string]struct{}{
+	".jpg":  {},
+	".jpeg": {},
+	".png":  {},
+	".webp": {},
+	".gif":  {},
+	".bmp":  {},
+	".avif": {},
+}
+
+var contentTypeToArchiveExtension = map[string]string{
+	"image/jpeg":     ".jpg",
+	"image/jpg":      ".jpg",
+	"image/pjpeg":    ".jpg",
+	"image/png":      ".png",
+	"image/webp":     ".webp",
+	"image/gif":      ".gif",
+	"image/bmp":      ".bmp",
+	"image/x-ms-bmp": ".bmp",
+	"image/avif":     ".avif",
+}
+
+func imageArchiveExtension(rawURL, contentType string) string {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || parsed == nil {
-		return ".jpg"
+	if err == nil && parsed != nil {
+		ext := strings.ToLower(path.Ext(parsed.Path))
+		if _, ok := imageArchiveExtensions[ext]; ok {
+			return ext
+		}
 	}
 
-	ext := strings.ToLower(path.Ext(parsed.Path))
-	if validImageExtRegex.MatchString(ext) {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err == nil {
+		if ext, ok := contentTypeToArchiveExtension[strings.ToLower(mediaType)]; ok {
+			return ext
+		}
+	}
+
+	if ext, ok := contentTypeToArchiveExtension[strings.ToLower(strings.TrimSpace(contentType))]; ok {
 		return ext
 	}
+
 	return ".jpg"
 }
 

@@ -7,6 +7,8 @@ import (
 	"io"
 	"path/filepath"
 	"testing"
+
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
 )
 
 func TestCBZContainsComicInfoMetadata(t *testing.T) {
@@ -75,6 +77,58 @@ func TestCBZContainsComicInfoMetadata(t *testing.T) {
 	}
 }
 
+func TestPackageCBZUsesContentTypeWhenURLSuffixIsNotImage(t *testing.T) {
+	outputPath := filepath.Join(t.TempDir(), "test.cbz")
+	service := Service{}
+
+	err := service.PackageCBZ(
+		[]domain.DownloadedImage{
+			{
+				URL:         "https://example.com/suspicious.php",
+				ContentType: "image/png; charset=utf-8",
+				Data:        []byte("image-bytes"),
+			},
+		},
+		TaskMetadata{},
+		outputPath,
+	)
+	if err != nil {
+		t.Fatalf("PackageCBZ returned error: %v", err)
+	}
+
+	archive, err := zip.OpenReader(outputPath)
+	if err != nil {
+		t.Fatalf("open cbz: %v", err)
+	}
+	defer archive.Close()
+
+	if !zipContainsFile(archive.File, "1.png") {
+		t.Fatalf("expected image entry 1.png in archive")
+	}
+	if zipContainsFile(archive.File, "1.php") {
+		t.Fatalf("did not expect image entry 1.php in archive")
+	}
+}
+
+func TestWriteComicInfoXMLSanitizesInvalidControlCharacters(t *testing.T) {
+	comicInfo, err := WriteComicInfoXML(TaskMetadata{
+		Summary: "line\x01with\x0Bcontrol\x1Fchars",
+	})
+	if err != nil {
+		t.Fatalf("WriteComicInfoXML returned error: %v", err)
+	}
+
+	var payload struct {
+		Summary string `xml:"Summary"`
+	}
+	if err := xml.Unmarshal(comicInfo, &payload); err != nil {
+		t.Fatalf("unmarshal ComicInfo.xml: %v", err)
+	}
+	if payload.Summary != "linewithcontrolchars" {
+		t.Fatalf("expected sanitized summary, got %q", payload.Summary)
+	}
+}
+
 func readFileFromZip(t *testing.T, files []*zip.File, name string) []byte {
 	t.Helper()
 
@@ -97,4 +151,13 @@ func readFileFromZip(t *testing.T, files []*zip.File, name string) []byte {
 
 	t.Fatalf("%s not found in archive", name)
 	return nil
+}
+
+func zipContainsFile(files []*zip.File, name string) bool {
+	for _, file := range files {
+		if file.Name == name {
+			return true
+		}
+	}
+	return false
 }
