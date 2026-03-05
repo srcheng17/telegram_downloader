@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -261,6 +262,40 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 	return result, nil
 }
 
+func (s Service) PackageCBZ(images []domain.DownloadedImage, metadata TaskMetadata, outputPath string) error {
+	localImages := make([]LocalImage, 0, len(images))
+	for index, image := range images {
+		localImages = append(localImages, LocalImage{
+			Name: fmt.Sprintf("%d%s", index+1, imageArchiveExtension(image.URL)),
+			Data: bytes.Clone(image.Data),
+		})
+	}
+
+	comicInfo, err := WriteComicInfoXML(metadata)
+	if err != nil {
+		return err
+	}
+
+	return PackCBZ(localImages, comicInfo, outputPath)
+}
+
+func TaskMetadataFromTask(task domain.TaskLog) TaskMetadata {
+	return TaskMetadata{
+		Writer:  valueOrEmpty(task.Author),
+		Series:  valueOrEmpty(task.SeriesName),
+		Title:   valueOrEmpty(task.ComicName),
+		Summary: valueOrEmpty(task.Summary),
+		Tags: firstNonEmpty(
+			valueOrEmpty(task.TagsNormalized),
+			valueOrEmpty(task.TagsRaw),
+		),
+		Genre: firstNonEmpty(
+			valueOrEmpty(task.GenresNormalized),
+			valueOrEmpty(task.GenresRaw),
+		),
+	}
+}
+
 func (s Service) httpClient() *http.Client {
 	if s.HTTPClient != nil {
 		return s.HTTPClient
@@ -402,7 +437,28 @@ var (
 	sourceTagPattern    = regexp.MustCompile(`(?is)<source\b[^>]*>`)
 	urlAttrPattern      = regexp.MustCompile(`(?is)\b(src|data-src|data-original|data-lazy-src|data-url)\b\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
 	srcsetAttrPattern   = regexp.MustCompile(`(?is)\b(srcset|data-srcset)\b\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	validImageExtRegex  = regexp.MustCompile(`^\.[a-z0-9]{1,5}$`)
 )
+
+func imageArchiveExtension(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed == nil {
+		return ".jpg"
+	}
+
+	ext := strings.ToLower(path.Ext(parsed.Path))
+	if validImageExtRegex.MatchString(ext) {
+		return ext
+	}
+	return ".jpg"
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
 
 func extractImageCandidateSets(pageURL, pageHTML string) ([][]string, error) {
 	baseURL, err := url.Parse(pageURL)
