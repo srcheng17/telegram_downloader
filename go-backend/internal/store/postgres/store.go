@@ -177,6 +177,9 @@ func (s *Store) ClaimDownloadTask(
 		activeStatuses = append(activeStatuses, normalized)
 	}
 	enqueueToken := strings.TrimSpace(input.EnqueueToken)
+	if enqueueToken == "" {
+		return domain.ClaimDownloadTaskResult{}, errors.New("enqueue token is required")
+	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
