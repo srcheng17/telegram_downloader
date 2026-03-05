@@ -403,7 +403,10 @@ func (s *Store) RequestTaskCancel(ctx context.Context, taskID string, cancelErro
 		`
 		UPDATE tasks
 		SET
-			status = 'CANCEL_REQUESTED',
+			status = CASE
+				WHEN status = 'PENDING' THEN 'CANCELED'
+				ELSE 'CANCEL_REQUESTED'
+			END,
 			cancel_requested_at = NOW(),
 			error = $2,
 			result_zip_path = NULL

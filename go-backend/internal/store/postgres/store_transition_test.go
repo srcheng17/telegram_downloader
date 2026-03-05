@@ -236,8 +236,8 @@ func TestTransitionToTerminalBehaviors(t *testing.T) {
 }
 
 func TestRequestTaskCancelBehaviors(t *testing.T) {
-	t.Run("active task transitions to cancel requested", func(t *testing.T) {
-		taskID := "task-cancel-active"
+	t.Run("in-progress task transitions to cancel requested", func(t *testing.T) {
+		taskID := "task-cancel-in-progress"
 		path := "/tmp/existing.cbz"
 		cancelMessage := "cancel requested"
 
@@ -256,6 +256,35 @@ func TestRequestTaskCancelBehaviors(t *testing.T) {
 		task := db.tasks[taskID]
 		if task.status != "CANCEL_REQUESTED" {
 			t.Fatalf("expected CANCEL_REQUESTED, got %q", task.status)
+		}
+		if task.cancelRequestedAt.IsZero() {
+			t.Fatalf("expected cancel_requested_at to be set")
+		}
+		if task.resultZipPath != nil {
+			t.Fatalf("expected result_zip_path to be cleared, got %#v", task.resultZipPath)
+		}
+		if task.error == nil || *task.error != cancelMessage {
+			t.Fatalf("expected cancel error %q, got %#v", cancelMessage, task.error)
+		}
+	})
+
+	t.Run("pending task transitions directly to canceled", func(t *testing.T) {
+		taskID := "task-cancel-pending"
+		cancelMessage := "cancel requested"
+
+		db := newFakeTransitionDB()
+		db.insertTask(taskID, fakeTransitionTask{
+			status: "PENDING",
+		})
+
+		store := &Store{pool: db}
+		if err := store.RequestTaskCancel(context.Background(), taskID, cancelMessage); err != nil {
+			t.Fatalf("request cancel: %v", err)
+		}
+
+		task := db.tasks[taskID]
+		if task.status != "CANCELED" {
+			t.Fatalf("expected CANCELED, got %q", task.status)
 		}
 		if task.cancelRequestedAt.IsZero() {
 			t.Fatalf("expected cancel_requested_at to be set")
@@ -444,7 +473,11 @@ func (f *fakeTransitionDB) execRequestCancel(query string, args ...any) (pgconn.
 		}
 	}
 
-	task.status = "CANCEL_REQUESTED"
+	if task.status == "PENDING" {
+		task.status = "CANCELED"
+	} else {
+		task.status = "CANCEL_REQUESTED"
+	}
 	task.cancelRequestedAt = time.Now()
 	task.error = stringPtr(cancelError)
 	task.resultZipPath = nil

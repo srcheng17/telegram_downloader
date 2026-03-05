@@ -158,13 +158,13 @@ func TestConsumerHandlerErrorAttemptsFailTransitionAndAckThenContinues(t *testin
 	}
 }
 
-func TestConsumerUnclaimedRedeliveryWithTerminalStatusAcks(t *testing.T) {
+func TestConsumerUnclaimedRedeliveryWithPendingCanceledTerminalStatusAcks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
 	stream := &fakeStreamClient{
 		messages: []Message{
-			{ID: "1-0", TaskID: "task-terminal", EnqueueToken: "token-1"},
+			{ID: "1-0", TaskID: "task-pending-canceled", EnqueueToken: "token-1"},
 			{ID: "2-0", TaskID: "task-claimed", EnqueueToken: "token-2"},
 		},
 	}
@@ -174,7 +174,7 @@ func TestConsumerUnclaimedRedeliveryWithTerminalStatusAcks(t *testing.T) {
 			{claimed: true},
 		},
 		statusByTask: map[string]string{
-			"task-terminal": domain.StatusSuccess,
+			"task-pending-canceled": domain.StatusCanceled,
 		},
 	}
 
@@ -294,6 +294,9 @@ func TestConsumerUnclaimedCancelRequestedTransitionsToCanceledThenAcks(t *testin
 		},
 		statusByTask: map[string]string{
 			"task-cancel": domain.StatusCancelRequested,
+		},
+		ownerByTask: map[string]string{
+			"task-cancel": "worker-1",
 		},
 	}
 
@@ -703,6 +706,7 @@ type fakeTaskStore struct {
 	terminalCalls            []postgres.TransitionTerminalInput
 	terminalErr              error
 	statusByTask             map[string]string
+	ownerByTask              map[string]string
 	beforeTerminalTransition func(taskID string, input postgres.TransitionTerminalInput, current string) string
 }
 
@@ -720,16 +724,19 @@ type claimCall struct {
 func (f *fakeTaskStore) TransitionPendingToInProgress(_ context.Context, taskID, token, worker string) (bool, error) {
 	f.claimCalls = append(f.claimCalls, claimCall{taskID: taskID, token: token, worker: worker})
 	f.ensureStatusMap()
+	f.ensureOwnerMap()
 	if len(f.transitionResults) > 0 {
 		result := f.transitionResults[0]
 		f.transitionResults = f.transitionResults[1:]
 		if result.claimed {
 			f.statusByTask[taskID] = domain.StatusInProgress
+			f.ownerByTask[taskID] = worker
 		}
 		return result.claimed, result.err
 	}
 	if f.defaultTransition {
 		f.statusByTask[taskID] = domain.StatusInProgress
+		f.ownerByTask[taskID] = worker
 	}
 	return f.defaultTransition, nil
 }
@@ -740,6 +747,7 @@ func (f *fakeTaskStore) TransitionToTerminal(_ context.Context, input postgres.T
 		return f.terminalErr
 	}
 	f.ensureStatusMap()
+	f.ensureOwnerMap()
 
 	current := f.taskStatus(input.TaskID)
 	if f.beforeTerminalTransition != nil {
@@ -747,7 +755,8 @@ func (f *fakeTaskStore) TransitionToTerminal(_ context.Context, input postgres.T
 		f.statusByTask[input.TaskID] = current
 	}
 
-	if !consumerFakeTransitionAllowed(current, input.Status) {
+	owner := strings.TrimSpace(f.ownerByTask[input.TaskID])
+	if !consumerFakeTransitionAllowed(current, input.Status, owner, input.Worker) {
 		return nil
 	}
 	f.statusByTask[input.TaskID] = input.Status
@@ -767,6 +776,12 @@ func (f *fakeTaskStore) ensureStatusMap() {
 	}
 }
 
+func (f *fakeTaskStore) ensureOwnerMap() {
+	if f.ownerByTask == nil {
+		f.ownerByTask = map[string]string{}
+	}
+}
+
 func (f *fakeTaskStore) taskStatus(taskID string) string {
 	f.ensureStatusMap()
 	status := strings.ToUpper(strings.TrimSpace(f.statusByTask[taskID]))
@@ -776,7 +791,11 @@ func (f *fakeTaskStore) taskStatus(taskID string) string {
 	return status
 }
 
-func consumerFakeTransitionAllowed(currentStatus, targetStatus string) bool {
+func consumerFakeTransitionAllowed(currentStatus, targetStatus, owner, worker string) bool {
+	if strings.TrimSpace(owner) == "" || strings.TrimSpace(owner) != strings.TrimSpace(worker) {
+		return false
+	}
+
 	switch targetStatus {
 	case domain.StatusCanceled:
 		return currentStatus == domain.StatusInProgress || currentStatus == domain.StatusCancelRequested
