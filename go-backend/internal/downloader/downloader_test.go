@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -263,4 +264,154 @@ func TestDownloadPreservesRepeatedImageTags(t *testing.T) {
 	if result.Images[0].URL != server.URL+"/same.jpg" || result.Images[1].URL != server.URL+"/same.jpg" {
 		t.Fatalf("expected repeated urls preserved, got %q and %q", result.Images[0].URL, result.Images[1].URL)
 	}
+}
+
+func TestDownloadPropagatesContextErrorWhenWorkersExitWithoutResultErrors(t *testing.T) {
+	var imageRequests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(w, `<html><body><img src="/image.jpg"></body></html>`)
+		case "/image.jpg":
+			imageRequests.Add(1)
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	client := server.Client()
+	baseTransport := client.Transport
+	client.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := baseTransport.RoundTrip(req)
+		if err != nil {
+			return nil, err
+		}
+		if req.URL.Path == "/page" {
+			resp.Body = &cancelOnEOFReadCloser{
+				ReadCloser: resp.Body,
+				cancel:     cancel,
+			}
+		}
+		return resp, nil
+	})
+
+	service := Service{
+		HTTPClient:    client,
+		MaxImages:     10,
+		MaxImageBytes: 1024,
+		MaxTotalBytes: 4096,
+	}
+
+	_, err := service.Download(ctx, server.URL+"/page")
+	if err == nil {
+		t.Fatal("expected context cancellation error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled, got %T: %v", err, err)
+	}
+	var partialErr *PartialFailureError
+	if errors.As(err, &partialErr) {
+		t.Fatalf("expected context cancellation, got partial failure: %#v", partialErr)
+	}
+	if imageRequests.Load() != 0 {
+		t.Fatalf("expected no image request due early cancellation, got %d", imageRequests.Load())
+	}
+}
+
+func TestDownloadFailsWhenSingleImageExceedsByteLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(w, `<html><body><img src="/big.jpg"></body></html>`)
+		case "/big.jpg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("0123456789"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := Service{
+		HTTPClient:    server.Client(),
+		MaxImages:     10,
+		MaxImageBytes: 5,
+		MaxTotalBytes: 4096,
+	}
+
+	_, err := service.Download(context.Background(), server.URL+"/page")
+	if err == nil {
+		t.Fatal("expected single-image byte limit error, got nil")
+	}
+
+	var limitErr *LimitExceededError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected limit error, got %T: %v", err, err)
+	}
+	if limitErr.Kind != LimitKindImageBytes {
+		t.Fatalf("expected image bytes limit kind, got %q", limitErr.Kind)
+	}
+}
+
+func TestDownloadFailsWhenTotalBytesExceedsLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(w, `<html><body><img src="/a.jpg"><img src="/b.jpg"></body></html>`)
+		case "/a.jpg", "/b.jpg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("1234"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := Service{
+		HTTPClient:    server.Client(),
+		MaxImages:     10,
+		MaxImageBytes: 1024,
+		MaxTotalBytes: 6,
+	}
+
+	_, err := service.Download(context.Background(), server.URL+"/page")
+	if err == nil {
+		t.Fatal("expected total-bytes limit error, got nil")
+	}
+
+	var limitErr *LimitExceededError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected limit error, got %T: %v", err, err)
+	}
+	if limitErr.Kind != LimitKindTotalBytes {
+		t.Fatalf("expected total-bytes limit kind, got %q", limitErr.Kind)
+	}
+}
+
+type roundTripperFunc func(req *http.Request) (*http.Response, error)
+
+func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+type cancelOnEOFReadCloser struct {
+	io.ReadCloser
+	cancel func()
+	fired  bool
+}
+
+func (r *cancelOnEOFReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if !r.fired && errors.Is(err, io.EOF) && r.cancel != nil {
+		r.fired = true
+		r.cancel()
+	}
+	return n, err
 }

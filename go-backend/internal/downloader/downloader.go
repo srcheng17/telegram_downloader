@@ -247,6 +247,9 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 	if cancelErr != nil {
 		return result, cancelErr
 	}
+	if ctxErr := ctx.Err(); isContextCancellation(ctxErr) {
+		return result, ctxErr
+	}
 	if len(failures) > 0 {
 		return result, &PartialFailureError{
 			Total:      len(imageSlots),
