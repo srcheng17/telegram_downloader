@@ -199,12 +199,135 @@ func TestConsumerAcksUnclaimedMessageAndContinues(t *testing.T) {
 	}
 }
 
+func TestConsumerClaimErrorMarksFailedAndAcksThenContinues(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	stream := &fakeStreamClient{
+		messages: []Message{
+			{ID: "1-0", TaskID: "task-claim-error", EnqueueToken: "token-1"},
+			{ID: "2-0", TaskID: "task-claimed", EnqueueToken: "token-2"},
+		},
+	}
+	store := &fakeTaskStore{
+		transitionResults: []claimResult{
+			{err: errors.New("claim db timeout")},
+			{claimed: true},
+		},
+	}
+
+	handlerCalls := 0
+	consumer := NewConsumer(ConsumerConfig{
+		Stream:   stream,
+		Store:    store,
+		Group:    "go-workers",
+		Consumer: "worker-1",
+		Block:    time.Millisecond,
+		Handler: func(_ context.Context, msg Message) error {
+			handlerCalls++
+			if msg.TaskID != "task-claimed" {
+				t.Fatalf("handler should run only for claim-success message, got %q", msg.TaskID)
+			}
+			cancel()
+			return nil
+		},
+	})
+
+	err := consumer.Run(ctx)
+	if err != nil {
+		t.Fatalf("consumer run: %v", err)
+	}
+
+	if len(store.markFailedCalls) != 1 {
+		t.Fatalf("expected one mark-failed call, got %d", len(store.markFailedCalls))
+	}
+	markFailed := store.markFailedCalls[0]
+	if markFailed.taskID != "task-claim-error" {
+		t.Fatalf("expected mark-failed task task-claim-error, got %q", markFailed.taskID)
+	}
+	if !strings.Contains(markFailed.message, "claim db timeout") {
+		t.Fatalf("expected mark-failed message to include claim error, got %q", markFailed.message)
+	}
+
+	if len(stream.ackCalls) != 2 {
+		t.Fatalf("expected two ack calls, got %d", len(stream.ackCalls))
+	}
+	if stream.ackCalls[0].ids[0] != "1-0" {
+		t.Fatalf("expected first ack id 1-0, got %#v", stream.ackCalls[0].ids)
+	}
+	if stream.ackCalls[1].ids[0] != "2-0" {
+		t.Fatalf("expected second ack id 2-0, got %#v", stream.ackCalls[1].ids)
+	}
+	if handlerCalls != 1 {
+		t.Fatalf("expected handler to run once for second message, got %d", handlerCalls)
+	}
+}
+
+func TestConsumerHandlerErrorWithFailTransitionErrorDoesNotAckFailedMessage(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	stream := &fakeStreamClient{
+		messages: []Message{
+			{ID: "1-0", TaskID: "task-fail-transition", EnqueueToken: "token-1"},
+			{ID: "2-0", TaskID: "task-success", EnqueueToken: "token-2"},
+		},
+	}
+	store := &fakeTaskStore{
+		transitionResults: []claimResult{
+			{claimed: true},
+			{claimed: true},
+		},
+		terminalErr: errors.New("transition update failed"),
+	}
+
+	handlerCalls := 0
+	consumer := NewConsumer(ConsumerConfig{
+		Stream:   stream,
+		Store:    store,
+		Group:    "go-workers",
+		Consumer: "worker-1",
+		Block:    time.Millisecond,
+		Handler: func(_ context.Context, msg Message) error {
+			handlerCalls++
+			if msg.TaskID == "task-fail-transition" {
+				return errors.New("handler boom")
+			}
+			cancel()
+			return nil
+		},
+	})
+
+	err := consumer.Run(ctx)
+	if err != nil {
+		t.Fatalf("consumer run: %v", err)
+	}
+
+	if len(store.terminalCalls) != 1 {
+		t.Fatalf("expected one terminal transition call, got %d", len(store.terminalCalls))
+	}
+	if store.terminalCalls[0].TaskID != "task-fail-transition" {
+		t.Fatalf("expected fail transition for task-fail-transition, got %q", store.terminalCalls[0].TaskID)
+	}
+	if len(stream.ackCalls) != 1 {
+		t.Fatalf("expected only success message ack, got %d", len(stream.ackCalls))
+	}
+	if stream.ackCalls[0].ids[0] != "2-0" {
+		t.Fatalf("expected ack only for 2-0, got %#v", stream.ackCalls[0].ids)
+	}
+	if handlerCalls != 2 {
+		t.Fatalf("expected handler to continue to second message, got %d calls", handlerCalls)
+	}
+}
+
 type fakeTaskStore struct {
 	transitionResults []claimResult
 	defaultTransition bool
 	claimCalls        []claimCall
 	terminalCalls     []postgres.TransitionTerminalInput
 	terminalErr       error
+	markFailedCalls   []markFailedCall
+	markFailedErr     error
 }
 
 type claimResult struct {
@@ -216,6 +339,11 @@ type claimCall struct {
 	taskID string
 	token  string
 	worker string
+}
+
+type markFailedCall struct {
+	taskID  string
+	message string
 }
 
 func (f *fakeTaskStore) TransitionPendingToInProgress(_ context.Context, taskID, token, worker string) (bool, error) {
@@ -231,6 +359,14 @@ func (f *fakeTaskStore) TransitionPendingToInProgress(_ context.Context, taskID,
 func (f *fakeTaskStore) TransitionToTerminal(_ context.Context, input postgres.TransitionTerminalInput) error {
 	f.terminalCalls = append(f.terminalCalls, input)
 	return f.terminalErr
+}
+
+func (f *fakeTaskStore) MarkTaskFailed(_ context.Context, taskID, message string) error {
+	f.markFailedCalls = append(f.markFailedCalls, markFailedCall{
+		taskID:  taskID,
+		message: message,
+	})
+	return f.markFailedErr
 }
 
 type fakeStreamClient struct {

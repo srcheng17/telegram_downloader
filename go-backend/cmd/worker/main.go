@@ -66,8 +66,7 @@ func main() {
 		Consumer: consumerName,
 		Block:    5 * time.Second,
 		Handler: func(_ context.Context, msg worker.Message) error {
-			log.Printf("claimed task %s", msg.TaskID)
-			return nil
+			return fmt.Errorf("executor not configured for task %s", msg.TaskID)
 		},
 	})
 

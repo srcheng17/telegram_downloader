@@ -28,6 +28,7 @@ type StreamClient interface {
 type TaskStore interface {
 	TransitionPendingToInProgress(ctx context.Context, taskID, token, worker string) (bool, error)
 	TransitionToTerminal(ctx context.Context, input postgres.TransitionTerminalInput) error
+	MarkTaskFailed(ctx context.Context, taskID, message string) error
 }
 
 type Handler func(ctx context.Context, msg Message) error
@@ -111,6 +112,17 @@ func (c *Consumer) Run(ctx context.Context) error {
 					msg.TaskID,
 					err,
 				)
+				failMessage := fmt.Sprintf("worker claim failed before task execution: %v", err)
+				if failErr := c.store.MarkTaskFailed(ctx, msg.TaskID, failMessage); failErr != nil {
+					log.Printf(
+						"worker consumer mark failed after claim error failed message_id=%s task_id=%s: %v",
+						msg.ID,
+						msg.TaskID,
+						failErr,
+					)
+					continue
+				}
+				c.ackMessage(ctx, msg, "claim_error_failed_marked")
 				continue
 			}
 			if !claimed {
@@ -139,6 +151,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 						msg.TaskID,
 						transitionErr,
 					)
+					continue
 				}
 				c.ackMessage(ctx, msg, "handler_error")
 				continue
