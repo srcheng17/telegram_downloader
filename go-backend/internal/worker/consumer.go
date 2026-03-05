@@ -41,6 +41,7 @@ type Handler func(ctx context.Context, msg Message) error
 type ConsumerConfig struct {
 	Stream   StreamClient
 	Store    TaskStore
+	Executor *Executor
 	Group    string
 	Consumer string
 	Block    time.Duration
@@ -58,6 +59,12 @@ type Consumer struct {
 
 func NewConsumer(cfg ConsumerConfig) *Consumer {
 	handler := cfg.Handler
+	if handler == nil && cfg.Executor != nil {
+		if cfg.Executor.Store == nil {
+			cfg.Executor.Store = cfg.Store
+		}
+		handler = cfg.Executor.Handler(cfg.Consumer)
+	}
 	if handler == nil {
 		handler = func(context.Context, Message) error { return nil }
 	}
