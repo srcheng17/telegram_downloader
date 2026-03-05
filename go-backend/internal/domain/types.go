@@ -102,6 +102,7 @@ const (
 
 type ClaimDownloadTaskInput struct {
 	Task           TaskLog
+	EnqueueToken   string
 	ActiveStatuses []string
 	ReuseSuccess   bool
 }

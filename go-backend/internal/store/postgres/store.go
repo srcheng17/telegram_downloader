@@ -176,6 +176,7 @@ func (s *Store) ClaimDownloadTask(
 		}
 		activeStatuses = append(activeStatuses, normalized)
 	}
+	enqueueToken := strings.TrimSpace(input.EnqueueToken)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -263,6 +264,7 @@ func (s *Store) ClaimDownloadTask(
 			canonical_url,
 			status,
 			start_time,
+			enqueue_token,
 			error,
 			progress,
 			total_images,
@@ -278,7 +280,7 @@ func (s *Store) ClaimDownloadTask(
 			genres_normalized
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15, $16, $17, $18
+			$11, $12, $13, $14, $15, $16, $17, $18, $19
 		)
 		`,
 		task.ID,
@@ -286,6 +288,7 @@ func (s *Store) ClaimDownloadTask(
 		task.CanonicalURL,
 		task.Status,
 		task.StartTime,
+		enqueueToken,
 		task.Error,
 		task.Progress,
 		task.TotalImages,

@@ -226,7 +226,7 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runtimeSettings := a.resolveDownloadSettings(r.Context())
-	claim, err := a.claimDownloadTask(
+	claim, enqueueToken, err := a.claimDownloadTask(
 		r.Context(),
 		rawURL,
 		canonicalURL,
@@ -271,7 +271,7 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 		case a.downloadQueue != nil:
 			err := a.downloadQueue.EnqueueDownload(r.Context(), queue.EnqueueMessage{
 				TaskID:       taskID,
-				EnqueueToken: uuid.NewString(),
+				EnqueueToken: enqueueToken,
 			})
 			if err != nil {
 				_ = a.store.MarkTaskFailed(r.Context(), taskID, fmt.Sprintf("failed to enqueue task: %v", err))
@@ -439,7 +439,7 @@ func (a *API) claimDownloadTask(
 	metadata downloadMetadata,
 	reuseSuccess bool,
 	imageConcurrency int,
-) (domain.ClaimDownloadTaskResult, error) {
+) (domain.ClaimDownloadTaskResult, string, error) {
 	baseTask := domain.TaskLog{
 		ID:               uuid.NewString(),
 		URL:              rawURL,
@@ -459,32 +459,34 @@ func (a *API) claimDownloadTask(
 		GenresRaw:        metadata.genresRaw,
 		GenresNormalized: metadata.genresNormalized,
 	}
+	enqueueToken := uuid.NewString()
 
 	for attempt := 0; attempt < 6; attempt++ {
 		claim, err := a.store.ClaimDownloadTask(ctx, domain.ClaimDownloadTaskInput{
 			Task:           baseTask,
+			EnqueueToken:   enqueueToken,
 			ActiveStatuses: domain.ActiveTaskStatuses,
 			ReuseSuccess:   reuseSuccess,
 		})
 		if err != nil {
-			return domain.ClaimDownloadTaskResult{}, err
+			return domain.ClaimDownloadTaskResult{}, "", err
 		}
 		if claim.Decision != domain.ClaimDecisionReuseSuccess {
-			return claim, nil
+			return claim, enqueueToken, nil
 		}
 		if isSafeExistingDownloadFile(stringValue(claim.Task.ResultZipPath)) {
-			return claim, nil
+			return claim, enqueueToken, nil
 		}
 		taskID := strings.TrimSpace(claim.Task.ID)
 		if taskID == "" {
-			return claim, nil
+			return claim, enqueueToken, nil
 		}
 		if err := a.store.ClearResultZipPath(ctx, taskID); err != nil {
-			return domain.ClaimDownloadTaskResult{}, err
+			return domain.ClaimDownloadTaskResult{}, "", err
 		}
 	}
 
-	return domain.ClaimDownloadTaskResult{}, errors.New("failed to resolve stale reusable task after retries")
+	return domain.ClaimDownloadTaskResult{}, "", errors.New("failed to resolve stale reusable task after retries")
 }
 
 func (a *API) resolveDownloadSettings(ctx context.Context) DownloadRuntimeSettings {

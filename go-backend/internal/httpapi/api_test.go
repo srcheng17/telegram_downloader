@@ -340,6 +340,55 @@ func TestDownloadCreatedTaskEnqueuesStreamMessage(t *testing.T) {
 	}
 }
 
+func TestDownloadCreatedTaskPersistsEnqueueTokenAndQueuePayload(t *testing.T) {
+	repo := &fakeTaskReader{}
+	repo.claimResponses = []domain.ClaimDownloadTaskResult{
+		{
+			Decision: domain.ClaimDecisionCreated,
+			Task: domain.TaskLog{
+				ID: "created-task-token",
+			},
+		},
+	}
+	downloadQueue := &fakeDownloadQueue{}
+	handler := NewRouterWithOptions(
+		repo,
+		RouterOptions{
+			DownloadQueue: downloadQueue,
+		},
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/download", strings.NewReader("url=https%3A%2F%2Ftelegra.ph%2Fabc"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.claimCalls) != 1 {
+		t.Fatalf("expected one claim call, got %d", len(repo.claimCalls))
+	}
+	persistedToken := strings.TrimSpace(repo.claimCalls[0].EnqueueToken)
+	if persistedToken == "" {
+		t.Fatalf("expected claim call enqueue_token to be set")
+	}
+	if len(downloadQueue.calls) != 1 {
+		t.Fatalf("expected one enqueue call, got %d", len(downloadQueue.calls))
+	}
+	if downloadQueue.calls[0].TaskID != "created-task-token" {
+		t.Fatalf("expected enqueued task_id created-task-token, got %q", downloadQueue.calls[0].TaskID)
+	}
+	if downloadQueue.calls[0].EnqueueToken != persistedToken {
+		t.Fatalf(
+			"expected queue enqueue_token %q to match claim enqueue_token %q",
+			downloadQueue.calls[0].EnqueueToken,
+			persistedToken,
+		)
+	}
+}
+
 func TestDownloadCreatedTaskQueueFailureMarksTaskFailed(t *testing.T) {
 	repo := &fakeTaskReader{}
 	repo.claimResponses = []domain.ClaimDownloadTaskResult{
