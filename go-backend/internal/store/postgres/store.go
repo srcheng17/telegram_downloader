@@ -7,13 +7,29 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
 )
 
+type storeExecutor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
 type Store struct {
-	pool *pgxpool.Pool
+	pool storeExecutor
+}
+
+type TransitionTerminalInput struct {
+	TaskID        string
+	Worker        string
+	Status        string
+	Error         *string
+	ResultZipPath *string
 }
 
 const taskSelectFields = `
@@ -382,6 +398,77 @@ func (s *Store) RequestTaskCancel(ctx context.Context, taskID string, cancelErro
 		`,
 		taskID,
 		cancelError,
+	)
+	return err
+}
+
+func (s *Store) TransitionPendingToInProgress(ctx context.Context, taskID, token, worker string) (bool, error) {
+	tag, err := s.pool.Exec(
+		ctx,
+		`
+		UPDATE tasks
+		SET
+			status = 'IN_PROGRESS',
+			claimed_by = $3,
+			claimed_at = NOW(),
+			heartbeat_at = NOW(),
+			version = version + 1
+		WHERE
+			id = $1
+			AND status = 'PENDING'
+			AND enqueue_token = $2
+		`,
+		taskID,
+		token,
+		worker,
+	)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (s *Store) UpdateTaskHeartbeat(ctx context.Context, taskID, worker string) error {
+	_, err := s.pool.Exec(
+		ctx,
+		`
+		UPDATE tasks
+		SET
+			heartbeat_at = NOW(),
+			version = version + 1
+		WHERE
+			id = $1
+			AND status = 'IN_PROGRESS'
+			AND claimed_by = $2
+		`,
+		taskID,
+		worker,
+	)
+	return err
+}
+
+func (s *Store) TransitionToTerminal(ctx context.Context, input TransitionTerminalInput) error {
+	_, err := s.pool.Exec(
+		ctx,
+		`
+		UPDATE tasks
+		SET
+			status = $3,
+			error = $4,
+			result_zip_path = $5,
+			end_time = EXTRACT(EPOCH FROM NOW()),
+			heartbeat_at = NOW(),
+			version = version + 1
+		WHERE
+			id = $1
+			AND claimed_by = $2
+			AND status IN ('IN_PROGRESS', 'CANCEL_REQUESTED')
+		`,
+		input.TaskID,
+		input.Worker,
+		input.Status,
+		input.Error,
+		input.ResultZipPath,
 	)
 	return err
 }
