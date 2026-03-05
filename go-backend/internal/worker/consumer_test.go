@@ -158,13 +158,13 @@ func TestConsumerHandlerErrorAttemptsFailTransitionAndAckThenContinues(t *testin
 	}
 }
 
-func TestConsumerAcksUnclaimedMessageAndContinues(t *testing.T) {
+func TestConsumerUnclaimedRedeliveryWithTerminalStatusAcks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
 	stream := &fakeStreamClient{
 		messages: []Message{
-			{ID: "1-0", TaskID: "task-unclaimed", EnqueueToken: "token-1"},
+			{ID: "1-0", TaskID: "task-terminal", EnqueueToken: "token-1"},
 			{ID: "2-0", TaskID: "task-claimed", EnqueueToken: "token-2"},
 		},
 	}
@@ -172,6 +172,9 @@ func TestConsumerAcksUnclaimedMessageAndContinues(t *testing.T) {
 		transitionResults: []claimResult{
 			{claimed: false},
 			{claimed: true},
+		},
+		statusByTask: map[string]string{
+			"task-terminal": domain.StatusSuccess,
 		},
 	}
 
@@ -215,6 +218,174 @@ func TestConsumerAcksUnclaimedMessageAndContinues(t *testing.T) {
 	}
 	if stream.ackCalls[1].ids[0] != "2-0" {
 		t.Fatalf("expected second ack for claimed 2-0, got %#v", stream.ackCalls[1].ids)
+	}
+}
+
+func TestConsumerUnclaimedRedeliveryWithNonTerminalStatusDoesNotAck(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	stream := &fakeStreamClient{
+		messages: []Message{
+			{ID: "1-0", TaskID: "task-non-terminal", EnqueueToken: "token-1"},
+			{ID: "2-0", TaskID: "task-claimed", EnqueueToken: "token-2"},
+		},
+	}
+	store := &fakeTaskStore{
+		transitionResults: []claimResult{
+			{claimed: false},
+			{claimed: true},
+		},
+		statusByTask: map[string]string{
+			"task-non-terminal": domain.StatusInProgress,
+		},
+	}
+
+	handlerCalls := 0
+	consumer := NewConsumer(ConsumerConfig{
+		Stream:   stream,
+		Store:    store,
+		Group:    "go-workers",
+		Consumer: "worker-1",
+		Block:    time.Millisecond,
+		Handler: func(_ context.Context, msg Message) error {
+			handlerCalls++
+			if msg.TaskID != "task-claimed" {
+				t.Fatalf("handler should run only for claimed message, got %q", msg.TaskID)
+			}
+			cancel()
+			return nil
+		},
+	})
+
+	err := consumer.Run(ctx)
+	if err != nil {
+		t.Fatalf("consumer run: %v", err)
+	}
+
+	if handlerCalls != 1 {
+		t.Fatalf("expected handler to run once, got %d", handlerCalls)
+	}
+	if len(stream.ackCalls) != 1 {
+		t.Fatalf("expected only claimed message ack, got %d", len(stream.ackCalls))
+	}
+	if stream.ackCalls[0].ids[0] != "2-0" {
+		t.Fatalf("expected ack only for 2-0, got %#v", stream.ackCalls[0].ids)
+	}
+	if status := store.taskStatus("task-non-terminal"); status != domain.StatusInProgress {
+		t.Fatalf("expected non-terminal task to stay IN_PROGRESS, got %q", status)
+	}
+}
+
+func TestConsumerUnclaimedCancelRequestedTransitionsToCanceledThenAcks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	stream := &fakeStreamClient{
+		messages: []Message{
+			{ID: "1-0", TaskID: "task-cancel", EnqueueToken: "token-1"},
+			{ID: "2-0", TaskID: "task-claimed", EnqueueToken: "token-2"},
+		},
+	}
+	store := &fakeTaskStore{
+		transitionResults: []claimResult{
+			{claimed: false},
+			{claimed: true},
+		},
+		statusByTask: map[string]string{
+			"task-cancel": domain.StatusCancelRequested,
+		},
+	}
+
+	handlerCalls := 0
+	consumer := NewConsumer(ConsumerConfig{
+		Stream:   stream,
+		Store:    store,
+		Group:    "go-workers",
+		Consumer: "worker-1",
+		Block:    time.Millisecond,
+		Handler: func(_ context.Context, msg Message) error {
+			handlerCalls++
+			if msg.TaskID != "task-claimed" {
+				t.Fatalf("handler should run only for claimed message, got %q", msg.TaskID)
+			}
+			cancel()
+			return nil
+		},
+	})
+
+	err := consumer.Run(ctx)
+	if err != nil {
+		t.Fatalf("consumer run: %v", err)
+	}
+
+	if handlerCalls != 1 {
+		t.Fatalf("expected handler to run once, got %d", handlerCalls)
+	}
+	if len(store.terminalCalls) != 1 {
+		t.Fatalf("expected one cancel transition, got %d", len(store.terminalCalls))
+	}
+	if store.terminalCalls[0].TaskID != "task-cancel" || store.terminalCalls[0].Status != domain.StatusCanceled {
+		t.Fatalf("expected CANCELED transition for task-cancel, got %#v", store.terminalCalls[0])
+	}
+	if status := store.taskStatus("task-cancel"); status != domain.StatusCanceled {
+		t.Fatalf("expected task-cancel to become CANCELED, got %q", status)
+	}
+	if len(stream.ackCalls) != 2 {
+		t.Fatalf("expected ack for cancel + claimed messages, got %d", len(stream.ackCalls))
+	}
+	if stream.ackCalls[0].ids[0] != "1-0" || stream.ackCalls[1].ids[0] != "2-0" {
+		t.Fatalf("expected ack order [1-0,2-0], got %#v %#v", stream.ackCalls[0].ids, stream.ackCalls[1].ids)
+	}
+}
+
+func TestConsumerUnclaimedWithoutStatusReaderDoesNotAck(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	stream := &fakeStreamClient{
+		messages: []Message{
+			{ID: "1-0", TaskID: "task-unclaimed", EnqueueToken: "token-1"},
+			{ID: "2-0", TaskID: "task-claimed", EnqueueToken: "token-2"},
+		},
+	}
+	store := &fakeTaskStoreWithoutStatus{
+		transitionResults: []claimResult{
+			{claimed: false},
+			{claimed: true},
+		},
+	}
+
+	handlerCalls := 0
+	consumer := NewConsumer(ConsumerConfig{
+		Stream:   stream,
+		Store:    store,
+		Group:    "go-workers",
+		Consumer: "worker-1",
+		Block:    time.Millisecond,
+		Handler: func(_ context.Context, msg Message) error {
+			handlerCalls++
+			if msg.TaskID != "task-claimed" {
+				t.Fatalf("handler should run only for claimed message, got %q", msg.TaskID)
+			}
+			cancel()
+			return nil
+		},
+	})
+
+	err := consumer.Run(ctx)
+	if err != nil {
+		t.Fatalf("consumer run: %v", err)
+	}
+
+	if handlerCalls != 1 {
+		t.Fatalf("expected handler to run once, got %d", handlerCalls)
+	}
+	if len(stream.ackCalls) != 1 {
+		t.Fatalf("expected only claimed message ack, got %d", len(stream.ackCalls))
+	}
+	if stream.ackCalls[0].ids[0] != "2-0" {
+		t.Fatalf("expected ack only for 2-0, got %#v", stream.ackCalls[0].ids)
 	}
 }
 
@@ -614,6 +785,29 @@ func consumerFakeTransitionAllowed(currentStatus, targetStatus string) bool {
 	default:
 		return false
 	}
+}
+
+type fakeTaskStoreWithoutStatus struct {
+	transitionResults []claimResult
+	defaultTransition bool
+	claimCalls        []claimCall
+	terminalCalls     []postgres.TransitionTerminalInput
+	terminalErr       error
+}
+
+func (f *fakeTaskStoreWithoutStatus) TransitionPendingToInProgress(_ context.Context, taskID, token, worker string) (bool, error) {
+	f.claimCalls = append(f.claimCalls, claimCall{taskID: taskID, token: token, worker: worker})
+	if len(f.transitionResults) > 0 {
+		result := f.transitionResults[0]
+		f.transitionResults = f.transitionResults[1:]
+		return result.claimed, result.err
+	}
+	return f.defaultTransition, nil
+}
+
+func (f *fakeTaskStoreWithoutStatus) TransitionToTerminal(_ context.Context, input postgres.TransitionTerminalInput) error {
+	f.terminalCalls = append(f.terminalCalls, input)
+	return f.terminalErr
 }
 
 type fakeStreamClient struct {

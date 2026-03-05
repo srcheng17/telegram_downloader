@@ -135,7 +135,13 @@ func (c *Consumer) Run(ctx context.Context) error {
 				continue
 			}
 			if !claimed {
-				if err := c.ackMessage(ctx, msg, "unclaimed"); err != nil {
+				if err := c.handleUnclaimedMessage(ctx, msg); err != nil {
+					log.Printf(
+						"worker consumer unclaimed handling failed message_id=%s task_id=%s: %v",
+						msg.ID,
+						msg.TaskID,
+						err,
+					)
 					if !waitWithBackoff(ctx, &consecutiveErrors) {
 						return nil
 					}
@@ -219,6 +225,61 @@ func (c *Consumer) ackMessage(ctx context.Context, msg Message, reason string) e
 		return err
 	}
 	return nil
+}
+
+func (c *Consumer) handleUnclaimedMessage(ctx context.Context, msg Message) error {
+	status, err := c.loadTaskStatus(ctx, msg.TaskID)
+	if err != nil {
+		return err
+	}
+
+	switch status {
+	case domain.StatusCancelRequested:
+		cancelMessage := defaultCancelMessage
+		if err := c.store.TransitionToTerminal(ctx, postgres.TransitionTerminalInput{
+			TaskID: msg.TaskID,
+			Worker: c.consumer,
+			Status: domain.StatusCanceled,
+			Error:  &cancelMessage,
+		}); err != nil {
+			return fmt.Errorf("transition cancel-requested task to canceled: %w", err)
+		}
+
+		status, err = c.loadTaskStatus(ctx, msg.TaskID)
+		if err != nil {
+			return err
+		}
+		if !isTerminalStatus(status) {
+			return fmt.Errorf("unclaimed task %s remained non-terminal after cancel transition: %s", msg.TaskID, status)
+		}
+		return c.ackMessage(ctx, msg, "unclaimed_cancel_requested")
+	default:
+		if isTerminalStatus(status) {
+			return c.ackMessage(ctx, msg, "unclaimed_terminal")
+		}
+		return fmt.Errorf("unclaimed task %s has non-terminal status %s", msg.TaskID, status)
+	}
+}
+
+func (c *Consumer) loadTaskStatus(ctx context.Context, taskID string) (string, error) {
+	statusStore, ok := c.store.(taskStatusStore)
+	if !ok {
+		return "", errors.New("worker consumer requires task status reader for unclaimed messages")
+	}
+
+	task, err := statusStore.GetTask(ctx, taskID)
+	if err != nil {
+		return "", fmt.Errorf("load task status: %w", err)
+	}
+	if task == nil {
+		return "", fmt.Errorf("task %s not found while handling unclaimed message", taskID)
+	}
+
+	status := strings.ToUpper(strings.TrimSpace(task.Status))
+	if status == "" {
+		return "", fmt.Errorf("task %s has empty status", taskID)
+	}
+	return status, nil
 }
 
 func (c *Consumer) ensureFallbackTerminalStatus(ctx context.Context, taskID string) error {
