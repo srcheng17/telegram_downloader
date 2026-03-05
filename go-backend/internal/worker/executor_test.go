@@ -14,11 +14,11 @@ import (
 
 func TestExecutorTransitionsToCanceledWhenCancelRequested(t *testing.T) {
 	store := &fakeExecutorStore{
+		status: domain.StatusInProgress,
 		statusSequence: []string{
 			domain.StatusInProgress,
 			domain.StatusCancelRequested,
 		},
-		fallbackStatus: domain.StatusCancelRequested,
 	}
 	downloader := &fakeExecutorDownloader{
 		executeFn: func(ctx context.Context, _ string) (string, error) {
@@ -70,10 +70,10 @@ func TestExecutorTransitionsToCanceledWhenCancelRequested(t *testing.T) {
 func TestExecutorTransitionsToFailedOnDownloadError(t *testing.T) {
 	downloadErr := errors.New("download exploded")
 	store := &fakeExecutorStore{
+		status: domain.StatusInProgress,
 		statusSequence: []string{
 			domain.StatusInProgress,
 		},
-		fallbackStatus: domain.StatusInProgress,
 	}
 	downloader := &fakeExecutorDownloader{
 		executeFn: func(context.Context, string) (string, error) {
@@ -109,15 +109,24 @@ func TestExecutorTransitionsToFailedOnDownloadError(t *testing.T) {
 	if transition.Error == nil || !strings.Contains(*transition.Error, "download exploded") {
 		t.Fatalf("expected failure error to include download exploded, got %#v", transition.Error)
 	}
+	if store.status != domain.StatusFailed {
+		t.Fatalf("expected final task status FAILED, got %q", store.status)
+	}
 }
 
-func TestExecutorTransitionsToCanceledWhenDownloadErrorAndCancelRequested(t *testing.T) {
+func TestExecutorDownloadErrorRaceToCancelRequestedEndsCanceled(t *testing.T) {
 	store := &fakeExecutorStore{
+		status: domain.StatusInProgress,
 		statusSequence: []string{
 			domain.StatusInProgress,
-			domain.StatusCancelRequested,
+			domain.StatusInProgress,
 		},
-		fallbackStatus: domain.StatusCancelRequested,
+		beforeTransition: func(input postgres.TransitionTerminalInput, currentStatus string) string {
+			if input.Status == domain.StatusFailed {
+				return domain.StatusCancelRequested
+			}
+			return currentStatus
+		},
 	}
 	downloader := &fakeExecutorDownloader{
 		executeFn: func(context.Context, string) (string, error) {
@@ -134,23 +143,75 @@ func TestExecutorTransitionsToCanceledWhenDownloadErrorAndCancelRequested(t *tes
 		t.Fatalf("executor handle: %v", err)
 	}
 
-	if len(store.terminalCalls) != 1 {
-		t.Fatalf("expected one terminal transition, got %d", len(store.terminalCalls))
+	if len(store.terminalCalls) != 2 {
+		t.Fatalf("expected failed then canceled transitions, got %d", len(store.terminalCalls))
 	}
-	transition := store.terminalCalls[0]
-	if transition.Status != domain.StatusCanceled {
-		t.Fatalf("expected status CANCELED, got %q", transition.Status)
+	if store.terminalCalls[0].Status != domain.StatusFailed {
+		t.Fatalf("expected first transition FAILED, got %q", store.terminalCalls[0].Status)
+	}
+	if store.terminalCalls[1].Status != domain.StatusCanceled {
+		t.Fatalf("expected second transition CANCELED, got %q", store.terminalCalls[1].Status)
+	}
+	if store.status != domain.StatusCanceled {
+		t.Fatalf("expected final status CANCELED, got %q", store.status)
+	}
+}
+
+func TestExecutorReturnsErrorWhenDownloadErrorLeavesTaskNonTerminal(t *testing.T) {
+	store := &fakeExecutorStore{
+		status: domain.StatusInProgress,
+		statusSequence: []string{
+			domain.StatusInProgress,
+			domain.StatusInProgress,
+		},
+		beforeTransition: func(input postgres.TransitionTerminalInput, currentStatus string) string {
+			if input.Status == domain.StatusFailed {
+				return domain.StatusPending
+			}
+			return currentStatus
+		},
+	}
+	downloader := &fakeExecutorDownloader{
+		executeFn: func(context.Context, string) (string, error) {
+			return "", errors.New("download failed")
+		},
+	}
+	executor := &Executor{
+		Store:      store,
+		Downloader: downloader,
+	}
+
+	err := executor.Handle(context.Background(), "worker-1", Message{TaskID: "task-non-terminal"})
+	if err == nil {
+		t.Fatalf("expected non-terminal race to return error")
+	}
+	if !strings.Contains(err.Error(), "non-terminal") {
+		t.Fatalf("expected non-terminal error, got %v", err)
+	}
+	if len(store.terminalCalls) != 1 {
+		t.Fatalf("expected only failed transition attempt, got %d", len(store.terminalCalls))
+	}
+	if store.terminalCalls[0].Status != domain.StatusFailed {
+		t.Fatalf("expected failed transition attempt, got %q", store.terminalCalls[0].Status)
+	}
+	if store.status != domain.StatusPending {
+		t.Fatalf("expected final status to remain PENDING, got %q", store.status)
 	}
 }
 
 func TestExecutorSuccessRaceWithCancelRequestedEndsCanceled(t *testing.T) {
 	store := &fakeExecutorStore{
+		status: domain.StatusInProgress,
 		statusSequence: []string{
 			domain.StatusInProgress,
 			domain.StatusInProgress,
-			domain.StatusCancelRequested,
 		},
-		fallbackStatus: domain.StatusCancelRequested,
+		beforeTransition: func(input postgres.TransitionTerminalInput, currentStatus string) string {
+			if input.Status == domain.StatusSuccess {
+				return domain.StatusCancelRequested
+			}
+			return currentStatus
+		},
 	}
 	downloader := &fakeExecutorDownloader{
 		executeFn: func(context.Context, string) (string, error) {
@@ -167,21 +228,28 @@ func TestExecutorSuccessRaceWithCancelRequestedEndsCanceled(t *testing.T) {
 		t.Fatalf("executor handle: %v", err)
 	}
 
-	if len(store.terminalCalls) == 0 {
-		t.Fatalf("expected at least one terminal transition")
+	if len(store.terminalCalls) != 2 {
+		t.Fatalf("expected success then canceled transitions, got %d", len(store.terminalCalls))
 	}
-	lastTransition := store.terminalCalls[len(store.terminalCalls)-1]
-	if lastTransition.Status != domain.StatusCanceled {
-		t.Fatalf("expected final status CANCELED, got %q", lastTransition.Status)
+	if store.terminalCalls[0].Status != domain.StatusSuccess {
+		t.Fatalf("expected first transition SUCCESS, got %q", store.terminalCalls[0].Status)
+	}
+	if store.terminalCalls[1].Status != domain.StatusCanceled {
+		t.Fatalf("expected second transition CANCELED, got %q", store.terminalCalls[1].Status)
+	}
+	if store.status != domain.StatusCanceled {
+		t.Fatalf("expected final status CANCELED, got %q", store.status)
 	}
 }
 
 type fakeExecutorStore struct {
-	mu             sync.Mutex
-	statusSequence []string
-	fallbackStatus string
-	heartbeatCalls int
-	terminalCalls  []postgres.TransitionTerminalInput
+	mu               sync.Mutex
+	status           string
+	statusSequence   []string
+	heartbeatCalls   int
+	terminalCalls    []postgres.TransitionTerminalInput
+	transitionErr    error
+	beforeTransition func(input postgres.TransitionTerminalInput, currentStatus string) string
 }
 
 func (f *fakeExecutorStore) TransitionPendingToInProgress(context.Context, string, string, string) (bool, error) {
@@ -200,7 +268,7 @@ func (f *fakeExecutorStore) GetTask(_ context.Context, taskID string) (*domain.T
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	status := f.fallbackStatus
+	status := f.status
 	if len(f.statusSequence) > 0 {
 		status = f.statusSequence[0]
 		f.statusSequence = f.statusSequence[1:]
@@ -216,7 +284,28 @@ func (f *fakeExecutorStore) TransitionToTerminal(_ context.Context, input postgr
 	defer f.mu.Unlock()
 
 	f.terminalCalls = append(f.terminalCalls, input)
+	if f.beforeTransition != nil {
+		f.status = f.beforeTransition(input, f.status)
+	}
+	if f.transitionErr != nil {
+		return f.transitionErr
+	}
+
+	if fakeTransitionAllowed(f.status, input.Status) {
+		f.status = input.Status
+	}
 	return nil
+}
+
+func fakeTransitionAllowed(currentStatus, targetStatus string) bool {
+	switch targetStatus {
+	case domain.StatusCanceled:
+		return currentStatus == domain.StatusInProgress || currentStatus == domain.StatusCancelRequested
+	case domain.StatusSuccess, domain.StatusFailed:
+		return currentStatus == domain.StatusInProgress
+	default:
+		return false
+	}
 }
 
 type fakeExecutorDownloader struct {

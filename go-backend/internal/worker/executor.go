@@ -112,7 +112,31 @@ func (e *Executor) Handle(ctx context.Context, worker string, msg Message) error
 					return e.transitionCanceled(ctx, taskID, worker)
 				}
 
-				return e.transitionFailed(ctx, taskID, worker, result.err)
+				if err := e.transitionFailed(ctx, taskID, worker, result.err); err != nil {
+					return err
+				}
+
+				status, err := e.taskStatus(ctx, statusStore, taskID)
+				if err != nil {
+					return err
+				}
+				if status == domain.StatusCancelRequested {
+					if err := e.transitionCanceled(ctx, taskID, worker); err != nil {
+						return err
+					}
+					status, err = e.taskStatus(ctx, statusStore, taskID)
+					if err != nil {
+						return err
+					}
+				}
+				if !isTerminalStatus(status) {
+					return fmt.Errorf(
+						"task %s remained non-terminal after failure transition: %s",
+						taskID,
+						status,
+					)
+				}
+				return nil
 			}
 
 			cancelRequested, err := e.isCancelRequested(ctx, statusStore, taskID)
@@ -190,15 +214,23 @@ func (e *Executor) transitionSuccess(ctx context.Context, taskID, worker, result
 	})
 }
 
-func (e *Executor) isCancelRequested(ctx context.Context, store taskStatusStore, taskID string) (bool, error) {
+func (e *Executor) taskStatus(ctx context.Context, store taskStatusStore, taskID string) (string, error) {
 	task, err := store.GetTask(ctx, taskID)
 	if err != nil {
-		return false, fmt.Errorf("load task status: %w", err)
+		return "", fmt.Errorf("load task status: %w", err)
 	}
 	if task == nil {
-		return false, fmt.Errorf("task %s not found while executing", taskID)
+		return "", fmt.Errorf("task %s not found while executing", taskID)
 	}
-	return strings.TrimSpace(task.Status) == domain.StatusCancelRequested, nil
+	return strings.ToUpper(strings.TrimSpace(task.Status)), nil
+}
+
+func (e *Executor) isCancelRequested(ctx context.Context, store taskStatusStore, taskID string) (bool, error) {
+	status, err := e.taskStatus(ctx, store, taskID)
+	if err != nil {
+		return false, err
+	}
+	return status == domain.StatusCancelRequested, nil
 }
 
 func (e *Executor) heartbeatEvery() time.Duration {
@@ -242,6 +274,11 @@ func (e *Executor) drainDownloadResult(resultCh <-chan executionResult) {
 	}
 }
 
-func isCancellation(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+func isTerminalStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case domain.StatusSuccess, domain.StatusFailed, domain.StatusCanceled:
+		return true
+	default:
+		return false
+	}
 }
