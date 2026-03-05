@@ -11,6 +11,9 @@ import (
 type Config struct {
 	Addr             string
 	DatabaseURL      string
+	RedisURL         string
+	StreamName       string
+	ConsumerGroup    string
 	UpstreamBaseURL  string
 	InternalToken    string
 	DownloadTimeout  int
@@ -43,9 +46,27 @@ func LoadFromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("go-backend only supports PostgreSQL in phase 1, got TASKS_DB_PATH=%q", databaseURL)
 	}
 
+	redisURL := strings.TrimSpace(os.Getenv("REDIS_URL"))
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379/0"
+	}
+
+	streamName := strings.TrimSpace(os.Getenv("STREAM_NAME"))
+	if streamName == "" {
+		streamName = "download_tasks"
+	}
+
+	consumerGroup := strings.TrimSpace(os.Getenv("CONSUMER_GROUP"))
+	if consumerGroup == "" {
+		consumerGroup = "go-workers"
+	}
+
 	return Config{
 		Addr:             addr,
 		DatabaseURL:      databaseURL,
+		RedisURL:         redisURL,
+		StreamName:       streamName,
+		ConsumerGroup:    consumerGroup,
 		UpstreamBaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("PYTHON_WEB_BASE_URL")), "/"),
 		InternalToken:    strings.TrimSpace(os.Getenv("INTERNAL_ENQUEUE_TOKEN")),
 		DownloadTimeout:  parseIntEnv("GO_DOWNLOAD_TIMEOUT", 30),
