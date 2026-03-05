@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -336,6 +337,49 @@ func TestDownloadCreatedTaskEnqueuesStreamMessage(t *testing.T) {
 	}
 	if strings.TrimSpace(downloadQueue.calls[0].EnqueueToken) == "" {
 		t.Fatalf("expected enqueue_token to be set")
+	}
+}
+
+func TestDownloadCreatedTaskQueueFailureMarksTaskFailed(t *testing.T) {
+	repo := &fakeTaskReader{}
+	repo.claimResponses = []domain.ClaimDownloadTaskResult{
+		{
+			Decision: domain.ClaimDecisionCreated,
+			Task: domain.TaskLog{
+				ID: "created-task-queue-fail",
+			},
+		},
+	}
+	downloadQueue := &fakeDownloadQueue{
+		err: errors.New("redis down"),
+	}
+	handler := NewRouterWithOptions(
+		repo,
+		RouterOptions{
+			DownloadQueue: downloadQueue,
+		},
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/download", strings.NewReader("url=https%3A%2F%2Ftelegra.ph%2Fabc"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(downloadQueue.calls) != 1 {
+		t.Fatalf("expected one enqueue call, got %d", len(downloadQueue.calls))
+	}
+	if len(repo.markFailedCalls) != 1 {
+		t.Fatalf("expected mark failed called once, got %d", len(repo.markFailedCalls))
+	}
+	if repo.markFailedCalls[0].taskID != "created-task-queue-fail" {
+		t.Fatalf("expected mark failed task id created-task-queue-fail, got %q", repo.markFailedCalls[0].taskID)
+	}
+	if !strings.Contains(repo.markFailedCalls[0].message, "failed to enqueue task") {
+		t.Fatalf("expected mark failed message to include enqueue failure context, got %q", repo.markFailedCalls[0].message)
 	}
 }
 
