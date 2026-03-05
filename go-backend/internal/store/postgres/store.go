@@ -482,7 +482,11 @@ func (s *Store) TransitionToTerminal(ctx context.Context, input TransitionTermin
 		WHERE
 			id = $1
 			AND claimed_by = $2
-			AND status IN ('IN_PROGRESS', 'CANCEL_REQUESTED')
+			AND (
+				($3 = 'CANCELED' AND status IN ('IN_PROGRESS', 'CANCEL_REQUESTED'))
+				OR
+				($3 IN ('SUCCESS', 'FAILED') AND status = 'IN_PROGRESS')
+			)
 		`,
 		input.TaskID,
 		input.Worker,

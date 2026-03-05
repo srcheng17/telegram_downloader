@@ -104,15 +104,14 @@ func (e *Executor) Handle(ctx context.Context, worker string, msg Message) error
 			return ctx.Err()
 		case result := <-resultCh:
 			if result.err != nil {
-				if isCancellation(result.err) {
-					cancelRequested, checkErr := e.isCancelRequested(ctx, statusStore, taskID)
-					if checkErr != nil {
-						return checkErr
-					}
-					if cancelRequested {
-						return e.transitionCanceled(ctx, taskID, worker)
-					}
+				cancelRequested, checkErr := e.isCancelRequested(ctx, statusStore, taskID)
+				if checkErr != nil {
+					return checkErr
 				}
+				if cancelRequested {
+					return e.transitionCanceled(ctx, taskID, worker)
+				}
+
 				return e.transitionFailed(ctx, taskID, worker, result.err)
 			}
 
@@ -123,7 +122,19 @@ func (e *Executor) Handle(ctx context.Context, worker string, msg Message) error
 			if cancelRequested {
 				return e.transitionCanceled(ctx, taskID, worker)
 			}
-			return e.transitionSuccess(ctx, taskID, worker, result.resultPath)
+
+			if err := e.transitionSuccess(ctx, taskID, worker, result.resultPath); err != nil {
+				return err
+			}
+
+			cancelRequested, err = e.isCancelRequested(ctx, statusStore, taskID)
+			if err != nil {
+				return err
+			}
+			if cancelRequested {
+				return e.transitionCanceled(ctx, taskID, worker)
+			}
+			return nil
 		case <-heartbeatTicker.C:
 			if err := heartbeatStore.UpdateTaskHeartbeat(ctx, taskID, worker); err != nil {
 				return fmt.Errorf("update task heartbeat: %w", err)

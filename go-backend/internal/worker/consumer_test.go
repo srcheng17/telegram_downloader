@@ -73,6 +73,22 @@ func TestConsumerClaimsAndAcksMessageOnSuccess(t *testing.T) {
 	}
 }
 
+func TestNewConsumerDoesNotMutateProvidedExecutor(t *testing.T) {
+	store := &fakeTaskStore{defaultTransition: true}
+	executor := &Executor{}
+
+	_ = NewConsumer(ConsumerConfig{
+		Store:    store,
+		Group:    "go-workers",
+		Consumer: "worker-1",
+		Executor: executor,
+	})
+
+	if executor.Store != nil {
+		t.Fatalf("expected caller-provided executor to stay unchanged")
+	}
+}
+
 func TestConsumerHandlerErrorAttemptsFailTransitionAndAckThenContinues(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

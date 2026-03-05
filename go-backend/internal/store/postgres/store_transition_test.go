@@ -340,10 +340,10 @@ func (f *fakeTransitionDB) Exec(_ context.Context, query string, args ...any) (p
 	switch {
 	case strings.Contains(query, "AND enqueue_token = $2"):
 		return f.execTransitionPending(args...)
+	case strings.Contains(query, "$3 = 'CANCELED'") && strings.Contains(query, "$3 IN ('SUCCESS', 'FAILED')"):
+		return f.execTransitionTerminal(args...)
 	case strings.Contains(query, "AND claimed_by = $2") && strings.Contains(query, "status = 'IN_PROGRESS'"):
 		return f.execHeartbeat(args...)
-	case strings.Contains(query, "AND status IN ('IN_PROGRESS', 'CANCEL_REQUESTED')"):
-		return f.execTransitionTerminal(args...)
 	case strings.Contains(query, "cancel_requested_at = NOW()"):
 		return f.execRequestCancel(query, args...)
 	default:
@@ -405,7 +405,17 @@ func (f *fakeTransitionDB) execTransitionTerminal(args ...any) (pgconn.CommandTa
 	if task.claimedBy != worker {
 		return pgconn.NewCommandTag("UPDATE 0"), nil
 	}
-	if task.status != "IN_PROGRESS" && task.status != "CANCEL_REQUESTED" {
+
+	switch status {
+	case "CANCELED":
+		if task.status != "IN_PROGRESS" && task.status != "CANCEL_REQUESTED" {
+			return pgconn.NewCommandTag("UPDATE 0"), nil
+		}
+	case "SUCCESS", "FAILED":
+		if task.status != "IN_PROGRESS" {
+			return pgconn.NewCommandTag("UPDATE 0"), nil
+		}
+	default:
 		return pgconn.NewCommandTag("UPDATE 0"), nil
 	}
 

@@ -111,6 +111,71 @@ func TestExecutorTransitionsToFailedOnDownloadError(t *testing.T) {
 	}
 }
 
+func TestExecutorTransitionsToCanceledWhenDownloadErrorAndCancelRequested(t *testing.T) {
+	store := &fakeExecutorStore{
+		statusSequence: []string{
+			domain.StatusInProgress,
+			domain.StatusCancelRequested,
+		},
+		fallbackStatus: domain.StatusCancelRequested,
+	}
+	downloader := &fakeExecutorDownloader{
+		executeFn: func(context.Context, string) (string, error) {
+			return "", errors.New("download failed")
+		},
+	}
+	executor := &Executor{
+		Store:      store,
+		Downloader: downloader,
+	}
+
+	err := executor.Handle(context.Background(), "worker-1", Message{TaskID: "task-cancel-on-error"})
+	if err != nil {
+		t.Fatalf("executor handle: %v", err)
+	}
+
+	if len(store.terminalCalls) != 1 {
+		t.Fatalf("expected one terminal transition, got %d", len(store.terminalCalls))
+	}
+	transition := store.terminalCalls[0]
+	if transition.Status != domain.StatusCanceled {
+		t.Fatalf("expected status CANCELED, got %q", transition.Status)
+	}
+}
+
+func TestExecutorSuccessRaceWithCancelRequestedEndsCanceled(t *testing.T) {
+	store := &fakeExecutorStore{
+		statusSequence: []string{
+			domain.StatusInProgress,
+			domain.StatusInProgress,
+			domain.StatusCancelRequested,
+		},
+		fallbackStatus: domain.StatusCancelRequested,
+	}
+	downloader := &fakeExecutorDownloader{
+		executeFn: func(context.Context, string) (string, error) {
+			return "/tmp/task.cbz", nil
+		},
+	}
+	executor := &Executor{
+		Store:      store,
+		Downloader: downloader,
+	}
+
+	err := executor.Handle(context.Background(), "worker-1", Message{TaskID: "task-success-race"})
+	if err != nil {
+		t.Fatalf("executor handle: %v", err)
+	}
+
+	if len(store.terminalCalls) == 0 {
+		t.Fatalf("expected at least one terminal transition")
+	}
+	lastTransition := store.terminalCalls[len(store.terminalCalls)-1]
+	if lastTransition.Status != domain.StatusCanceled {
+		t.Fatalf("expected final status CANCELED, got %q", lastTransition.Status)
+	}
+}
+
 type fakeExecutorStore struct {
 	mu             sync.Mutex
 	statusSequence []string

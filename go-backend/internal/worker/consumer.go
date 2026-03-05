@@ -60,10 +60,11 @@ type Consumer struct {
 func NewConsumer(cfg ConsumerConfig) *Consumer {
 	handler := cfg.Handler
 	if handler == nil && cfg.Executor != nil {
-		if cfg.Executor.Store == nil {
-			cfg.Executor.Store = cfg.Store
+		executor := *cfg.Executor
+		if executor.Store == nil {
+			executor.Store = cfg.Store
 		}
-		handler = cfg.Executor.Handler(cfg.Consumer)
+		handler = executor.Handler(cfg.Consumer)
 	}
 	if handler == nil {
 		handler = func(context.Context, Message) error { return nil }
