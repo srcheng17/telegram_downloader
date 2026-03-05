@@ -401,7 +401,9 @@ func (s *Store) RequestTaskCancel(ctx context.Context, taskID string, cancelErro
 			cancel_requested_at = NOW(),
 			error = $2,
 			result_zip_path = NULL
-		WHERE id = $1
+		WHERE
+			id = $1
+			AND status IN ('PENDING', 'IN_PROGRESS', 'CANCEL_REQUESTED')
 		`,
 		taskID,
 		cancelError,

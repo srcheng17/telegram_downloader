@@ -235,21 +235,85 @@ func TestTransitionToTerminalBehaviors(t *testing.T) {
 	})
 }
 
+func TestRequestTaskCancelBehaviors(t *testing.T) {
+	t.Run("active task transitions to cancel requested", func(t *testing.T) {
+		taskID := "task-cancel-active"
+		path := "/tmp/existing.cbz"
+		cancelMessage := "cancel requested"
+
+		db := newFakeTransitionDB()
+		db.insertTask(taskID, fakeTransitionTask{
+			status:        "IN_PROGRESS",
+			resultZipPath: stringPtr(path),
+			version:       4,
+		})
+
+		store := &Store{pool: db}
+		if err := store.RequestTaskCancel(context.Background(), taskID, cancelMessage); err != nil {
+			t.Fatalf("request cancel: %v", err)
+		}
+
+		task := db.tasks[taskID]
+		if task.status != "CANCEL_REQUESTED" {
+			t.Fatalf("expected CANCEL_REQUESTED, got %q", task.status)
+		}
+		if task.cancelRequestedAt.IsZero() {
+			t.Fatalf("expected cancel_requested_at to be set")
+		}
+		if task.resultZipPath != nil {
+			t.Fatalf("expected result_zip_path to be cleared, got %#v", task.resultZipPath)
+		}
+		if task.error == nil || *task.error != cancelMessage {
+			t.Fatalf("expected cancel error %q, got %#v", cancelMessage, task.error)
+		}
+	})
+
+	t.Run("terminal task is not mutated", func(t *testing.T) {
+		taskID := "task-cancel-terminal"
+		path := "/tmp/keep.cbz"
+		beforeCancelAt := time.Unix(123, 0).UTC()
+
+		db := newFakeTransitionDB()
+		db.insertTask(taskID, fakeTransitionTask{
+			status:            "SUCCESS",
+			resultZipPath:     stringPtr(path),
+			cancelRequestedAt: beforeCancelAt,
+		})
+
+		store := &Store{pool: db}
+		if err := store.RequestTaskCancel(context.Background(), taskID, "cancel requested"); err != nil {
+			t.Fatalf("request cancel terminal: %v", err)
+		}
+
+		task := db.tasks[taskID]
+		if task.status != "SUCCESS" {
+			t.Fatalf("expected terminal status to remain SUCCESS, got %q", task.status)
+		}
+		if task.resultZipPath == nil || *task.resultZipPath != path {
+			t.Fatalf("expected result_zip_path preserved as %q, got %#v", path, task.resultZipPath)
+		}
+		if !task.cancelRequestedAt.Equal(beforeCancelAt) {
+			t.Fatalf("expected cancel_requested_at unchanged")
+		}
+	})
+}
+
 type fakeTransitionDB struct {
 	execCalls int
 	tasks     map[string]*fakeTransitionTask
 }
 
 type fakeTransitionTask struct {
-	status        string
-	enqueueToken  string
-	claimedBy     string
-	claimedAt     time.Time
-	heartbeatAt   time.Time
-	error         *string
-	resultZipPath *string
-	endTime       float64
-	version       int64
+	status            string
+	enqueueToken      string
+	claimedBy         string
+	claimedAt         time.Time
+	heartbeatAt       time.Time
+	cancelRequestedAt time.Time
+	error             *string
+	resultZipPath     *string
+	endTime           float64
+	version           int64
 }
 
 func newFakeTransitionDB() *fakeTransitionDB {
@@ -280,6 +344,8 @@ func (f *fakeTransitionDB) Exec(_ context.Context, query string, args ...any) (p
 		return f.execHeartbeat(args...)
 	case strings.Contains(query, "AND status IN ('IN_PROGRESS', 'CANCEL_REQUESTED')"):
 		return f.execTransitionTerminal(args...)
+	case strings.Contains(query, "cancel_requested_at = NOW()"):
+		return f.execRequestCancel(query, args...)
 	default:
 		panic(fmt.Sprintf("unexpected Exec query: %s", query))
 	}
@@ -349,6 +415,29 @@ func (f *fakeTransitionDB) execTransitionTerminal(args ...any) (pgconn.CommandTa
 	task.endTime = float64(time.Now().Unix())
 	task.heartbeatAt = time.Now()
 	task.version++
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+func (f *fakeTransitionDB) execRequestCancel(query string, args ...any) (pgconn.CommandTag, error) {
+	taskID := args[0].(string)
+	cancelError := args[1].(string)
+
+	task := f.tasks[taskID]
+	if task == nil {
+		return pgconn.NewCommandTag("UPDATE 0"), nil
+	}
+
+	hasActiveStatusGuard := strings.Contains(query, "status IN ('PENDING', 'IN_PROGRESS', 'CANCEL_REQUESTED')")
+	if hasActiveStatusGuard {
+		if task.status != "PENDING" && task.status != "IN_PROGRESS" && task.status != "CANCEL_REQUESTED" {
+			return pgconn.NewCommandTag("UPDATE 0"), nil
+		}
+	}
+
+	task.status = "CANCEL_REQUESTED"
+	task.cancelRequestedAt = time.Now()
+	task.error = stringPtr(cancelError)
+	task.resultZipPath = nil
 	return pgconn.NewCommandTag("UPDATE 1"), nil
 }
 
