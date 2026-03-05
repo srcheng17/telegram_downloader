@@ -111,3 +111,16 @@ type ClaimDownloadTaskResult struct {
 	Decision ClaimDecision
 	Task     TaskLog
 }
+
+type DownloadedImage struct {
+	URL         string
+	ContentType string
+	Data        []byte
+}
+
+type DownloadResult struct {
+	Images           []DownloadedImage
+	TotalImages      int
+	DownloadedImages int
+	TotalBytes       int64
+}
