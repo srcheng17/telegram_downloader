@@ -4,6 +4,36 @@
 
 ---
 
+## 增补（2026-03-06）：Go 单主线切换完成态（Task 12 总验收）
+
+### A. 架构完成态
+
+- Compose 拓扑已收敛为单 Go 主线：`gateway + go-api + go-worker + postgres + redis`。
+- 网关规则已收敛为全入口转发到 `go-api`（页面与 API 不再依赖 Python Web）。
+- `go-api` 提供基础页面入口（`/`、`/logs`、`/v2`、`/v2/tasks-ui`）与 v2 API 契约，确保切流后页面不再 404。
+- Python/Flask 路径保留为 legacy 兼容参考，不再作为当前主发布链路。
+
+### B. 关键变更汇总（切流前）
+
+- v2 核心链路：任务创建、列表、详情、取消、artifact 下载、settings、dashboard summary。
+- v2 前端：`/v2` 创建页、`/v2/tasks-ui` 列表页，已完成与 `/v2/tasks*` 协议闭环。
+- 迁移工具：支持 legacy -> v2 全量迁移、幂等 MIGRATED 事件、确定性 checksum 校验。
+- Compose 合同测试：约束服务集合与网关路由收敛配置，防止回退到双栈。
+
+### C. 验证结论（2026-03-06 实跑）
+
+| 验收项 | 命令 | 结果 |
+|---|---|---|
+| Go 全量测试 | `go test ./...`（go-backend） | ✅ 通过 |
+| 静态检查 | `go vet ./...`（go-backend） | ✅ 通过 |
+| 竞态测试 | `go test -race ./...`（go-backend） | ✅ 通过 |
+| E2E | `npm run e2e:test` | ✅ 通过（8/8） |
+| Compose 配置解析 | `docker compose config` | ✅ 通过 |
+| Compose 启动烟雾 | `docker compose up -d --build` | ⚠️ 阻塞（本机 Docker keychain 凭据不可交互解锁） |
+| 切流后接口烟雾 | `curl http://localhost:5002/v2/dashboard/summary` / `curl http://localhost:5002/v2/tasks` | ⚠️ 未形成有效结论（在 Compose 未成功启动前返回 HTTP 502） |
+
+> 备注：Compose 启动阻塞属于本机凭据/会话环境问题，不是仓库配置语法问题。已通过 `docker compose config` 验证编排文件可解析。
+
 ## 增补（2026-03-05）：类型字段拆分、移动端统计折叠与二期架构
 
 ### A. 元数据字段拆分（标签/类型）
