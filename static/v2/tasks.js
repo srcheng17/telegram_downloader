@@ -241,8 +241,20 @@
 
     async function handleFilterSubmit(event) {
         event.preventDefault();
+        const previous = {
+            status: state.status,
+            q: state.q,
+            perPage: state.perPage,
+        };
         readStateFromForm();
-        state.page = 1;
+        const shouldResetPage =
+            previous.status !== state.status ||
+            previous.q !== state.q ||
+            previous.perPage !== state.perPage;
+        if (shouldResetPage) {
+            state.page = 1;
+        }
+        syncFormFromState();
         await loadTasks();
     }
 

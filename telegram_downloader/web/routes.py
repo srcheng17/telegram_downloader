@@ -1,7 +1,9 @@
 import time
 import uuid
 import os
+from urllib.parse import quote
 
+import requests
 from flask import jsonify, redirect, render_template, request, send_file, url_for
 
 from telegram_downloader.constants import (
@@ -19,6 +21,62 @@ from telegram_downloader.url_validation import is_allowed_telegraph_url, normali
 
 
 def register_routes(app, runtime):
+    def _proxy_v2_request(path):
+        base_url = (os.environ.get("GO_BACKEND_BASE_URL") or "http://localhost:5000").strip()
+        if not base_url:
+            base_url = "http://localhost:5000"
+        base_url = base_url.rstrip("/")
+
+        upstream_url = f"{base_url}{path}"
+        headers = {}
+        content_type = request.headers.get("Content-Type")
+        accept = request.headers.get("Accept")
+        if content_type:
+            headers["Content-Type"] = content_type
+        if accept:
+            headers["Accept"] = accept
+
+        request_body = None
+        if request.method in {"POST", "PUT", "PATCH"}:
+            request_body = request.get_data()
+
+        try:
+            upstream = requests.request(
+                request.method,
+                upstream_url,
+                params=request.args,
+                headers=headers,
+                data=request_body,
+                timeout=15,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            app.logger.warning(
+                "v2 proxy request failed method=%s path=%s err=%s",
+                request.method,
+                path,
+                exc,
+            )
+            return jsonify({"error": "upstream unavailable"}), 502
+
+        response_body = b""
+        if request.method != "HEAD":
+            response_body = upstream.content
+
+        response = app.response_class(response=response_body, status=upstream.status_code)
+        for header_name in (
+            "Content-Type",
+            "Content-Disposition",
+            "Cache-Control",
+            "ETag",
+            "Last-Modified",
+            "Content-Length",
+        ):
+            header_value = upstream.headers.get(header_name)
+            if header_value:
+                response.headers[header_name] = header_value
+        return response
+
     def _is_safe_download_path(file_path):
         download_root = os.path.realpath(os.environ.get("DOWNLOAD_PATH", "downloaded_images"))
         candidate = os.path.realpath(file_path)
@@ -194,6 +252,25 @@ def register_routes(app, runtime):
     @app.route("/v2/tasks-ui")
     def v2_tasks_ui():
         return render_template("v2/tasks.html")
+
+    @app.route("/v2/tasks", methods=["GET", "POST"])
+    def v2_tasks_proxy():
+        return _proxy_v2_request("/v2/tasks")
+
+    @app.route("/v2/tasks/<task_id>", methods=["GET"])
+    def v2_task_detail_proxy(task_id):
+        safe_task_id = quote(task_id, safe="")
+        return _proxy_v2_request(f"/v2/tasks/{safe_task_id}")
+
+    @app.route("/v2/tasks/<task_id>/cancel", methods=["POST"])
+    def v2_task_cancel_proxy(task_id):
+        safe_task_id = quote(task_id, safe="")
+        return _proxy_v2_request(f"/v2/tasks/{safe_task_id}/cancel")
+
+    @app.route("/v2/tasks/<task_id>/artifact", methods=["GET", "HEAD"])
+    def v2_task_artifact_proxy(task_id):
+        safe_task_id = quote(task_id, safe="")
+        return _proxy_v2_request(f"/v2/tasks/{safe_task_id}/artifact")
 
     @app.route("/download", methods=["POST"])
     def download():

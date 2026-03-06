@@ -6,6 +6,15 @@
 <script src="{{ url_for_static_bust_cache('v2/api-client.js') }}" defer></script>
 <script src="{{ url_for_static_bust_cache('v2/tasks.js') }}" defer></script>
 {% endblock %}
+{% block main_nav %}
+<nav class="main-nav">
+    <a class="nav-link {% if request.path == '/v2' %}active{% endif %}" href="/v2">V2 首页</a>
+    <a class="nav-link {% if request.path == '/v2/tasks-ui' %}active{% endif %}" href="/v2/tasks-ui">V2 任务</a>
+    <a class="nav-link {% if request.path == url_for('index') %}active{% endif %}" href="{{ url_for('index') }}">首页</a>
+    <a class="nav-link {% if request.path == url_for('logs') %}active{% endif %}" href="{{ url_for('logs') }}">日志</a>
+    <a class="nav-link {% if request.path == url_for('settings') %}active{% endif %}" href="{{ url_for('settings') }}">设置</a>
+</nav>
+{% endblock %}
 
 {% block content %}
 <section id="v2-tasks-page" class="logs-page">
