@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestComposeTopologyMatchesSingleGoStack(t *testing.T) {
+func TestComposeTopologyMatchesGoBackendWithPythonFrontend(t *testing.T) {
 	composePath := findComposePath(t)
 	content, err := os.ReadFile(composePath)
 	if err != nil {
@@ -18,6 +18,7 @@ func TestComposeTopologyMatchesSingleGoStack(t *testing.T) {
 
 	services := extractComposeServices(t, string(content))
 	expectedServices := map[string]struct{}{
+		"web":       {},
 		"go-api":    {},
 		"go-worker": {},
 		"postgres":  {},
@@ -38,12 +39,20 @@ func TestComposeTopologyMatchesSingleGoStack(t *testing.T) {
 		t.Fatalf("read nginx config %q: %v", nginxPath, err)
 	}
 	nginxText := string(nginxContent)
-	if strings.Contains(nginxText, "telegraph_python_web") {
-		t.Fatalf("nginx config should not reference python upstream: %q", nginxPath)
+	if !strings.Contains(nginxText, "telegraph_python_web") {
+		t.Fatalf("nginx config must reference python frontend upstream: %q", nginxPath)
 	}
-	locationRootToGoAPI := regexp.MustCompile(`location\s*/\s*\{\s*proxy_pass\s+http://telegraph_go_api;`)
-	if !locationRootToGoAPI.MatchString(nginxText) {
-		t.Fatalf("nginx config must route location / to telegraph_go_api: %q", nginxPath)
+	locationRootToPython := regexp.MustCompile(`location\s*/\s*\{\s*proxy_pass\s+http://telegraph_python_web;`)
+	if !locationRootToPython.MatchString(nginxText) {
+		t.Fatalf("nginx config must route location / to telegraph_python_web: %q", nginxPath)
+	}
+	locationDownloadToGo := regexp.MustCompile(`location\s*=\s*/download\s*\{\s*proxy_pass\s+http://telegraph_go_api;`)
+	if !locationDownloadToGo.MatchString(nginxText) {
+		t.Fatalf("nginx config must route /download to telegraph_go_api: %q", nginxPath)
+	}
+	locationAPIToGo := regexp.MustCompile(`location\s+\^~\s*/api/\s*\{\s*proxy_pass\s+http://telegraph_go_api;`)
+	if !locationAPIToGo.MatchString(nginxText) {
+		t.Fatalf("nginx config must route /api/* to telegraph_go_api: %q", nginxPath)
 	}
 }
 
