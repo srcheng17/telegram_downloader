@@ -115,6 +115,24 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 	}
 
 	status := strings.TrimSpace(snapshot.Status)
+	needsExecution := false
+	switch status {
+	case string(domainv2.StatusQueued):
+		needsExecution = true
+	case string(domainv2.StatusRunning):
+		needsExecution = allowRunning
+	default:
+		// Terminal/non-recoverable statuses are ignored by this executor path.
+		return nil
+	}
+	if !needsExecution {
+		return nil
+	}
+	if strings.TrimSpace(snapshot.URL) == "" {
+		return fmt.Errorf("task %s has empty url", taskID)
+	}
+
+	enteredRunning := false
 	switch status {
 	case string(domainv2.StatusQueued):
 		if err := e.transition(
@@ -130,24 +148,17 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 			}
 			return err
 		}
+		enteredRunning = true
 	case string(domainv2.StatusRunning):
-		if !allowRunning {
-			return nil
-		}
 		// Recoverable state: previous run may have succeeded claim but failed to persist terminal status.
-	default:
-		// Terminal/non-recoverable statuses are ignored by this executor path.
-		return nil
-	}
-	if strings.TrimSpace(snapshot.URL) == "" {
-		return fmt.Errorf("task %s has empty url", taskID)
+		enteredRunning = true
 	}
 
 	attempts := e.maxAttempts()
 	for attempt := 1; attempt <= attempts; attempt++ {
 		artifactPath, runErr := e.downloader.DownloadAndPackage(ctx, taskID, snapshot.URL)
 		if runErr == nil {
-			return e.transitionTerminal(
+			terminalErr := e.transitionTerminal(
 				taskID,
 				string(domainv2.StatusRunning),
 				string(domainv2.StatusSuccess),
@@ -157,6 +168,10 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 					"attempt":       attempt,
 				},
 			)
+			if terminalErr != nil && enteredRunning {
+				return markRunningPhaseExecutionError(terminalErr)
+			}
+			return terminalErr
 		}
 
 		if shouldRetryTaskExecutionError(runErr) && attempt < attempts {
@@ -167,13 +182,17 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 		if errMessage == "" {
 			errMessage = "worker execution failed"
 		}
-		return e.transitionTerminal(
+		terminalErr := e.transitionTerminal(
 			taskID,
 			string(domainv2.StatusRunning),
 			string(domainv2.StatusFailed),
 			postgres.StatusPatch{Error: &errMessage},
 			map[string]any{"attempt": attempt},
 		)
+		if terminalErr != nil && enteredRunning {
+			return markRunningPhaseExecutionError(terminalErr)
+		}
+		return terminalErr
 	}
 
 	return nil
@@ -280,12 +299,14 @@ func (e *V2Executor) runRetryBackoffDuration(attempt int) time.Duration {
 
 func (e *V2Executor) executeWithRetry(ctx context.Context, msg queuev2.TaskMessage) error {
 	var lastErr error
+	allowRunning := false
 	attempts := e.runRetryAttempts()
 	for attempt := 1; attempt <= attempts; attempt++ {
-		lastErr = e.executeAttempt(ctx, msg.TaskID, msg.Token, attempt > 1)
+		lastErr = e.executeAttempt(ctx, msg.TaskID, msg.Token, allowRunning)
 		if lastErr == nil {
 			return nil
 		}
+		allowRunning = isRunningPhaseExecutionError(lastErr)
 		if attempt >= attempts {
 			break
 		}
@@ -299,6 +320,40 @@ func (e *V2Executor) executeWithRetry(ctx context.Context, msg queuev2.TaskMessa
 		}
 	}
 	return lastErr
+}
+
+type runningPhaseExecutionError struct {
+	cause error
+}
+
+func (e *runningPhaseExecutionError) Error() string {
+	if e == nil || e.cause == nil {
+		return ""
+	}
+	return e.cause.Error()
+}
+
+func (e *runningPhaseExecutionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func markRunningPhaseExecutionError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var typed *runningPhaseExecutionError
+	if errors.As(err, &typed) {
+		return err
+	}
+	return &runningPhaseExecutionError{cause: err}
+}
+
+func isRunningPhaseExecutionError(err error) bool {
+	var typed *runningPhaseExecutionError
+	return errors.As(err, &typed)
 }
 
 func shouldRetryTaskExecutionError(err error) bool {

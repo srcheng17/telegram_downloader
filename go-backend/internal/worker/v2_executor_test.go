@@ -338,6 +338,48 @@ func TestExecuteIgnoresTerminalTaskWithEmptyURL(t *testing.T) {
 	}
 }
 
+func TestRunRetryAfterPreflightFailureDoesNotAllowRunningRecovery(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-preflight-running"] = v2ExecutorTaskRecord{
+		id:           "task-preflight-running",
+		url:          "https://telegra.ph/demo-preflight-running",
+		status:       "QUEUED",
+		enqueueToken: "token-preflight-running",
+	}
+	repo.getTaskErrSequence = []error{errors.New("temporary repo read error")}
+	repo.getTaskStatusSequence = []string{"RUNNING"}
+
+	downloader := &fakeV2ExecutorDownloader{artifactPath: "/tmp/task-preflight-running.cbz"}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:          repo,
+		Worker:        "worker-v2-preflight",
+		Download:      downloader,
+		RunRetryCount: 1,
+	})
+
+	consumer := &fakeV2QueueConsumer{
+		reads: []fakeV2ReadResult{
+			{messages: []queuev2.TaskMessage{{TaskID: "task-preflight-running", Token: "token-preflight-running"}}},
+			{err: context.Canceled},
+		},
+	}
+
+	err := executor.Run(context.Background(), consumer)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if repo.getTaskCalls != 2 {
+		t.Fatalf("expected run retry twice, got getTaskCalls=%d", repo.getTaskCalls)
+	}
+	if downloader.calls != 0 {
+		t.Fatalf("expected preflight-failure retry not to run downloader against RUNNING task, got %d calls", downloader.calls)
+	}
+	if len(repo.statusUpdates) != 0 {
+		t.Fatalf("expected no status transitions in preflight failure scenario, got %d", len(repo.statusUpdates))
+	}
+}
+
 type fakeV2ExecutorDownloader struct {
 	artifactPath string
 	err          error
@@ -368,6 +410,7 @@ type fakeV2ExecutorRepo struct {
 	events        []v2ExecutorTaskEvent
 
 	getTaskErrSequence          []error
+	getTaskStatusSequence       []string
 	eventErrByToStatus          map[string]error
 	eventErrCountByToStatus     map[string]int
 	failTerminalWhenCtxCanceled bool
@@ -420,10 +463,15 @@ func (f *fakeV2ExecutorRepo) GetTaskForExecution(_ context.Context, taskID strin
 	if !ok {
 		return V2TaskSnapshot{}, errors.New("task not found")
 	}
+	status := task.status
+	if len(f.getTaskStatusSequence) > 0 {
+		status = f.getTaskStatusSequence[0]
+		f.getTaskStatusSequence = f.getTaskStatusSequence[1:]
+	}
 	return V2TaskSnapshot{
 		ID:           task.id,
 		URL:          task.url,
-		Status:       task.status,
+		Status:       status,
 		EnqueueToken: task.enqueueToken,
 	}, nil
 }
