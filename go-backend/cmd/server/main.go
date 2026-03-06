@@ -18,8 +18,10 @@ import (
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpapi"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpui"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpv2"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/queue"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/queue/redisstream"
 	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/service"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
@@ -63,15 +65,7 @@ func main() {
 
 	legacyRouter := httpapi.NewRouterWithOptions(
 		store,
-		httpapi.RouterOptions{
-			UpstreamBaseURL:   cfg.UpstreamBaseURL,
-			InternalToken:     cfg.InternalToken,
-			DisableRootRoutes: true,
-			DownloadQueue:     downloadQueue,
-			DownloadTimeout:   cfg.DownloadTimeout,
-			DownloadRetries:   cfg.DownloadRetries,
-			ImageConcurrency:  cfg.ImageConcurrency,
-		},
+		buildLegacyRouterOptions(cfg, downloadQueue, v2Store, v2Queue),
 	)
 	rootRouter := chi.NewRouter()
 	httpui.RegisterRoutesWithConfig(rootRouter, buildUIConfig(cfg, v2Store))
@@ -138,4 +132,24 @@ func resolveUIStaticDir() string {
 		}
 	}
 	return "/app/static"
+}
+
+func buildLegacyRouterOptions(
+	cfg config.Config,
+	downloadQueue queue.DownloadQueue,
+	v2Store httpapi.LegacyV2TaskStore,
+	v2Queue httpapi.LegacyV2TaskQueue,
+) httpapi.RouterOptions {
+	return httpapi.RouterOptions{
+		UpstreamBaseURL:   cfg.UpstreamBaseURL,
+		InternalToken:     cfg.InternalToken,
+		DisableRootRoutes: true,
+		DownloadQueue:     downloadQueue,
+		DownloadTimeout:   cfg.DownloadTimeout,
+		DownloadRetries:   cfg.DownloadRetries,
+		ImageConcurrency:  cfg.ImageConcurrency,
+		V2TaskStore:       v2Store,
+		V2TaskQueue:       v2Queue,
+		V2ArtifactService: service.NewV2ArtifactService(service.V2ArtifactServiceConfig{}),
+	}
 }
