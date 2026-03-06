@@ -15,6 +15,7 @@ import (
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/config"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpapi"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpui"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpv2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/queue/redisstream"
 	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
@@ -62,15 +63,17 @@ func main() {
 	legacyRouter := httpapi.NewRouterWithOptions(
 		store,
 		httpapi.RouterOptions{
-			UpstreamBaseURL:  cfg.UpstreamBaseURL,
-			InternalToken:    cfg.InternalToken,
-			DownloadQueue:    downloadQueue,
-			DownloadTimeout:  cfg.DownloadTimeout,
-			DownloadRetries:  cfg.DownloadRetries,
-			ImageConcurrency: cfg.ImageConcurrency,
+			UpstreamBaseURL:   cfg.UpstreamBaseURL,
+			InternalToken:     cfg.InternalToken,
+			DisableRootRoutes: true,
+			DownloadQueue:     downloadQueue,
+			DownloadTimeout:   cfg.DownloadTimeout,
+			DownloadRetries:   cfg.DownloadRetries,
+			ImageConcurrency:  cfg.ImageConcurrency,
 		},
 	)
 	rootRouter := chi.NewRouter()
+	httpui.RegisterRoutes(rootRouter)
 	httpv2.RegisterRoutes(rootRouter, httpv2.NewTasksHandler(v2Store, v2Queue))
 	rootRouter.Mount("/", legacyRouter)
 

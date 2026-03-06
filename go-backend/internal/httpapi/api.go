@@ -294,6 +294,7 @@ type RouterOptions struct {
 	DownloadQueue           queue.DownloadQueue
 	RuntimeSettingsProvider DownloadSettingsProvider
 	InternalToken           string
+	DisableRootRoutes       bool
 	DownloadTimeout         int
 	DownloadRetries         int
 	ImageConcurrency        int
@@ -332,8 +333,10 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 	}
 
 	router := chi.NewRouter()
-	router.Get("/", api.handleRoot)
-	router.Get("/logs", api.handleLogsPageRedirect)
+	if !options.DisableRootRoutes {
+		router.Get("/", api.handleRoot)
+		router.Get("/logs", api.handleLogsPageRedirect)
+	}
 	router.Get("/v2", api.handleV2DashboardPage)
 	router.Get("/v2/tasks-ui", api.handleV2TasksPage)
 	router.Get("/healthz", api.handleHealthz)
