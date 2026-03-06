@@ -720,8 +720,16 @@ func isLimitExceeded(err error) bool {
 	return errors.As(err, &limitErr)
 }
 
+func IsLimitExceededError(err error) bool {
+	return isLimitExceeded(err)
+}
+
 func isContextCancellation(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func IsContextCancellationError(err error) bool {
+	return isContextCancellation(err)
 }
 
 func shouldRetryDownloadError(err error) bool {
@@ -745,6 +753,10 @@ func shouldRetryDownloadError(err error) bool {
 	}
 
 	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
+}
+
+func ShouldRetryTaskError(err error) bool {
+	return shouldRetryDownloadError(err)
 }
 
 func firstNonEmpty(values ...string) string {

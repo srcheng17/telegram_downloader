@@ -15,6 +15,7 @@ import (
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/config"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/downloader"
+	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/worker"
 )
@@ -77,18 +78,20 @@ func main() {
 		downloadRoot = defaultDownloadDir
 	}
 
-	taskDownloader := worker.NewTaskDownloader(worker.TaskDownloaderConfig{
-		Store: store,
-		Service: &downloader.Service{
-			HTTPClient: &http.Client{
-				Timeout: time.Duration(cfg.DownloadTimeout) * time.Second,
-			},
-			DownloadRetries:  cfg.DownloadRetries,
-			ImageConcurrency: cfg.ImageConcurrency,
-			MaxImages:        maxImagesPerTask,
-			MaxImageBytes:    maxBytesPerImage,
-			MaxTotalBytes:    maxBytesPerTask,
+	downloadService := &downloader.Service{
+		HTTPClient: &http.Client{
+			Timeout: time.Duration(cfg.DownloadTimeout) * time.Second,
 		},
+		DownloadRetries:  cfg.DownloadRetries,
+		ImageConcurrency: cfg.ImageConcurrency,
+		MaxImages:        maxImagesPerTask,
+		MaxImageBytes:    maxBytesPerImage,
+		MaxTotalBytes:    maxBytesPerTask,
+	}
+
+	taskDownloader := worker.NewTaskDownloader(worker.TaskDownloaderConfig{
+		Store:        store,
+		Service:      downloadService,
 		DownloadRoot: downloadRoot,
 	})
 
@@ -106,18 +109,39 @@ func main() {
 		Executor: executor,
 	})
 
+	v2Repo := worker.NewV2PostgresExecutionRepo(pool, postgres.NewV2TaskRepo(pool))
+	v2Executor := worker.NewV2Executor(worker.V2ExecutorConfig{
+		Repo:           v2Repo,
+		Worker:         consumerName,
+		Download:       &worker.V2ServiceDownloader{Service: downloadService, DownloadRoot: downloadRoot},
+		TransientRetry: cfg.DownloadRetries,
+	})
+	v2Consumer := queuev2.NewConsumer(redisClient, cfg.V2StreamName)
+
 	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	log.Printf(
-		"go-worker consuming stream=%s group=%s consumer=%s",
+		"go-worker consuming stream=%s and v2_stream=%s group=%s consumer=%s",
 		cfg.StreamName,
+		cfg.V2StreamName,
 		cfg.ConsumerGroup,
 		consumerName,
 	)
 
-	if err := consumer.Run(runCtx); err != nil {
-		log.Fatalf("worker consumer exited with error: %v", err)
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- consumer.Run(runCtx)
+	}()
+	go func() {
+		errCh <- v2Executor.Run(runCtx, v2Consumer)
+	}()
+
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			stop()
+			log.Fatalf("worker pipeline exited with error: %v", err)
+		}
 	}
 
 	log.Printf("go-worker stopped")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -531,6 +532,41 @@ func TestDownloadFallbackDoesNotRetryNonRetryable404(t *testing.T) {
 	}
 }
 
+func TestShouldRetryTaskErrorFastFailsForLimitAndCancellation(t *testing.T) {
+	limitErr := &LimitExceededError{
+		Kind:   LimitKindTotalBytes,
+		Limit:  1,
+		Actual: 2,
+	}
+	if ShouldRetryTaskError(limitErr) {
+		t.Fatalf("expected limit error to bypass retries")
+	}
+	if !IsLimitExceededError(limitErr) {
+		t.Fatalf("expected IsLimitExceededError to detect limit error")
+	}
+
+	if ShouldRetryTaskError(context.Canceled) {
+		t.Fatalf("expected context canceled to bypass retries")
+	}
+	if !IsContextCancellationError(context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded to be context cancellation")
+	}
+}
+
+func TestShouldRetryTaskErrorReturnsTrueForTransientNetworkErrors(t *testing.T) {
+	timeoutErr := &fakeTemporaryNetError{msg: "temporary timeout"}
+	if !ShouldRetryTaskError(timeoutErr) {
+		t.Fatalf("expected retry for temporary network error")
+	}
+}
+
+func TestShouldRetryTaskErrorReturnsFalseForPermanentNetworkErrors(t *testing.T) {
+	nonTransient := &fakeNonTransientNetError{msg: "broken pipe"}
+	if ShouldRetryTaskError(nonTransient) {
+		t.Fatalf("expected no retry for non-transient network error")
+	}
+}
+
 type roundTripperFunc func(req *http.Request) (*http.Response, error)
 
 func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -551,3 +587,27 @@ func (r *cancelOnEOFReadCloser) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+type fakeTemporaryNetError struct {
+	msg string
+}
+
+func (e *fakeTemporaryNetError) Error() string { return e.msg }
+func (e *fakeTemporaryNetError) Timeout() bool { return true }
+func (e *fakeTemporaryNetError) Temporary() bool {
+	return true
+}
+
+var _ net.Error = (*fakeTemporaryNetError)(nil)
+
+type fakeNonTransientNetError struct {
+	msg string
+}
+
+func (e *fakeNonTransientNetError) Error() string { return e.msg }
+func (e *fakeNonTransientNetError) Timeout() bool { return false }
+func (e *fakeNonTransientNetError) Temporary() bool {
+	return false
+}
+
+var _ net.Error = (*fakeNonTransientNetError)(nil)
