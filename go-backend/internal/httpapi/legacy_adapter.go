@@ -135,46 +135,59 @@ func (a *LegacyAdapter) CreateOrReuseDownloadTask(ctx context.Context, input Leg
 		EnqueueToken: uuid.NewString(),
 	}
 	if claimStore, ok := any(a.store).(legacyAtomicClaimStore); ok {
-		claim, err := claimStore.ClaimTaskForLegacy(ctx, httpv2.LegacyClaimTaskInput{
-			ID:           createInput.ID,
-			URL:          createInput.URL,
-			CanonicalURL: createInput.CanonicalURL,
-			EnqueueToken: createInput.EnqueueToken,
-			ReuseSuccess: !input.Force,
-		})
-		if err != nil {
-			return LegacyDownloadResult{}, err
-		}
+		reuseSuccess := !input.Force
+		retriedAfterInvalidReusable := false
 
-		switch claim.Decision {
-		case httpv2.LegacyClaimTaskDecisionReuseSuccess:
-			return LegacyDownloadResult{
-				Decision: LegacyDownloadDecisionReuseSuccess,
-				TaskID:   strings.TrimSpace(claim.Task.ID),
-			}, nil
-		case httpv2.LegacyClaimTaskDecisionReuseActive:
-			return LegacyDownloadResult{
-				Decision: LegacyDownloadDecisionReuseActive,
-				TaskID:   strings.TrimSpace(claim.Task.ID),
-			}, nil
-		case httpv2.LegacyClaimTaskDecisionCreated:
-			enqueueToken := strings.TrimSpace(claim.EnqueueToken)
-			if enqueueToken == "" {
-				enqueueToken = createInput.EnqueueToken
-			}
-			taskID := strings.TrimSpace(claim.Task.ID)
-			if taskID == "" {
-				return LegacyDownloadResult{}, errors.New("created v2 task missing id")
-			}
-			if err := a.enqueueCreatedTask(ctx, taskID, enqueueToken); err != nil {
+		for {
+			claim, err := claimStore.ClaimTaskForLegacy(ctx, httpv2.LegacyClaimTaskInput{
+				ID:           createInput.ID,
+				URL:          createInput.URL,
+				CanonicalURL: createInput.CanonicalURL,
+				EnqueueToken: createInput.EnqueueToken,
+				ReuseSuccess: reuseSuccess,
+			})
+			if err != nil {
 				return LegacyDownloadResult{}, err
 			}
-			return LegacyDownloadResult{
-				Decision: LegacyDownloadDecisionCreated,
-				TaskID:   taskID,
-			}, nil
-		default:
-			return LegacyDownloadResult{}, fmt.Errorf("unknown legacy claim decision: %s", claim.Decision)
+
+			switch claim.Decision {
+			case httpv2.LegacyClaimTaskDecisionReuseSuccess:
+				if isSafeExistingDownloadFile(stringValue(claim.Task.ResultZipPath)) {
+					return LegacyDownloadResult{
+						Decision: LegacyDownloadDecisionReuseSuccess,
+						TaskID:   strings.TrimSpace(claim.Task.ID),
+					}, nil
+				}
+				if retriedAfterInvalidReusable || !reuseSuccess {
+					return LegacyDownloadResult{}, errors.New("reusable v2 artifact is unavailable")
+				}
+				retriedAfterInvalidReusable = true
+				reuseSuccess = false
+				continue
+			case httpv2.LegacyClaimTaskDecisionReuseActive:
+				return LegacyDownloadResult{
+					Decision: LegacyDownloadDecisionReuseActive,
+					TaskID:   strings.TrimSpace(claim.Task.ID),
+				}, nil
+			case httpv2.LegacyClaimTaskDecisionCreated:
+				enqueueToken := strings.TrimSpace(claim.EnqueueToken)
+				if enqueueToken == "" {
+					enqueueToken = createInput.EnqueueToken
+				}
+				taskID := strings.TrimSpace(claim.Task.ID)
+				if taskID == "" {
+					return LegacyDownloadResult{}, errors.New("created v2 task missing id")
+				}
+				if err := a.enqueueCreatedTask(ctx, taskID, enqueueToken); err != nil {
+					return LegacyDownloadResult{}, err
+				}
+				return LegacyDownloadResult{
+					Decision: LegacyDownloadDecisionCreated,
+					TaskID:   taskID,
+				}, nil
+			default:
+				return LegacyDownloadResult{}, fmt.Errorf("unknown legacy claim decision: %s", claim.Decision)
+			}
 		}
 	}
 

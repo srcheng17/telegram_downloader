@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -173,11 +174,70 @@ func TestLegacyAdapterCancelTaskMismatchUsesLatestStatus(t *testing.T) {
 	}
 }
 
+func TestLegacyAdapterAtomicClaimRetriesWithoutReuseWhenArtifactInvalid(t *testing.T) {
+	downloadRoot := t.TempDir()
+	t.Setenv("DOWNLOAD_PATH", downloadRoot)
+	invalidPath := filepath.Join(downloadRoot, "missing.cbz")
+
+	store := &fakeLegacyAtomicClaimStore{
+		claimResults: []httpv2.LegacyClaimTaskResult{
+			{
+				Decision: httpv2.LegacyClaimTaskDecisionReuseSuccess,
+				Task: httpv2.Task{
+					ID:            "task-v2-stale-reuse",
+					ResultZipPath: stringPtr(invalidPath),
+				},
+			},
+			{
+				Decision:     httpv2.LegacyClaimTaskDecisionCreated,
+				Task:         httpv2.Task{ID: "task-v2-created-after-stale"},
+				EnqueueToken: "token-created-after-stale",
+			},
+		},
+	}
+	queue := &fakeLegacyV2Queue{}
+	adapter := NewLegacyAdapter(store, queue, nil)
+
+	result, err := adapter.CreateOrReuseDownloadTask(context.Background(), LegacyDownloadInput{
+		RawURL:       "https://telegra.ph/stale-reuse",
+		CanonicalURL: "https://telegra.ph/stale-reuse",
+		Force:        false,
+	})
+	if err != nil {
+		t.Fatalf("create or reuse download with stale artifact: %v", err)
+	}
+	if result.Decision == LegacyDownloadDecisionReuseSuccess {
+		t.Fatalf("expected stale reuse_success to be retried without reuse, got reuse_success")
+	}
+	if result.Decision != LegacyDownloadDecisionCreated {
+		t.Fatalf("expected created after stale reuse, got %q", result.Decision)
+	}
+	if result.TaskID != "task-v2-created-after-stale" {
+		t.Fatalf("expected task id task-v2-created-after-stale, got %q", result.TaskID)
+	}
+	if len(store.claimCalls) != 2 {
+		t.Fatalf("expected two atomic claim calls, got %d", len(store.claimCalls))
+	}
+	if !store.claimCalls[0].ReuseSuccess {
+		t.Fatalf("expected first claim call reuse_success=true")
+	}
+	if store.claimCalls[1].ReuseSuccess {
+		t.Fatalf("expected second claim call reuse_success=false")
+	}
+	if len(queue.calls) != 1 {
+		t.Fatalf("expected one enqueue after created decision, got %d", len(queue.calls))
+	}
+	if queue.calls[0].TaskID != "task-v2-created-after-stale" {
+		t.Fatalf("expected enqueued created task id, got %q", queue.calls[0].TaskID)
+	}
+}
+
 type fakeLegacyAtomicClaimStore struct {
 	fakeLegacyV2Store
-	claimCalls  []httpv2.LegacyClaimTaskInput
-	claimResult httpv2.LegacyClaimTaskResult
-	claimErr    error
+	claimCalls   []httpv2.LegacyClaimTaskInput
+	claimResult  httpv2.LegacyClaimTaskResult
+	claimResults []httpv2.LegacyClaimTaskResult
+	claimErr     error
 }
 
 func (f *fakeLegacyAtomicClaimStore) ClaimTaskForLegacy(
@@ -187,6 +247,11 @@ func (f *fakeLegacyAtomicClaimStore) ClaimTaskForLegacy(
 	f.claimCalls = append(f.claimCalls, in)
 	if f.claimErr != nil {
 		return httpv2.LegacyClaimTaskResult{}, f.claimErr
+	}
+	if len(f.claimResults) > 0 {
+		next := f.claimResults[0]
+		f.claimResults = f.claimResults[1:]
+		return next, nil
 	}
 	if f.claimResult.Decision != "" || strings.TrimSpace(f.claimResult.Task.ID) != "" || strings.TrimSpace(f.claimResult.EnqueueToken) != "" {
 		return f.claimResult, nil
