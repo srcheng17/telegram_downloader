@@ -75,7 +75,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       STREAM_NAME: ${STREAM_NAME:-download_tasks}
-      CONSUMER_GROUP: ${CONSUMER_GROUP:-go-workers}
+      PYTHON_WEB_BASE_URL: http://web:5000
       INTERNAL_ENQUEUE_TOKEN: ${INTERNAL_ENQUEUE_TOKEN:-}
       GO_DOWNLOAD_TIMEOUT: ${GO_DOWNLOAD_TIMEOUT:-30}
       GO_DOWNLOAD_RETRIES: ${GO_DOWNLOAD_RETRIES:-10}

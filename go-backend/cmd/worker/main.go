@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -14,8 +14,16 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/config"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/downloader"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/worker"
+)
+
+const (
+	maxImagesPerTask   = 300
+	maxBytesPerImage   = 25 << 20
+	maxBytesPerTask    = 500 << 20
+	defaultDownloadDir = "downloaded_images"
 )
 
 func main() {
@@ -63,15 +71,37 @@ func main() {
 		consumerName = hostname
 	}
 
+	store := postgres.NewStore(pool)
+	downloadRoot := strings.TrimSpace(os.Getenv("DOWNLOAD_PATH"))
+	if downloadRoot == "" {
+		downloadRoot = defaultDownloadDir
+	}
+
+	taskDownloader := worker.NewTaskDownloader(worker.TaskDownloaderConfig{
+		Store: store,
+		Service: &downloader.Service{
+			HTTPClient: &http.Client{
+				Timeout: time.Duration(cfg.DownloadTimeout) * time.Second,
+			},
+			MaxImages:     maxImagesPerTask,
+			MaxImageBytes: maxBytesPerImage,
+			MaxTotalBytes: maxBytesPerTask,
+		},
+		DownloadRoot: downloadRoot,
+	})
+
+	executor := &worker.Executor{
+		Store:      store,
+		Downloader: taskDownloader,
+	}
+
 	consumer := worker.NewConsumer(worker.ConsumerConfig{
 		Stream:   stream,
-		Store:    postgres.NewStore(pool),
+		Store:    store,
 		Group:    cfg.ConsumerGroup,
 		Consumer: consumerName,
 		Block:    5 * time.Second,
-		Handler: func(_ context.Context, msg worker.Message) error {
-			return fmt.Errorf("executor not configured for task %s", msg.TaskID)
-		},
+		Executor: executor,
 	})
 
 	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
