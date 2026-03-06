@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -110,6 +111,18 @@ type imageResult struct {
 type imageSlot struct {
 	index      int
 	candidates []string
+}
+
+type downloadHTTPStatusError struct {
+	url        string
+	statusCode int
+}
+
+func (e *downloadHTTPStatusError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("download image %s: unexpected status %d", e.url, e.statusCode)
 }
 
 func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadResult, error) {
@@ -365,6 +378,9 @@ func (s Service) downloadImageWithRetries(
 			return domain.DownloadedImage{}, err
 		}
 		lastErr = err
+		if !shouldRetryDownloadError(err) {
+			break
+		}
 	}
 	if lastErr != nil {
 		return domain.DownloadedImage{}, lastErr
@@ -394,7 +410,10 @@ func (s Service) downloadImage(
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return domain.DownloadedImage{}, fmt.Errorf("download image %s: unexpected status %d", imageURL, resp.StatusCode)
+		return domain.DownloadedImage{}, &downloadHTTPStatusError{
+			url:        imageURL,
+			statusCode: resp.StatusCode,
+		}
 	}
 
 	var imageBytes int64
@@ -703,6 +722,29 @@ func isLimitExceeded(err error) bool {
 
 func isContextCancellation(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func shouldRetryDownloadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isLimitExceeded(err) || isContextCancellation(err) {
+		return false
+	}
+
+	var statusErr *downloadHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.statusCode == http.StatusRequestTimeout ||
+			statusErr.statusCode == http.StatusTooManyRequests ||
+			statusErr.statusCode >= http.StatusInternalServerError
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout() || netErr.Temporary()
+	}
+
+	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
 }
 
 func firstNonEmpty(values ...string) string {

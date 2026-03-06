@@ -483,6 +483,54 @@ func TestDownloadRetriesFailedImageRequests(t *testing.T) {
 	}
 }
 
+func TestDownloadFallbackDoesNotRetryNonRetryable404(t *testing.T) {
+	var primaryAttempts atomic.Int32
+	var fallbackAttempts atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(
+				w,
+				`<html><body><picture><source srcset="/fallback.jpg 1x"><img src="/primary.jpg"></picture></body></html>`,
+			)
+		case "/primary.jpg":
+			primaryAttempts.Add(1)
+			http.Error(w, "missing", http.StatusNotFound)
+		case "/fallback.jpg":
+			fallbackAttempts.Add(1)
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := Service{
+		HTTPClient:       server.Client(),
+		DownloadRetries:  5,
+		ImageConcurrency: 1,
+		MaxImages:        10,
+		MaxImageBytes:    1024,
+		MaxTotalBytes:    4096,
+	}
+
+	result, err := service.Download(context.Background(), server.URL+"/page")
+	if err != nil {
+		t.Fatalf("expected fallback success, got error: %v", err)
+	}
+	if result.DownloadedImages != 1 {
+		t.Fatalf("expected 1 downloaded image, got %d", result.DownloadedImages)
+	}
+	if primaryAttempts.Load() != 1 {
+		t.Fatalf("expected primary 404 to be attempted once, got %d", primaryAttempts.Load())
+	}
+	if fallbackAttempts.Load() != 1 {
+		t.Fatalf("expected fallback to be attempted once, got %d", fallbackAttempts.Load())
+	}
+}
+
 type roundTripperFunc func(req *http.Request) (*http.Response, error)
 
 func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
