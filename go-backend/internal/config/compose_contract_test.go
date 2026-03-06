@@ -17,18 +17,33 @@ func TestComposeTopologyMatchesSingleGoStack(t *testing.T) {
 	}
 
 	services := extractComposeServices(t, string(content))
-	required := []string{"go-api", "go-worker", "postgres", "redis", "gateway"}
-	removed := []string{"web", "py-worker"}
-
-	for _, name := range required {
-		if _, ok := services[name]; !ok {
-			t.Fatalf("expected required compose service %q, found services=%v", name, sortedServiceNames(services))
-		}
+	expectedServices := map[string]struct{}{
+		"go-api":    {},
+		"go-worker": {},
+		"postgres":  {},
+		"redis":     {},
+		"gateway":   {},
 	}
-	for _, name := range removed {
-		if _, ok := services[name]; ok {
-			t.Fatalf("expected removed compose service %q to be absent, found services=%v", name, sortedServiceNames(services))
-		}
+	if !sameServiceSet(services, expectedServices) {
+		t.Fatalf(
+			"compose services mismatch: expected=%v actual=%v",
+			sortedServiceNames(expectedServices),
+			sortedServiceNames(services),
+		)
+	}
+
+	nginxPath := findNginxConfigPath(t)
+	nginxContent, err := os.ReadFile(nginxPath)
+	if err != nil {
+		t.Fatalf("read nginx config %q: %v", nginxPath, err)
+	}
+	nginxText := string(nginxContent)
+	if strings.Contains(nginxText, "telegraph_python_web") {
+		t.Fatalf("nginx config should not reference python upstream: %q", nginxPath)
+	}
+	locationRootToGoAPI := regexp.MustCompile(`location\s*/\s*\{\s*proxy_pass\s+http://telegraph_go_api;`)
+	if !locationRootToGoAPI.MatchString(nginxText) {
+		t.Fatalf("nginx config must route location / to telegraph_go_api: %q", nginxPath)
 	}
 }
 
@@ -46,6 +61,24 @@ func findComposePath(t *testing.T) string {
 		}
 	}
 	t.Fatalf("docker-compose.yml not found in candidates: %v", candidates)
+	return ""
+}
+
+func findNginxConfigPath(t *testing.T) string {
+	t.Helper()
+
+	candidates := []string{
+		filepath.Join("..", "deploy", "nginx", "canary-go-full.conf"),
+		filepath.Join("..", "..", "deploy", "nginx", "canary-go-full.conf"),
+		filepath.Join("..", "..", "..", "deploy", "nginx", "canary-go-full.conf"),
+		filepath.Join("deploy", "nginx", "canary-go-full.conf"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	t.Fatalf("nginx config not found in candidates: %v", candidates)
 	return ""
 }
 
@@ -97,4 +130,16 @@ func sortedServiceNames(services map[string]struct{}) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func sameServiceSet(left, right map[string]struct{}) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for name := range left {
+		if _, ok := right[name]; !ok {
+			return false
+		}
+	}
+	return true
 }

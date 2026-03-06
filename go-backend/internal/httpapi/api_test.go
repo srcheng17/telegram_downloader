@@ -255,6 +255,64 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestV2PageEntrypoints(t *testing.T) {
+	handler := NewRouter(&fakeTaskReader{})
+
+	t.Run("root redirects to v2", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusFound {
+			t.Fatalf("expected 302, got %d", recorder.Code)
+		}
+		if got := recorder.Header().Get("Location"); got != "/v2" {
+			t.Fatalf("expected redirect /v2, got %q", got)
+		}
+	})
+
+	t.Run("logs redirects to v2 tasks", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/logs", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusFound {
+			t.Fatalf("expected 302, got %d", recorder.Code)
+		}
+		if got := recorder.Header().Get("Location"); got != "/v2/tasks-ui" {
+			t.Fatalf("expected redirect /v2/tasks-ui, got %q", got)
+		}
+	})
+
+	t.Run("v2 dashboard page is available", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v2", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", recorder.Code)
+		}
+		body := recorder.Body.String()
+		if !strings.Contains(body, "v2-create-task-form") {
+			t.Fatalf("expected v2 dashboard form in html, got body=%q", body)
+		}
+	})
+
+	t.Run("v2 tasks page is available", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v2/tasks-ui", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", recorder.Code)
+		}
+		body := recorder.Body.String()
+		if !strings.Contains(body, "v2-tasks-table-body") {
+			t.Fatalf("expected v2 tasks table in html, got body=%q", body)
+		}
+	})
+}
+
 func TestDownloadCreatesTaskAndSubmitsJob(t *testing.T) {
 	repo := &fakeTaskReader{}
 	repo.claimResponses = []domain.ClaimDownloadTaskResult{

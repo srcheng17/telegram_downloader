@@ -31,11 +31,14 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 
 ## 技术栈
 
-*   **后端**: Python, Flask, Celery
+*   **后端（当前主线）**: Go（HTTP API + Worker）
+*   **后端（历史兼容）**: Python, Flask, Celery
 *   **前端**: HTML, CSS, htmx
 *   **部署**: Docker, Docker Compose, Redis, PostgreSQL
 
 ## 后端架构（重构后）
+
+> 说明：Compose 默认运行 Go 单主线（`go-api + go-worker`）。下述 Python 目录结构保留用于 legacy/历史兼容与迁移参考。
 
 项目已按分层结构拆分，核心目录如下：
 
