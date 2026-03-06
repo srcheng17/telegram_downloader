@@ -55,7 +55,7 @@
 
 ### C. 回滚命令（切回 Python API）
 
-1. 将 `deploy/nginx/canary-go-full.conf` 中 `/download`、`/api/*`、`/healthz` 的 `proxy_pass` 切回 `web`。
+1. 将 `deploy/nginx/canary-go-full.conf` 中 `/download`、`/api/*`、`/healthz` 的 `proxy_pass` 切回 `http://telegraph_python_web`。
 2. 重载网关：
    ```bash
    docker compose exec gateway nginx -s reload

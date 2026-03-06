@@ -93,7 +93,7 @@ services:
     build:
       context: ./go-backend
     container_name: telegraph-go-worker
-    command: ["/app/go-worker"]
+    entrypoint: ["/app/go-worker"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
