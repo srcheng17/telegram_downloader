@@ -136,55 +136,26 @@ docker run -d -p 5002:5000 \
 
 在浏览器中打开 `http://localhost:5002`。
 
-## 二期架构运行（Compose）
-
-```bash
-docker compose up -d --build
-```
-
-默认包含 `gateway + web + py-worker + go-api + go-worker + redis + postgres`。
-
-- `gateway`（Nginx）统一对外暴露 `APP_PORT`（默认 `5002`）。
-- 网关规则文件：`deploy/nginx/canary-go-full.conf`。
-- API 入口（`/download`、`/api/*`、`/healthz`）默认全部转发到 `go-api`，页面请求仍由 `web` 渲染。
-
-## 灰度与回滚（go-api + go-worker）
-
-### 灰度切换（全量 API 切到 Go）
-
-1. 启动服务并确认容器状态：
+## Compose 单主线部署（Go）
 
 ```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-2. 验证网关已命中 Go API：
+默认服务拓扑为：`gateway + go-api + go-worker + redis + postgres`。
+
+- `gateway`（Nginx）统一对外暴露 `APP_PORT`（默认 `5002`）。
+- 网关规则文件：`deploy/nginx/canary-go-full.conf`。
+- 页面与 API 入口统一转发到 `go-api`（单主线，不再依赖 Python web/worker）。
+
+可用以下命令验证服务健康：
 
 ```bash
 curl -sS http://localhost:5002/healthz
 ```
 
-返回体中 `service` 为 `go-backend` 即表示 API 已切到 `go-api`。
-
-### 快速回滚（切回 Python API）
-
-1. 编辑 `deploy/nginx/canary-go-full.conf`，将以下 location 的 `proxy_pass` 从 `http://telegraph_go_api` 改为 `http://telegraph_python_web`：
-   - `location = /healthz`
-   - `location = /download`
-   - `location ^~ /api/`
-
-2. 热重载网关配置：
-
-```bash
-docker compose exec gateway nginx -s reload
-```
-
-3. （可选）停止 Go 执行链路，保持 Python 稳态：
-
-```bash
-docker compose stop go-api go-worker
-```
+返回体中 `service` 为 `go-backend` 表示网关已命中 Go 主线。
 
 ## SQLite 迁移到 Postgres（停机迁移）
 
