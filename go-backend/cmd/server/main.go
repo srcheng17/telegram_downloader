@@ -74,7 +74,7 @@ func main() {
 		},
 	)
 	rootRouter := chi.NewRouter()
-	httpui.RegisterRoutesWithConfig(rootRouter, buildUIConfig(cfg))
+	httpui.RegisterRoutesWithConfig(rootRouter, buildUIConfig(cfg, v2Store))
 	httpv2.RegisterRoutes(rootRouter, httpv2.NewTasksHandler(v2Store, v2Queue))
 	rootRouter.Mount("/", legacyRouter)
 
@@ -104,7 +104,7 @@ func main() {
 	}
 }
 
-func buildUIConfig(cfg config.Config) httpui.Config {
+func buildUIConfig(cfg config.Config, settingsStore httpui.SettingsStore) httpui.Config {
 	return httpui.Config{
 		Settings: httpui.Settings{
 			TaskConcurrency:   2,
@@ -120,7 +120,8 @@ func buildUIConfig(cfg config.Config) httpui.Config {
 			MaxImageBytes:  25 * 1024 * 1024,
 			MaxTotalBytes:  500 * 1024 * 1024,
 		},
-		StaticDir: resolveUIStaticDir(),
+		StaticDir:     resolveUIStaticDir(),
+		SettingsStore: settingsStore,
 	}
 }
 

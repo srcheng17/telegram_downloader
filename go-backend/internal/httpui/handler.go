@@ -1,7 +1,9 @@
 package httpui
 
 import (
+	"context"
 	"embed"
+	"errors"
 	"html/template"
 	"log"
 	"net/http"
@@ -11,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	appconfig "github.com/ryancheng/telegram-downloader/go-backend/internal/config"
 )
 
 //go:embed templates/*.html
@@ -20,6 +24,7 @@ type Handler struct {
 	templates  map[string]*template.Template
 	settings   Settings
 	guardrails Guardrails
+	store      SettingsStore
 }
 
 type pageData struct {
@@ -46,9 +51,15 @@ type Guardrails struct {
 }
 
 type Config struct {
-	Settings   Settings
-	Guardrails Guardrails
-	StaticDir  string
+	Settings      Settings
+	Guardrails    Guardrails
+	StaticDir     string
+	SettingsStore SettingsStore
+}
+
+type SettingsStore interface {
+	GetSettings(ctx context.Context) (appconfig.SettingsSnapshot, error)
+	UpdateSettings(ctx context.Context, snapshot appconfig.SettingsSnapshot) (appconfig.SettingsSnapshot, error)
 }
 
 func NewRouter() http.Handler {
@@ -84,6 +95,7 @@ func NewHandler(config Config) *Handler {
 		},
 		settings:   normalizeSettings(config.Settings),
 		guardrails: normalizeGuardrails(config.Guardrails),
+		store:      config.SettingsStore,
 	}
 }
 
@@ -106,16 +118,47 @@ func (h *Handler) Logs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) SettingsPage(w http.ResponseWriter, r *http.Request) {
+	settings := h.currentSettings(r)
 	h.render(w, r, "settings", pageData{
 		Title:       "设置",
 		CurrentPath: "/settings",
-		Settings:    h.settings,
+		Settings:    settings,
 		Guardrails:  h.guardrails,
 	})
 }
 
 func (h *Handler) SaveSettings(w http.ResponseWriter, r *http.Request) {
+	if h.store != nil {
+		snapshot, err := parseSettingsForm(r)
+		if err != nil {
+			http.Error(w, "invalid settings form", http.StatusBadRequest)
+			return
+		}
+		if _, err := h.store.UpdateSettings(r.Context(), snapshot); err != nil {
+			log.Printf("httpui update settings: %v", err)
+			http.Error(w, "update settings", http.StatusInternalServerError)
+			return
+		}
+	}
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
+}
+
+func (h *Handler) currentSettings(r *http.Request) Settings {
+	settings := h.settings
+	if h.store == nil {
+		return settings
+	}
+
+	snapshot, err := h.store.GetSettings(r.Context())
+	if err != nil {
+		log.Printf("httpui get settings: %v", err)
+		return settings
+	}
+	normalized := appconfig.NormalizeSettingsSnapshot(snapshot)
+	settings.Timeout = normalized.Timeout
+	settings.Retries = normalized.Retries
+	settings.ImageConcurrency = normalized.ImageConcurrency
+	return settings
 }
 
 func (h *Handler) render(w http.ResponseWriter, r *http.Request, templateName string, data pageData) {
@@ -215,4 +258,39 @@ func normalizeGuardrails(guardrails Guardrails) Guardrails {
 		guardrails.MaxTotalBytes = 500 * 1024 * 1024
 	}
 	return guardrails
+}
+
+func parseSettingsForm(r *http.Request) (appconfig.SettingsSnapshot, error) {
+	if r == nil {
+		return appconfig.SettingsSnapshot{}, errors.New("request is nil")
+	}
+	if err := r.ParseForm(); err != nil {
+		return appconfig.SettingsSnapshot{}, err
+	}
+
+	timeout, err := parseRequiredFormInt(r.FormValue("timeout"))
+	if err != nil {
+		return appconfig.SettingsSnapshot{}, err
+	}
+	retries, err := parseRequiredFormInt(r.FormValue("retries"))
+	if err != nil {
+		return appconfig.SettingsSnapshot{}, err
+	}
+	imageConcurrency, err := parseRequiredFormInt(r.FormValue("image_concurrency"))
+	if err != nil {
+		return appconfig.SettingsSnapshot{}, err
+	}
+
+	return appconfig.NormalizeSettingsSnapshot(appconfig.SettingsSnapshot{
+		Timeout:          timeout,
+		Retries:          retries,
+		ImageConcurrency: imageConcurrency,
+	}), nil
+}
+
+func parseRequiredFormInt(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, errors.New("missing value")
+	}
+	return strconv.Atoi(raw)
 }

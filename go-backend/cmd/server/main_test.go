@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -19,7 +20,7 @@ func TestBuildUIConfigUsesRuntimeValues(t *testing.T) {
 		ImageConcurrency: 6,
 	}
 
-	got := buildUIConfig(input)
+	got := buildUIConfig(input, nil)
 	want := httpui.Config{
 		Settings: httpui.Settings{
 			TaskConcurrency:   2,
@@ -47,8 +48,26 @@ func TestBuildUIConfigUsesStaticDirFromEnv(t *testing.T) {
 	t.Setenv("UI_STATIC_DIR", "/tmp/ui-static")
 	t.Setenv("STATIC_DIR", "/tmp/fallback-static")
 
-	got := buildUIConfig(config.Config{})
+	got := buildUIConfig(config.Config{}, nil)
 	if got.StaticDir != "/tmp/go-ui-static" {
 		t.Fatalf("expected static dir from GO_UI_STATIC_DIR, got %q", got.StaticDir)
 	}
+}
+
+func TestBuildUIConfigInjectsSettingsStore(t *testing.T) {
+	store := &fakeSettingsStoreForUIConfig{}
+	got := buildUIConfig(config.Config{}, store)
+	if got.SettingsStore != store {
+		t.Fatalf("expected settings store to be injected")
+	}
+}
+
+type fakeSettingsStoreForUIConfig struct{}
+
+func (f *fakeSettingsStoreForUIConfig) GetSettings(_ context.Context) (config.SettingsSnapshot, error) {
+	return config.SettingsSnapshot{}, nil
+}
+
+func (f *fakeSettingsStoreForUIConfig) UpdateSettings(_ context.Context, snapshot config.SettingsSnapshot) (config.SettingsSnapshot, error) {
+	return snapshot, nil
 }

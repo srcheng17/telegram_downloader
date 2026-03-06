@@ -1,12 +1,17 @@
 package httpui
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	appconfig "github.com/ryancheng/telegram-downloader/go-backend/internal/config"
 )
 
 func TestUIRoutesRenderMainPages(t *testing.T) {
@@ -169,6 +174,77 @@ func TestSettingsPagePostRedirectsBack(t *testing.T) {
 	}
 }
 
+func TestSettingsPagePostUpdatesSettingsStore(t *testing.T) {
+	store := &fakeUISettingsStore{}
+	router := NewRouterWithConfig(Config{
+		SettingsStore: store,
+	})
+	form := url.Values{
+		"timeout":           {"75"},
+		"retries":           {"6"},
+		"image_concurrency": {"9"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("expected status 303, got %d", recorder.Code)
+	}
+	if location := recorder.Header().Get("Location"); location != "/settings" {
+		t.Fatalf("expected redirect location /settings, got %q", location)
+	}
+	if store.updateCalls != 1 {
+		t.Fatalf("expected update to be called once, got %d", store.updateCalls)
+	}
+	want := appconfig.SettingsSnapshot{
+		Timeout:          75,
+		Retries:          6,
+		ImageConcurrency: 9,
+	}
+	if !reflect.DeepEqual(store.lastUpdated, want) {
+		t.Fatalf("unexpected update payload:\n got: %#v\nwant: %#v", store.lastUpdated, want)
+	}
+}
+
+func TestSettingsPageUsesSettingsStoreSnapshotValues(t *testing.T) {
+	store := &fakeUISettingsStore{
+		getSnapshot: appconfig.SettingsSnapshot{
+			Timeout:          81,
+			Retries:          4,
+			ImageConcurrency: 13,
+		},
+	}
+	router := NewRouterWithConfig(Config{
+		Settings: Settings{
+			TaskConcurrency:   2,
+			ImageConcurrency:  3,
+			Timeout:           30,
+			Retries:           10,
+			LogRetentionDays:  7,
+			FileRetentionDays: 7,
+		},
+		SettingsStore: store,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+	if store.getCalls != 1 {
+		t.Fatalf("expected get settings to be called once, got %d", store.getCalls)
+	}
+	body := recorder.Body.String()
+	assertContains(t, body, `name="timeout" value="81"`)
+	assertContains(t, body, `name="retries" value="4"`)
+	assertContains(t, body, `name="image_concurrency" value="13"`)
+}
+
 func TestStaticRouteUsesConfiguredStaticDir(t *testing.T) {
 	staticDir := t.TempDir()
 	const fileName = "sentinel.txt"
@@ -204,4 +280,31 @@ func assertNotContains(t *testing.T, haystack, needle string) {
 	if strings.Contains(haystack, needle) {
 		t.Fatalf("expected response body not to contain %q", needle)
 	}
+}
+
+type fakeUISettingsStore struct {
+	getSnapshot appconfig.SettingsSnapshot
+	getErr      error
+	getCalls    int
+
+	updateCalls int
+	lastUpdated appconfig.SettingsSnapshot
+	updateErr   error
+}
+
+func (f *fakeUISettingsStore) GetSettings(_ context.Context) (appconfig.SettingsSnapshot, error) {
+	f.getCalls++
+	if f.getErr != nil {
+		return appconfig.SettingsSnapshot{}, f.getErr
+	}
+	return f.getSnapshot, nil
+}
+
+func (f *fakeUISettingsStore) UpdateSettings(_ context.Context, snapshot appconfig.SettingsSnapshot) (appconfig.SettingsSnapshot, error) {
+	f.updateCalls++
+	f.lastUpdated = snapshot
+	if f.updateErr != nil {
+		return appconfig.SettingsSnapshot{}, f.updateErr
+	}
+	return snapshot, nil
 }
