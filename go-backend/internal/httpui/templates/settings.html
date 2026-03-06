@@ -9,32 +9,32 @@
 <form action="/settings" method="post" class="settings-form">
     <div class="form-group settings-grid-item">
         <label for="task_concurrency">任务并发数（同时运行任务数）</label>
-        <input type="number" id="task_concurrency" name="task_concurrency" value="2" min="1" max="10">
+        <input type="number" id="task_concurrency" name="task_concurrency" value="{{ .Settings.TaskConcurrency }}" min="1" max="10">
         <p class="field-help">控制同时执行的下载任务数量。</p>
     </div>
     <div class="form-group settings-grid-item">
         <label for="image_concurrency">图片并发数（单任务下载线程）</label>
-        <input type="number" id="image_concurrency" name="image_concurrency" value="2" min="1" max="20">
+        <input type="number" id="image_concurrency" name="image_concurrency" value="{{ .Settings.ImageConcurrency }}" min="1" max="20">
         <p class="field-help">控制单个任务内并发下载图片的线程数，值越大资源占用越高。</p>
     </div>
     <div class="form-group settings-grid-item">
         <label for="timeout">下载超时时间（秒）</label>
-        <input type="number" id="timeout" name="timeout" value="30" min="1">
+        <input type="number" id="timeout" name="timeout" value="{{ .Settings.Timeout }}" min="1">
         <p class="field-help">单次请求超过该时长后会进入超时处理流程。</p>
     </div>
     <div class="form-group settings-grid-item">
         <label for="retries">下载重试次数</label>
-        <input type="number" id="retries" name="retries" value="10" min="0">
+        <input type="number" id="retries" name="retries" value="{{ .Settings.Retries }}" min="0">
         <p class="field-help">下载失败后的自动重试次数。</p>
     </div>
     <div class="form-group settings-grid-item settings-grid-item-full">
         <label for="log_retention_days">日志保留天数</label>
-        <input type="number" id="log_retention_days" name="log_retention_days" value="7" min="1">
+        <input type="number" id="log_retention_days" name="log_retention_days" value="{{ .Settings.LogRetentionDays }}" min="1">
         <p class="field-help">日志页中任务记录的保留时长。</p>
     </div>
     <div class="form-group settings-grid-item settings-grid-item-full">
         <label for="file_retention_days">文件缓存保留天数</label>
-        <input type="number" id="file_retention_days" name="file_retention_days" value="7" min="1">
+        <input type="number" id="file_retention_days" name="file_retention_days" value="{{ .Settings.FileRetentionDays }}" min="1">
         <p class="field-help">已生成 ZIP/CBZ 文件的缓存保留时长。</p>
     </div>
     <button type="submit">保存设置</button>

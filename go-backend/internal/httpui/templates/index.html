@@ -13,7 +13,14 @@
     >
         <p id="startup-recovery-text-home" class="startup-recovery-text"></p>
         <div class="startup-recovery-actions">
-            <a id="startup-recovery-link-home" class="startup-recovery-link" href="/logs">去日志页查看</a>
+            <a
+                id="startup-recovery-link-home"
+                class="startup-recovery-link"
+                href="/logs"
+                hx-get="/logs"
+                hx-target="#content"
+                hx-push-url="true"
+            >去日志页查看</a>
             <button type="button" id="startup-recovery-dismiss-home" class="btn-secondary startup-recovery-dismiss">关闭</button>
         </div>
     </div>
@@ -45,19 +52,19 @@
             <dl class="guardrail-list">
                 <div class="guardrail-item">
                     <dt>允许域名</dt>
-                    <dd>telegra.ph, graph.org</dd>
+                    <dd>{{ join .Guardrails.AllowedDomains ", " }}</dd>
                 </div>
                 <div class="guardrail-item">
                     <dt>图片数量上限</dt>
-                    <dd>300</dd>
+                    <dd>{{ .Guardrails.MaxImages }}</dd>
                 </div>
                 <div class="guardrail-item">
                     <dt>单张图片大小上限</dt>
-                    <dd>25 MB</dd>
+                    <dd>{{ formatGuardrailBytes .Guardrails.MaxImageBytes }}</dd>
                 </div>
                 <div class="guardrail-item">
                     <dt>总下载体积上限</dt>
-                    <dd>500 MB</dd>
+                    <dd>{{ formatGuardrailBytes .Guardrails.MaxTotalBytes }}</dd>
                 </div>
             </dl>
         </div>

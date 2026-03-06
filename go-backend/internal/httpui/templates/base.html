@@ -19,9 +19,9 @@
     </header>
     <div class="container">
         <nav class="main-nav">
-            <a class="nav-link{{ if eq .CurrentPath "/" }} active{{ end }}" href="/">首页</a>
-            <a class="nav-link{{ if eq .CurrentPath "/logs" }} active{{ end }}" href="/logs">日志</a>
-            <a class="nav-link{{ if eq .CurrentPath "/settings" }} active{{ end }}" href="/settings">设置</a>
+            <a class="nav-link{{ if eq .CurrentPath "/" }} active{{ end }}" href="/" hx-get="/" hx-target="#content" hx-push-url="true">首页</a>
+            <a class="nav-link{{ if eq .CurrentPath "/logs" }} active{{ end }}" href="/logs" hx-get="/logs" hx-target="#content" hx-push-url="true">日志</a>
+            <a class="nav-link{{ if eq .CurrentPath "/settings" }} active{{ end }}" href="/settings" hx-get="/settings" hx-target="#content" hx-push-url="true">设置</a>
         </nav>
         <main id="content">
             <div class="card">
