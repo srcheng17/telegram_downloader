@@ -166,12 +166,14 @@ func TestContract_LogsResponseFrozenSchema(t *testing.T) {
 		logResult: domain.LogListResult{
 			Logs: []domain.TaskLog{
 				{
-					ID:          "task-logs-contract",
-					URL:         "https://telegra.ph/contract-logs",
-					Status:      domain.StatusSuccess,
-					StartTime:   1700000000,
-					Progress:    5,
-					TotalImages: 5,
+					ID:               "task-logs-contract",
+					URL:              "https://telegra.ph/contract-logs",
+					CanonicalURL:     stringPtr("https://telegra.ph/contract-logs"),
+					Status:           domain.StatusSuccess,
+					StartTime:        1700000000,
+					Progress:         5,
+					TotalImages:      5,
+					ImageConcurrency: 2,
 				},
 			},
 			Total:      1,
@@ -217,6 +219,28 @@ func TestContract_LogsResponseFrozenSchema(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected first logs row object, got %#v", logs[0])
 	}
+	assertExactJSONKeys(
+		t,
+		firstLog,
+		"id",
+		"url",
+		"canonical_url",
+		"status",
+		"start_time",
+		"error",
+		"progress",
+		"total_images",
+		"image_concurrency",
+		"result_zip_path",
+		"author",
+		"series_name",
+		"comic_name",
+		"summary",
+		"tags_raw",
+		"tags_normalized",
+		"genres_raw",
+		"genres_normalized",
+	)
 	assertPayloadNonEmptyString(t, firstLog, "id")
 	assertPayloadNonEmptyString(t, firstLog, "url")
 	assertPayloadNonEmptyString(t, firstLog, "status")
@@ -224,6 +248,9 @@ func TestContract_LogsResponseFrozenSchema(t *testing.T) {
 	assertPayloadIsNumber(t, firstLog, "progress")
 	assertPayloadIsNumber(t, firstLog, "total_images")
 	assertPayloadIsNumber(t, firstLog, "image_concurrency")
+	assertPayloadOptionalString(t, firstLog, "canonical_url")
+	assertPayloadOptionalString(t, firstLog, "error")
+	assertPayloadOptionalString(t, firstLog, "result_zip_path")
 	assertPayloadOptionalString(t, firstLog, "author")
 	assertPayloadOptionalString(t, firstLog, "series_name")
 	assertPayloadOptionalString(t, firstLog, "comic_name")
