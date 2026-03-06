@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -21,9 +22,10 @@ import (
 )
 
 const (
-	defaultListPage    = 1
-	defaultListPerPage = 20
-	maxListPerPage     = 100
+	defaultListPage     = 1
+	defaultListPerPage  = 20
+	maxListPerPage      = 100
+	compensationTimeout = 3 * time.Second
 )
 
 type CreateTaskInput struct {
@@ -123,14 +125,19 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.queue.Enqueue(r.Context(), TaskQueueMessage{TaskID: task.ID, Token: createInput.EnqueueToken}); err != nil {
+		compensationCtx, compensationCancel := context.WithTimeout(context.Background(), compensationTimeout)
 		compensationErr := h.store.MarkTaskFailed(
-			r.Context(),
+			compensationCtx,
 			task.ID,
 			fmt.Sprintf("enqueue failed: %v", err),
 		)
+		compensationCancel()
 		if compensationErr != nil {
-			writeError(w, http.StatusInternalServerError, "enqueue task")
-			return
+			log.Printf(
+				"httpv2 task compensation failed task_id=%s err=%v",
+				strings.TrimSpace(task.ID),
+				compensationErr,
+			)
 		}
 		writeError(w, http.StatusInternalServerError, "enqueue task")
 		return

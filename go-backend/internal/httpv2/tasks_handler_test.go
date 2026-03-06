@@ -23,8 +23,10 @@ type fakeTaskStore struct {
 	getTask  *Task
 	getErr   error
 
-	markFailedCalls []markFailedCall
-	markFailedErr   error
+	markFailedCalls       []markFailedCall
+	markFailedErr         error
+	markFailedCtxErr      error
+	markFailedHasDeadline bool
 }
 
 type markFailedCall struct {
@@ -59,11 +61,13 @@ func (f *fakeTaskStore) GetTask(_ context.Context, taskID string) (*Task, error)
 	return f.getTask, nil
 }
 
-func (f *fakeTaskStore) MarkTaskFailed(_ context.Context, taskID, message string) error {
+func (f *fakeTaskStore) MarkTaskFailed(ctx context.Context, taskID, message string) error {
 	f.markFailedCalls = append(f.markFailedCalls, markFailedCall{
 		taskID:  taskID,
 		message: message,
 	})
+	f.markFailedCtxErr = ctx.Err()
+	_, f.markFailedHasDeadline = ctx.Deadline()
 	return f.markFailedErr
 }
 
@@ -229,5 +233,41 @@ func TestCreateTaskEnqueueFailureCompensatesToFailed(t *testing.T) {
 	}
 	if !strings.Contains(repo.markFailedCalls[0].message, "stream unavailable") {
 		t.Fatalf("expected mark-failed message to include queue error, got %q", repo.markFailedCalls[0].message)
+	}
+}
+
+func TestCreateTaskCompensationUsesIndependentTimeoutContext(t *testing.T) {
+	repo := &fakeTaskStore{
+		createdTask: Task{
+			ID:           "task-v2-canceled-request",
+			URL:          "https://telegra.ph/demo",
+			CanonicalURL: stringPtr("https://telegra.ph/demo"),
+			Status:       "QUEUED",
+		},
+	}
+	queue := &fakeTaskQueue{err: errors.New("stream unavailable")}
+	handler := NewRouter(repo, queue)
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/tasks", strings.NewReader(`{"url":"https://telegra.ph/demo"}`))
+	req = req.WithContext(canceledCtx)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.markFailedCalls) != 1 {
+		t.Fatalf("expected one mark-failed call, got %d", len(repo.markFailedCalls))
+	}
+	if repo.markFailedCtxErr != nil {
+		t.Fatalf("expected compensation context not canceled, got %v", repo.markFailedCtxErr)
+	}
+	if !repo.markFailedHasDeadline {
+		t.Fatalf("expected compensation context to have timeout deadline")
 	}
 }
