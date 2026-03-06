@@ -13,6 +13,7 @@ func NewRouter(store TaskStore, queue TaskQueue) http.Handler {
 }
 
 func RegisterRoutes(r chi.Router, h *TasksHandler) {
+	r.Get("/v2/dashboard/summary", h.GetDashboardSummary)
 	r.Post("/v2/tasks", h.CreateTask)
 	r.Get("/v2/tasks", h.ListTasks)
 	r.Get("/v2/tasks/{task_id}", h.GetTask)

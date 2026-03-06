@@ -39,6 +39,9 @@ type fakeTaskStore struct {
 	markFailedErr         error
 	markFailedCtxErr      error
 	markFailedHasDeadline bool
+
+	summaryCounts map[string]int
+	summaryErr    error
 }
 
 type markFailedCall struct {
@@ -103,6 +106,16 @@ func (f *fakeTaskStore) MarkTaskFailed(ctx context.Context, taskID, message stri
 	return f.markFailedErr
 }
 
+func (f *fakeTaskStore) GetTaskStatusCounts(_ context.Context) (map[string]int, error) {
+	if f.summaryErr != nil {
+		return nil, f.summaryErr
+	}
+	if f.summaryCounts == nil {
+		return map[string]int{}, nil
+	}
+	return f.summaryCounts, nil
+}
+
 type fakeTaskQueue struct {
 	messages []TaskQueueMessage
 	err      error
@@ -160,6 +173,9 @@ func TestCreateTaskReturns202AndTaskID(t *testing.T) {
 	if payload["status"] != "QUEUED" {
 		t.Fatalf("expected status QUEUED, got %#v", payload["status"])
 	}
+	assertExactJSONKeys(t, payload, "task_id", "status")
+	assertJSONValueType(t, payload, "task_id", "string")
+	assertJSONValueType(t, payload, "status", "string")
 }
 
 func TestListTasksReturnsPagination(t *testing.T) {
@@ -344,6 +360,7 @@ func TestCancelTaskReturns404WhenTaskNotFound(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
+	assertErrorResponseShape(t, recorder.Body.Bytes())
 }
 
 func TestCancelTaskReturns409WhenTaskAlreadyTerminal(t *testing.T) {
@@ -529,5 +546,104 @@ func TestDownloadArtifactReturns404WhenArtifactPathInvalid(t *testing.T) {
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	assertErrorResponseShape(t, recorder.Body.Bytes())
+}
+
+func TestDashboardSummaryReturnsSnapshot(t *testing.T) {
+	repo := &fakeTaskStore{
+		summaryCounts: map[string]int{
+			"QUEUED":   2,
+			"RUNNING":  1,
+			"SUCCESS":  3,
+			"FAILED":   1,
+			"CANCELED": 1,
+		},
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/dashboard/summary", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode summary response: %v", err)
+	}
+	assertExactJSONKeys(
+		t,
+		payload,
+		"total_tasks",
+		"queued_tasks",
+		"running_tasks",
+		"success_tasks",
+		"failed_tasks",
+		"canceled_tasks",
+		"active_tasks",
+		"finished_tasks",
+		"success_rate",
+	)
+}
+
+func assertErrorResponseShape(t *testing.T, body []byte) {
+	t.Helper()
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	assertExactJSONKeys(t, payload, "error")
+	assertJSONValueType(t, payload, "error", "string")
+}
+
+func assertExactJSONKeys(t *testing.T, payload map[string]any, expected ...string) {
+	t.Helper()
+
+	if len(payload) != len(expected) {
+		t.Fatalf("unexpected key count: got=%d expected=%d payload=%v", len(payload), len(expected), payload)
+	}
+	for _, key := range expected {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("missing expected key %q in payload=%v", key, payload)
+		}
+	}
+}
+
+func assertJSONValueType(t *testing.T, payload map[string]any, key string, expectedType string) {
+	t.Helper()
+
+	value, ok := payload[key]
+	if !ok {
+		t.Fatalf("missing key %q in payload=%v", key, payload)
+	}
+
+	switch expectedType {
+	case "string":
+		if _, ok := value.(string); !ok {
+			t.Fatalf("expected key %q to be string, got %T (%#v)", key, value, value)
+		}
+	case "number":
+		if _, ok := value.(float64); !ok {
+			t.Fatalf("expected key %q to be number, got %T (%#v)", key, value, value)
+		}
+	case "bool":
+		if _, ok := value.(bool); !ok {
+			t.Fatalf("expected key %q to be bool, got %T (%#v)", key, value, value)
+		}
+	case "object":
+		if _, ok := value.(map[string]any); !ok {
+			t.Fatalf("expected key %q to be object, got %T (%#v)", key, value, value)
+		}
+	case "array":
+		if _, ok := value.([]any); !ok {
+			t.Fatalf("expected key %q to be array, got %T (%#v)", key, value, value)
+		}
+	default:
+		t.Fatalf("unsupported expected type assertion %q", expectedType)
 	}
 }

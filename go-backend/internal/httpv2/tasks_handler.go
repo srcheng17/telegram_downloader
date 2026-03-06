@@ -70,6 +70,10 @@ type TaskStore interface {
 	MarkTaskFailed(ctx context.Context, taskID, message string) error
 }
 
+type TaskSummaryStore interface {
+	GetTaskStatusCounts(ctx context.Context) (map[string]int, error)
+}
+
 type TaskQueueMessage struct {
 	TaskID string
 	Token  string
@@ -81,6 +85,18 @@ type TaskQueue interface {
 
 type ArtifactService interface {
 	OpenArtifact(resultZipPath string) (*service.OpenedV2Artifact, error)
+}
+
+type DashboardSummary struct {
+	TotalTasks    int     `json:"total_tasks"`
+	QueuedTasks   int     `json:"queued_tasks"`
+	RunningTasks  int     `json:"running_tasks"`
+	SuccessTasks  int     `json:"success_tasks"`
+	FailedTasks   int     `json:"failed_tasks"`
+	CanceledTasks int     `json:"canceled_tasks"`
+	ActiveTasks   int     `json:"active_tasks"`
+	FinishedTasks int     `json:"finished_tasks"`
+	SuccessRate   float64 `json:"success_rate"`
 }
 
 type TasksHandler struct {
@@ -226,6 +242,28 @@ func (h *TasksHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, task)
+}
+
+func (h *TasksHandler) GetDashboardSummary(w http.ResponseWriter, r *http.Request) {
+	if h.store == nil {
+		writeError(w, http.StatusInternalServerError, "task store is not configured")
+		return
+	}
+
+	summaryStore, ok := any(h.store).(TaskSummaryStore)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "task summary store is not configured")
+		return
+	}
+
+	statusCounts, err := summaryStore.GetTaskStatusCounts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get dashboard summary")
+		return
+	}
+
+	summary := buildDashboardSummary(statusCounts)
+	writeJSON(w, http.StatusOK, summary)
 }
 
 func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
@@ -528,6 +566,39 @@ func (s *PostgresTaskStore) GetTask(ctx context.Context, taskID string) (*Task, 
 	return &task, nil
 }
 
+func (s *PostgresTaskStore) GetTaskStatusCounts(ctx context.Context) (map[string]int, error) {
+	if s.db == nil {
+		return nil, errors.New("v2 task database is not configured")
+	}
+
+	rows, err := s.db.Query(
+		ctx,
+		`
+		SELECT status, COUNT(*)
+		FROM v2_tasks
+		GROUP BY status
+		`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		counts[strings.ToUpper(strings.TrimSpace(status))] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return counts, nil
+}
+
 func (s *PostgresTaskStore) MarkTaskFailed(ctx context.Context, taskID, message string) error {
 	if s.writer == nil {
 		return errors.New("v2 task writer is not configured")
@@ -628,6 +699,47 @@ func normalizeCanonicalURL(url string, canonicalURL *string) string {
 		return strings.TrimSpace(url)
 	}
 	return normalized
+}
+
+func buildDashboardSummary(statusCounts map[string]int) DashboardSummary {
+	safeCount := func(status string) int {
+		value := statusCounts[strings.ToUpper(strings.TrimSpace(status))]
+		if value < 0 {
+			return 0
+		}
+		return value
+	}
+
+	queued := safeCount("QUEUED")
+	running := safeCount("RUNNING")
+	success := safeCount("SUCCESS")
+	failed := safeCount("FAILED")
+	canceled := safeCount("CANCELED")
+
+	total := 0
+	for _, count := range statusCounts {
+		if count > 0 {
+			total += count
+		}
+	}
+	active := queued + running
+	finished := success + failed + canceled
+	successRate := 0.0
+	if finished > 0 {
+		successRate = math.Round((float64(success)/float64(finished))*1000) / 10
+	}
+
+	return DashboardSummary{
+		TotalTasks:    total,
+		QueuedTasks:   queued,
+		RunningTasks:  running,
+		SuccessTasks:  success,
+		FailedTasks:   failed,
+		CanceledTasks: canceled,
+		ActiveTasks:   active,
+		FinishedTasks: finished,
+		SuccessRate:   successRate,
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

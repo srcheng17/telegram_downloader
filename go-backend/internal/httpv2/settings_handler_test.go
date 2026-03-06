@@ -81,6 +81,15 @@ func TestUpdateSettingsPersistsAndReturnsSnapshot(t *testing.T) {
 	if payload.Timeout != 300 || payload.Retries != 0 || payload.ImageConcurrency != 20 {
 		t.Fatalf("expected response snapshot {300,0,20}, got %#v", payload)
 	}
+
+	var payloadMap map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payloadMap); err != nil {
+		t.Fatalf("decode response as map: %v", err)
+	}
+	assertExactJSONKeys(t, payloadMap, "timeout", "retries", "image_concurrency")
+	assertJSONValueType(t, payloadMap, "timeout", "number")
+	assertJSONValueType(t, payloadMap, "retries", "number")
+	assertJSONValueType(t, payloadMap, "image_concurrency", "number")
 }
 
 func TestGetSettingsReturnsSnapshot(t *testing.T) {
@@ -110,6 +119,12 @@ func TestGetSettingsReturnsSnapshot(t *testing.T) {
 	if payload.Timeout != 66 || payload.Retries != 7 || payload.ImageConcurrency != 5 {
 		t.Fatalf("unexpected snapshot %#v", payload)
 	}
+
+	var payloadMap map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payloadMap); err != nil {
+		t.Fatalf("decode response as map: %v", err)
+	}
+	assertExactJSONKeys(t, payloadMap, "timeout", "retries", "image_concurrency")
 }
 
 func TestUpdateSettingsReturns400OnBadJSON(t *testing.T) {
@@ -126,6 +141,7 @@ func TestUpdateSettingsReturns400OnBadJSON(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
+	assertErrorResponseShape(t, recorder.Body.Bytes())
 }
 
 func TestUpdateSettingsReturns400WhenMissingField(t *testing.T) {
@@ -149,6 +165,7 @@ func TestUpdateSettingsReturns400WhenMissingField(t *testing.T) {
 	if len(store.updateCalls) != 0 {
 		t.Fatalf("expected no update calls, got %d", len(store.updateCalls))
 	}
+	assertErrorResponseShape(t, recorder.Body.Bytes())
 }
 
 func TestUpdateSettingsReturns400OnUnknownField(t *testing.T) {
@@ -169,6 +186,7 @@ func TestUpdateSettingsReturns400OnUnknownField(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
+	assertErrorResponseShape(t, recorder.Body.Bytes())
 }
 
 func TestGetSettingsReturns500OnStoreError(t *testing.T) {
@@ -185,4 +203,5 @@ func TestGetSettingsReturns500OnStoreError(t *testing.T) {
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
+	assertErrorResponseShape(t, recorder.Body.Bytes())
 }
