@@ -80,6 +80,10 @@ func NewV2Executor(cfg V2ExecutorConfig) *V2Executor {
 }
 
 func (e *V2Executor) Execute(ctx context.Context, taskID, token string) error {
+	return e.executeAttempt(ctx, taskID, token, false)
+}
+
+func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, allowRunning bool) error {
 	if e == nil {
 		return errors.New("v2 executor is required")
 	}
@@ -109,9 +113,6 @@ func (e *V2Executor) Execute(ctx context.Context, taskID, token string) error {
 	if strings.TrimSpace(snapshot.EnqueueToken) != token {
 		return nil
 	}
-	if strings.TrimSpace(snapshot.URL) == "" {
-		return fmt.Errorf("task %s has empty url", taskID)
-	}
 
 	status := strings.TrimSpace(snapshot.Status)
 	switch status {
@@ -130,10 +131,16 @@ func (e *V2Executor) Execute(ctx context.Context, taskID, token string) error {
 			return err
 		}
 	case string(domainv2.StatusRunning):
+		if !allowRunning {
+			return nil
+		}
 		// Recoverable state: previous run may have succeeded claim but failed to persist terminal status.
 	default:
 		// Terminal/non-recoverable statuses are ignored by this executor path.
 		return nil
+	}
+	if strings.TrimSpace(snapshot.URL) == "" {
+		return fmt.Errorf("task %s has empty url", taskID)
 	}
 
 	attempts := e.maxAttempts()
@@ -275,7 +282,7 @@ func (e *V2Executor) executeWithRetry(ctx context.Context, msg queuev2.TaskMessa
 	var lastErr error
 	attempts := e.runRetryAttempts()
 	for attempt := 1; attempt <= attempts; attempt++ {
-		lastErr = e.Execute(ctx, msg.TaskID, msg.Token)
+		lastErr = e.executeAttempt(ctx, msg.TaskID, msg.Token, attempt > 1)
 		if lastErr == nil {
 			return nil
 		}

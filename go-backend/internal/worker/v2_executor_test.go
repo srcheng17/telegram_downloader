@@ -285,6 +285,59 @@ func TestRunRetryRecoversRunningTaskAfterTerminalTransitionFailure(t *testing.T)
 	}
 }
 
+func TestExecuteFirstAttemptSkipsRunningTaskToAvoidConcurrentReexecution(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-running-first"] = v2ExecutorTaskRecord{
+		id:           "task-running-first",
+		url:          "https://telegra.ph/demo-running-first",
+		status:       "RUNNING",
+		enqueueToken: "token-running-first",
+	}
+
+	downloader := &fakeV2ExecutorDownloader{artifactPath: "/tmp/task-running-first.cbz"}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-first",
+		Download: downloader,
+	})
+
+	err := executor.Execute(context.Background(), "task-running-first", "token-running-first")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if downloader.calls != 0 {
+		t.Fatalf("expected first-attempt RUNNING task to skip downloader, got %d calls", downloader.calls)
+	}
+	if len(repo.statusUpdates) != 0 {
+		t.Fatalf("expected no transition for first-attempt RUNNING task, got %d", len(repo.statusUpdates))
+	}
+}
+
+func TestExecuteIgnoresTerminalTaskWithEmptyURL(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-terminal-empty-url"] = v2ExecutorTaskRecord{
+		id:           "task-terminal-empty-url",
+		url:          "",
+		status:       "FAILED",
+		enqueueToken: "token-terminal-empty-url",
+	}
+
+	downloader := &fakeV2ExecutorDownloader{artifactPath: "/tmp/should-not-run.cbz"}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-terminal-empty-url",
+		Download: downloader,
+	})
+
+	err := executor.Execute(context.Background(), "task-terminal-empty-url", "token-terminal-empty-url")
+	if err != nil {
+		t.Fatalf("expected terminal task to be ignored without URL validation noise, got %v", err)
+	}
+	if downloader.calls != 0 {
+		t.Fatalf("expected terminal task to skip downloader, got %d calls", downloader.calls)
+	}
+}
+
 type fakeV2ExecutorDownloader struct {
 	artifactPath string
 	err          error
