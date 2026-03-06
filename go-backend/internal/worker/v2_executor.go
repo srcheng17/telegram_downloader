@@ -106,9 +106,6 @@ func (e *V2Executor) Execute(ctx context.Context, taskID, token string) error {
 	if err != nil {
 		return fmt.Errorf("load v2 task snapshot: %w", err)
 	}
-	if strings.TrimSpace(snapshot.Status) != string(domainv2.StatusQueued) {
-		return nil
-	}
 	if strings.TrimSpace(snapshot.EnqueueToken) != token {
 		return nil
 	}
@@ -116,18 +113,27 @@ func (e *V2Executor) Execute(ctx context.Context, taskID, token string) error {
 		return fmt.Errorf("task %s has empty url", taskID)
 	}
 
-	if err := e.transition(
-		ctx,
-		taskID,
-		string(domainv2.StatusQueued),
-		string(domainv2.StatusRunning),
-		postgres.StatusPatch{ClaimedBy: stringPtrV2Executor(e.worker)},
-		map[string]any{"worker": e.worker},
-	); err != nil {
-		if errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
-			return nil
+	status := strings.TrimSpace(snapshot.Status)
+	switch status {
+	case string(domainv2.StatusQueued):
+		if err := e.transition(
+			ctx,
+			taskID,
+			string(domainv2.StatusQueued),
+			string(domainv2.StatusRunning),
+			postgres.StatusPatch{ClaimedBy: stringPtrV2Executor(e.worker)},
+			map[string]any{"worker": e.worker},
+		); err != nil {
+			if errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
+				return nil
+			}
+			return err
 		}
-		return err
+	case string(domainv2.StatusRunning):
+		// Recoverable state: previous run may have succeeded claim but failed to persist terminal status.
+	default:
+		// Terminal/non-recoverable statuses are ignored by this executor path.
+		return nil
 	}
 
 	attempts := e.maxAttempts()

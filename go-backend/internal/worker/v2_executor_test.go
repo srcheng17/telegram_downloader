@@ -241,6 +241,50 @@ func TestRunRetriesExecuteUntilSuccess(t *testing.T) {
 	}
 }
 
+func TestRunRetryRecoversRunningTaskAfterTerminalTransitionFailure(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-running-recovery"] = v2ExecutorTaskRecord{
+		id:           "task-running-recovery",
+		url:          "https://telegra.ph/demo-running-recovery",
+		status:       "QUEUED",
+		enqueueToken: "token-running-recovery",
+	}
+	repo.eventErrCountByToStatus["FAILED"] = 1
+
+	downloader := &fakeV2ExecutorDownloader{err: errors.New("non-retryable execution failure")}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-running-recovery",
+		Download: downloader,
+	})
+
+	consumer := &fakeV2QueueConsumer{
+		reads: []fakeV2ReadResult{
+			{messages: []queuev2.TaskMessage{{TaskID: "task-running-recovery", Token: "token-running-recovery"}}},
+			{err: context.Canceled},
+		},
+	}
+
+	err := executor.Run(context.Background(), consumer)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	persisted := repo.tasks["task-running-recovery"]
+	if persisted.status != "FAILED" {
+		t.Fatalf("expected run retry to recover RUNNING task into FAILED, got %q", persisted.status)
+	}
+	if len(repo.statusUpdates) != 2 {
+		t.Fatalf("expected QUEUED->RUNNING and RUNNING->FAILED updates, got %d", len(repo.statusUpdates))
+	}
+	if repo.statusUpdates[1].from != "RUNNING" || repo.statusUpdates[1].to != "FAILED" {
+		t.Fatalf("expected second update RUNNING->FAILED, got %s->%s", repo.statusUpdates[1].from, repo.statusUpdates[1].to)
+	}
+	if repo.getTaskCalls != 2 {
+		t.Fatalf("expected execute retried after terminal failure, got getTaskCalls=%d", repo.getTaskCalls)
+	}
+}
+
 type fakeV2ExecutorDownloader struct {
 	artifactPath string
 	err          error
@@ -272,6 +316,7 @@ type fakeV2ExecutorRepo struct {
 
 	getTaskErrSequence          []error
 	eventErrByToStatus          map[string]error
+	eventErrCountByToStatus     map[string]int
 	failTerminalWhenCtxCanceled bool
 	getTaskCalls                int
 }
@@ -302,8 +347,9 @@ type v2ExecutorTaskEvent struct {
 
 func newFakeV2ExecutorRepo() *fakeV2ExecutorRepo {
 	return &fakeV2ExecutorRepo{
-		tasks:              map[string]v2ExecutorTaskRecord{},
-		eventErrByToStatus: map[string]error{},
+		tasks:                   map[string]v2ExecutorTaskRecord{},
+		eventErrByToStatus:      map[string]error{},
+		eventErrCountByToStatus: map[string]int{},
 	}
 }
 
@@ -343,7 +389,15 @@ func (f *fakeV2ExecutorRepo) TransitionTaskWithEvent(
 	if f.failTerminalWhenCtxCanceled && ctx.Err() != nil && (in.ToStatus == "SUCCESS" || in.ToStatus == "FAILED") {
 		return ctx.Err()
 	}
-	if err, ok := f.eventErrByToStatus[strings.TrimSpace(in.ToStatus)]; ok {
+	toStatus := strings.TrimSpace(in.ToStatus)
+	if remaining := f.eventErrCountByToStatus[toStatus]; remaining > 0 {
+		f.eventErrCountByToStatus[toStatus] = remaining - 1
+		if err, ok := f.eventErrByToStatus[toStatus]; ok {
+			return err
+		}
+		return errors.New("simulated transition failure")
+	}
+	if err, ok := f.eventErrByToStatus[toStatus]; ok {
 		return err
 	}
 
@@ -373,11 +427,11 @@ func (f *fakeV2ExecutorRepo) TransitionTaskWithEvent(
 		patch: in.Patch,
 	})
 	fromStatus := in.FromStatus
-	toStatus := in.ToStatus
+	toStatusCopy := in.ToStatus
 	f.events = append(f.events, v2ExecutorTaskEvent{
 		taskID:      in.TaskID,
 		fromStatus:  &fromStatus,
-		toStatus:    &toStatus,
+		toStatus:    &toStatusCopy,
 		payloadJSON: in.PayloadJSON,
 	})
 	return nil
