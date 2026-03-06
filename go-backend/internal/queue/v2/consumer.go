@@ -39,8 +39,12 @@ func (c *Consumer) Read(ctx context.Context, count int64, block time.Duration) (
 		count = 1
 	}
 
+	// Read is serialized to guarantee cursor monotonicity under concurrent calls.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	streams, err := c.redisClient.XRead(ctx, &redis.XReadArgs{
-		Streams: []string{c.streamName, c.cursor()},
+		Streams: []string{c.streamName, c.lastID},
 		Count:   count,
 		Block:   block,
 	}).Result()
@@ -64,26 +68,12 @@ func (c *Consumer) Read(ctx context.Context, count int64, block time.Duration) (
 	}
 
 	if strings.TrimSpace(lastID) != "" {
-		c.advanceCursor(lastID)
+		c.lastID = lastID
 	}
 	if len(messages) == 0 {
 		return []TaskMessage{}, nil
 	}
 	return messages, nil
-}
-
-func (c *Consumer) cursor() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	return c.lastID
-}
-
-func (c *Consumer) advanceCursor(lastID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.lastID = lastID
 }
 
 func valueAsString(value any) string {

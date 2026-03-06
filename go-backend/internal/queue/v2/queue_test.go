@@ -3,6 +3,7 @@ package v2
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -183,6 +184,85 @@ func TestConsumerReadAdvancesCursorWithoutDuplicates(t *testing.T) {
 	}
 }
 
+func TestConsumerReadConcurrentCallsDoNotDuplicateOrRollback(t *testing.T) {
+	ctx := context.Background()
+
+	mini, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	t.Cleanup(mini.Close)
+
+	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	for i := 1; i <= 2; i++ {
+		_, err = client.XAdd(ctx, &redis.XAddArgs{
+			Stream: "v2-tasks",
+			Values: map[string]any{
+				"task_id": "task-v2-" + string(rune('0'+i)),
+				"token":   "token-v2-" + string(rune('0'+i)),
+			},
+		}).Result()
+		if err != nil {
+			t.Fatalf("seed stream message %d: %v", i, err)
+		}
+	}
+
+	gatedClient := &gatedXReadCmdable{
+		Cmdable:           client,
+		waitForSecondRead: 200 * time.Millisecond,
+	}
+
+	consumer := NewConsumer(gatedClient, "v2-tasks")
+
+	type readResult struct {
+		messages []TaskMessage
+		err      error
+	}
+
+	results := make(chan readResult, 2)
+	start := make(chan struct{})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			messages, err := consumer.Read(ctx, 1, 5*time.Millisecond)
+			results <- readResult{messages: messages, err: err}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	taskIDs := make([]string, 0, 2)
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("read failed: %v", result.err)
+		}
+		if len(result.messages) != 1 {
+			t.Fatalf("expected each read to return one message, got %d", len(result.messages))
+		}
+		taskIDs = append(taskIDs, result.messages[0].TaskID)
+	}
+
+	seen := map[string]int{}
+	for _, taskID := range taskIDs {
+		seen[taskID]++
+	}
+
+	if seen["task-v2-1"] != 1 {
+		t.Fatalf("expected task-v2-1 consumed once, got counts %#v", seen)
+	}
+	if seen["task-v2-2"] != 1 {
+		t.Fatalf("expected task-v2-2 consumed once, got counts %#v", seen)
+	}
+}
+
 func TestConsumerReadReturnsEmptySliceWhenNoMessage(t *testing.T) {
 	ctx := context.Background()
 
@@ -203,4 +283,47 @@ func TestConsumerReadReturnsEmptySliceWhenNoMessage(t *testing.T) {
 	if len(messages) != 0 {
 		t.Fatalf("expected empty messages, got %d", len(messages))
 	}
+}
+
+type gatedXReadCmdable struct {
+	redis.Cmdable
+	waitForSecondRead time.Duration
+
+	mu         sync.Mutex
+	xReadCalls int
+
+	secondReadReached sync.Once
+	secondReadSignal  chan struct{}
+}
+
+func (g *gatedXReadCmdable) XRead(ctx context.Context, args *redis.XReadArgs) *redis.XStreamSliceCmd {
+	g.mu.Lock()
+	g.xReadCalls++
+	call := g.xReadCalls
+	g.mu.Unlock()
+
+	if call == 1 {
+		select {
+		case <-g.ensureSecondReadSignal():
+		case <-time.After(g.waitForSecondRead):
+		case <-ctx.Done():
+		}
+	}
+
+	if call == 2 {
+		g.secondReadReached.Do(func() { close(g.ensureSecondReadSignal()) })
+	}
+
+	return g.Cmdable.XRead(ctx, args)
+}
+
+func (g *gatedXReadCmdable) ensureSecondReadSignal() chan struct{} {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.secondReadSignal == nil {
+		g.secondReadSignal = make(chan struct{})
+	}
+
+	return g.secondReadSignal
 }
