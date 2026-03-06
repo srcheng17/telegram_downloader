@@ -18,4 +18,12 @@ func RegisterRoutes(r chi.Router, h *TasksHandler) {
 	r.Get("/v2/tasks/{task_id}", h.GetTask)
 	r.Post("/v2/tasks/{task_id}/cancel", h.CancelTask)
 	r.Get("/v2/tasks/{task_id}/artifact", h.DownloadArtifact)
+
+	var settingsStore SettingsStore
+	if h != nil {
+		if typed, ok := any(h.store).(SettingsStore); ok {
+			settingsStore = typed
+		}
+	}
+	RegisterSettingsRoutes(r, NewSettingsHandler(settingsStore))
 }

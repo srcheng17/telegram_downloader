@@ -8,6 +8,25 @@ import (
 	"time"
 )
 
+const (
+	defaultTimeoutSeconds   = 30
+	defaultRetries          = 10
+	defaultImageConcurrency = 2
+
+	minTimeoutSeconds   = 1
+	maxTimeoutSeconds   = 300
+	minRetries          = 0
+	maxRetries          = 20
+	minImageConcurrency = 1
+	maxImageConcurrency = 20
+)
+
+type SettingsSnapshot struct {
+	Timeout          int `json:"timeout"`
+	Retries          int `json:"retries"`
+	ImageConcurrency int `json:"image_concurrency"`
+}
+
 type Config struct {
 	Addr             string
 	DatabaseURL      string
@@ -72,6 +91,13 @@ func LoadFromEnv() (Config, error) {
 		consumerName = strings.TrimSpace(os.Getenv("HOSTNAME"))
 	}
 
+	defaultSettings := DefaultSettingsSnapshot()
+	settings := NormalizeSettingsSnapshot(SettingsSnapshot{
+		Timeout:          parseIntEnv("GO_DOWNLOAD_TIMEOUT", defaultSettings.Timeout),
+		Retries:          parseIntEnv("GO_DOWNLOAD_RETRIES", defaultSettings.Retries),
+		ImageConcurrency: parseIntEnv("GO_IMAGE_CONCURRENCY", defaultSettings.ImageConcurrency),
+	})
+
 	return Config{
 		Addr:             addr,
 		DatabaseURL:      databaseURL,
@@ -82,9 +108,9 @@ func LoadFromEnv() (Config, error) {
 		ConsumerName:     consumerName,
 		UpstreamBaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("PYTHON_WEB_BASE_URL")), "/"),
 		InternalToken:    strings.TrimSpace(os.Getenv("INTERNAL_ENQUEUE_TOKEN")),
-		DownloadTimeout:  parseIntEnv("GO_DOWNLOAD_TIMEOUT", 30),
-		DownloadRetries:  parseIntEnv("GO_DOWNLOAD_RETRIES", 10),
-		ImageConcurrency: parseIntEnv("GO_IMAGE_CONCURRENCY", 2),
+		DownloadTimeout:  settings.Timeout,
+		DownloadRetries:  settings.Retries,
+		ImageConcurrency: settings.ImageConcurrency,
 		ReadTimeout:      15 * time.Second,
 		WriteTimeout:     30 * time.Second,
 		IdleTimeout:      60 * time.Second,
@@ -107,4 +133,30 @@ func parseIntEnv(name string, defaultValue int) int {
 		return defaultValue
 	}
 	return parsed
+}
+
+func DefaultSettingsSnapshot() SettingsSnapshot {
+	return SettingsSnapshot{
+		Timeout:          defaultTimeoutSeconds,
+		Retries:          defaultRetries,
+		ImageConcurrency: defaultImageConcurrency,
+	}
+}
+
+func NormalizeSettingsSnapshot(input SettingsSnapshot) SettingsSnapshot {
+	return SettingsSnapshot{
+		Timeout:          clampInt(input.Timeout, minTimeoutSeconds, maxTimeoutSeconds),
+		Retries:          clampInt(input.Retries, minRetries, maxRetries),
+		ImageConcurrency: clampInt(input.ImageConcurrency, minImageConcurrency, maxImageConcurrency),
+	}
+}
+
+func clampInt(value, minValue, maxValue int) int {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
