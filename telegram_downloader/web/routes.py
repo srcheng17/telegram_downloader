@@ -4,7 +4,7 @@ import os
 from urllib.parse import quote
 
 import requests
-from flask import jsonify, redirect, render_template, request, send_file, url_for
+from flask import jsonify, redirect, render_template, request, send_file, stream_with_context, url_for
 
 from telegram_downloader.constants import (
     ACTIVE_TASK_STATUSES,
@@ -49,6 +49,7 @@ def register_routes(app, runtime):
                 data=request_body,
                 timeout=15,
                 allow_redirects=False,
+                stream=True,
             )
         except requests.RequestException as exc:
             app.logger.warning(
@@ -59,11 +60,19 @@ def register_routes(app, runtime):
             )
             return jsonify({"error": "upstream unavailable"}), 502
 
-        response_body = b""
-        if request.method != "HEAD":
-            response_body = upstream.content
+        if request.method == "HEAD":
+            response = app.response_class(status=upstream.status_code)
+        else:
+            @stream_with_context
+            def _stream_body():
+                try:
+                    for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            yield chunk
+                finally:
+                    upstream.close()
 
-        response = app.response_class(response=response_body, status=upstream.status_code)
+            response = app.response_class(response=_stream_body(), status=upstream.status_code)
         for header_name in (
             "Content-Type",
             "Content-Disposition",
@@ -75,6 +84,8 @@ def register_routes(app, runtime):
             header_value = upstream.headers.get(header_name)
             if header_value:
                 response.headers[header_name] = header_value
+        if request.method == "HEAD":
+            upstream.close()
         return response
 
     def _is_safe_download_path(file_path):
