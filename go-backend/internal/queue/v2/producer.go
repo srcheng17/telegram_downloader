@@ -29,11 +29,20 @@ func (p *Producer) Produce(ctx context.Context, msg TaskMessage) error {
 		return errors.New("v2 queue producer requires stream name")
 	}
 
+	taskID := strings.TrimSpace(msg.TaskID)
+	if taskID == "" {
+		return errors.New("task message task_id is required")
+	}
+	token := strings.TrimSpace(msg.Token)
+	if token == "" {
+		return errors.New("task message token is required")
+	}
+
 	if _, err := p.redisClient.XAdd(ctx, &redis.XAddArgs{
 		Stream: p.streamName,
 		Values: map[string]any{
-			"task_id": msg.TaskID,
-			"token":   msg.Token,
+			"task_id": taskID,
+			"token":   token,
 		},
 	}).Result(); err != nil {
 		return fmt.Errorf("produce task message: %w", err)
