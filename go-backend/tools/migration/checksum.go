@@ -2,9 +2,12 @@ package migration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"math"
 	"strings"
 	"time"
@@ -13,10 +16,18 @@ import (
 const defaultBatchSize = 200
 
 type MigrationStats struct {
-	LegacyTotal   int
+	LegacyTotal int
+
 	MigratedTasks int
 	V2TasksTotal  int
-	V2EventsTotal int
+
+	LegacyTasksChecksum string
+	V2TasksChecksum     string
+
+	LegacyMigratedEventsTotal    int
+	V2MigratedEventsTotal        int
+	LegacyMigratedEventsChecksum string
+	V2MigratedEventsChecksum     string
 }
 
 type Migrator struct {
@@ -43,7 +54,10 @@ func (m Migrator) Run(ctx context.Context) (MigrationStats, error) {
 		return MigrationStats{}, fmt.Errorf("count legacy tasks: %w", err)
 	}
 
+	expectedTasksChecksum := newChecksumBuilder()
+	expectedMigratedEventsChecksum := newChecksumBuilder()
 	migratedTasks := 0
+
 	for offset := 0; ; offset += batchSize {
 		legacyTasks, err := m.Reader.ReadLegacyTasks(ctx, offset, batchSize)
 		if err != nil {
@@ -64,7 +78,7 @@ func (m Migrator) Run(ctx context.Context) (MigrationStats, error) {
 				canonicalURL = normalizedURL
 			}
 
-			v2Tasks = append(v2Tasks, V2Task{
+			mappedTask := V2Task{
 				ID:            strings.TrimSpace(legacy.ID),
 				URL:           normalizedURL,
 				CanonicalURL:  canonicalURL,
@@ -74,21 +88,28 @@ func (m Migrator) Run(ctx context.Context) (MigrationStats, error) {
 				ResultZipPath: legacy.ResultZipPath,
 				CreatedAt:     createdAt,
 				UpdatedAt:     createdAt,
-			})
+			}
+			v2Tasks = append(v2Tasks, mappedTask)
+			if err := expectedTasksChecksum.AddTask(mappedTask); err != nil {
+				return MigrationStats{}, fmt.Errorf("add expected task checksum: %w", err)
+			}
 
 			sourceStatus := strings.ToUpper(strings.TrimSpace(legacy.Status))
 			if sourceStatus == "" {
 				sourceStatus = "UNKNOWN"
 			}
-			targetStatus := mappedStatus
-			v2Events = append(v2Events, V2TaskEvent{
+			migratedEvent := V2TaskEvent{
 				TaskID:      strings.TrimSpace(legacy.ID),
 				EventType:   "MIGRATED",
 				FromStatus:  stringPtr(sourceStatus),
-				ToStatus:    stringPtr(targetStatus),
+				ToStatus:    stringPtr(mappedStatus),
 				PayloadJSON: migrateEventPayload(sourceStatus),
 				CreatedAt:   createdAt,
-			})
+			}
+			v2Events = append(v2Events, migratedEvent)
+			if err := expectedMigratedEventsChecksum.AddMigratedEvent(migratedEvent); err != nil {
+				return MigrationStats{}, fmt.Errorf("add expected migrated event checksum: %w", err)
+			}
 		}
 
 		if err := m.Writer.WriteV2Batch(ctx, v2Tasks, v2Events); err != nil {
@@ -105,23 +126,62 @@ func (m Migrator) Run(ctx context.Context) (MigrationStats, error) {
 	if err != nil {
 		return MigrationStats{}, fmt.Errorf("count v2 tasks: %w", err)
 	}
-	v2EventsTotal, err := m.Writer.CountV2Events(ctx)
+	v2MigratedEventsTotal, err := m.Writer.CountV2MigratedEvents(ctx)
 	if err != nil {
-		return MigrationStats{}, fmt.Errorf("count v2 task events: %w", err)
+		return MigrationStats{}, fmt.Errorf("count v2 migrated events: %w", err)
 	}
-	if err := ValidateMigrationCounts(legacyTotal, v2TasksTotal, v2EventsTotal); err != nil {
+	v2TasksChecksum, err := m.Writer.ChecksumV2Tasks(ctx)
+	if err != nil {
+		return MigrationStats{}, fmt.Errorf("checksum v2 tasks: %w", err)
+	}
+	v2MigratedEventsChecksum, err := m.Writer.ChecksumV2MigratedEvents(ctx)
+	if err != nil {
+		return MigrationStats{}, fmt.Errorf("checksum v2 migrated events: %w", err)
+	}
+
+	expectedTasksValue := expectedTasksChecksum.SumHex()
+	expectedMigratedEventsValue := expectedMigratedEventsChecksum.SumHex()
+	expectedMigratedEventsTotal := expectedMigratedEventsChecksum.Count()
+
+	if err := ValidateMigrationChecksums(
+		legacyTotal,
+		v2TasksTotal,
+		expectedTasksValue,
+		v2TasksChecksum,
+		expectedMigratedEventsTotal,
+		v2MigratedEventsTotal,
+		expectedMigratedEventsValue,
+		v2MigratedEventsChecksum,
+	); err != nil {
 		return MigrationStats{}, err
 	}
 
 	return MigrationStats{
-		LegacyTotal:   legacyTotal,
+		LegacyTotal: legacyTotal,
+
 		MigratedTasks: migratedTasks,
 		V2TasksTotal:  v2TasksTotal,
-		V2EventsTotal: v2EventsTotal,
+
+		LegacyTasksChecksum: expectedTasksValue,
+		V2TasksChecksum:     v2TasksChecksum,
+
+		LegacyMigratedEventsTotal:    expectedMigratedEventsTotal,
+		V2MigratedEventsTotal:        v2MigratedEventsTotal,
+		LegacyMigratedEventsChecksum: expectedMigratedEventsValue,
+		V2MigratedEventsChecksum:     v2MigratedEventsChecksum,
 	}, nil
 }
 
-func ValidateMigrationCounts(legacyTotal, v2TasksTotal, v2EventsTotal int) error {
+func ValidateMigrationChecksums(
+	legacyTotal int,
+	v2TasksTotal int,
+	legacyTasksChecksum string,
+	v2TasksChecksum string,
+	legacyMigratedEventsTotal int,
+	v2MigratedEventsTotal int,
+	legacyMigratedEventsChecksum string,
+	v2MigratedEventsChecksum string,
+) error {
 	if legacyTotal != v2TasksTotal {
 		return fmt.Errorf(
 			"migration count mismatch: legacy_tasks=%d v2_tasks=%d",
@@ -129,11 +189,25 @@ func ValidateMigrationCounts(legacyTotal, v2TasksTotal, v2EventsTotal int) error
 			v2TasksTotal,
 		)
 	}
-	if v2EventsTotal < v2TasksTotal {
+	if legacyMigratedEventsTotal != v2MigratedEventsTotal {
 		return fmt.Errorf(
-			"migration event count below minimum: v2_events=%d expected_at_least=%d",
-			v2EventsTotal,
-			v2TasksTotal,
+			"migration migrated-event count mismatch: expected=%d actual=%d",
+			legacyMigratedEventsTotal,
+			v2MigratedEventsTotal,
+		)
+	}
+	if legacyTasksChecksum != v2TasksChecksum {
+		return fmt.Errorf(
+			"migration tasks checksum mismatch: expected=%s actual=%s",
+			legacyTasksChecksum,
+			v2TasksChecksum,
+		)
+	}
+	if legacyMigratedEventsChecksum != v2MigratedEventsChecksum {
+		return fmt.Errorf(
+			"migration migrated-event checksum mismatch: expected=%s actual=%s",
+			legacyMigratedEventsChecksum,
+			v2MigratedEventsChecksum,
 		)
 	}
 	return nil
@@ -196,4 +270,70 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+type checksumBuilder struct {
+	hash  hash.Hash
+	count int
+}
+
+func newChecksumBuilder() *checksumBuilder {
+	return &checksumBuilder{hash: sha256.New()}
+}
+
+func (b *checksumBuilder) AddTask(task V2Task) error {
+	return b.addRecord(taskChecksumRecord{
+		ID:            strings.TrimSpace(task.ID),
+		URL:           strings.TrimSpace(task.URL),
+		CanonicalURL:  strings.TrimSpace(task.CanonicalURL),
+		Status:        strings.TrimSpace(task.Status),
+		Error:         stringValue(task.Error),
+		ResultZipPath: stringValue(task.ResultZipPath),
+	})
+}
+
+func (b *checksumBuilder) AddMigratedEvent(event V2TaskEvent) error {
+	return b.addRecord(migratedEventChecksumRecord{
+		TaskID:      strings.TrimSpace(event.TaskID),
+		EventType:   strings.TrimSpace(event.EventType),
+		FromStatus:  stringValue(event.FromStatus),
+		ToStatus:    stringValue(event.ToStatus),
+		PayloadJSON: strings.TrimSpace(event.PayloadJSON),
+	})
+}
+
+func (b *checksumBuilder) addRecord(record any) error {
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	_, _ = b.hash.Write(encoded)
+	_, _ = b.hash.Write([]byte{'\n'})
+	b.count++
+	return nil
+}
+
+func (b *checksumBuilder) SumHex() string {
+	return hex.EncodeToString(b.hash.Sum(nil))
+}
+
+func (b *checksumBuilder) Count() int {
+	return b.count
+}
+
+type taskChecksumRecord struct {
+	ID            string `json:"id"`
+	URL           string `json:"url"`
+	CanonicalURL  string `json:"canonical_url"`
+	Status        string `json:"status"`
+	Error         string `json:"error"`
+	ResultZipPath string `json:"result_zip_path"`
+}
+
+type migratedEventChecksumRecord struct {
+	TaskID      string `json:"task_id"`
+	EventType   string `json:"event_type"`
+	FromStatus  string `json:"from_status"`
+	ToStatus    string `json:"to_status"`
+	PayloadJSON string `json:"payload_json"`
 }

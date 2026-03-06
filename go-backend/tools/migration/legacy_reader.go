@@ -63,7 +63,7 @@ func (r *PostgresLegacyReader) ReadLegacyTasks(ctx context.Context, offset, limi
 			error,
 			result_zip_path
 		FROM tasks
-		ORDER BY start_time ASC, id ASC
+		ORDER BY id ASC
 		LIMIT $1 OFFSET $2
 		`,
 		limit,

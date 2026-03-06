@@ -33,11 +33,14 @@ type V2TaskEvent struct {
 type V2Writer interface {
 	WriteV2Batch(ctx context.Context, tasks []V2Task, events []V2TaskEvent) error
 	CountV2Tasks(ctx context.Context) (int, error)
-	CountV2Events(ctx context.Context) (int, error)
+	CountV2MigratedEvents(ctx context.Context) (int, error)
+	ChecksumV2Tasks(ctx context.Context) (string, error)
+	ChecksumV2MigratedEvents(ctx context.Context) (string, error)
 }
 
 type v2WriterDB interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
@@ -178,10 +181,87 @@ func (w *PostgresV2Writer) CountV2Tasks(ctx context.Context) (int, error) {
 	return total, nil
 }
 
-func (w *PostgresV2Writer) CountV2Events(ctx context.Context) (int, error) {
+func (w *PostgresV2Writer) CountV2MigratedEvents(ctx context.Context) (int, error) {
 	var total int
-	if err := w.db.QueryRow(ctx, `SELECT COUNT(*) FROM v2_task_events`).Scan(&total); err != nil {
+	if err := w.db.QueryRow(
+		ctx,
+		`SELECT COUNT(*) FROM v2_task_events WHERE event_type = 'MIGRATED'`,
+	).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
+}
+
+func (w *PostgresV2Writer) ChecksumV2Tasks(ctx context.Context) (string, error) {
+	rows, err := w.db.Query(
+		ctx,
+		`
+		SELECT id, url, canonical_url, status, error, result_zip_path
+		FROM v2_tasks
+		ORDER BY id ASC
+		`,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	builder := newChecksumBuilder()
+	for rows.Next() {
+		var task V2Task
+		if err := rows.Scan(
+			&task.ID,
+			&task.URL,
+			&task.CanonicalURL,
+			&task.Status,
+			&task.Error,
+			&task.ResultZipPath,
+		); err != nil {
+			return "", err
+		}
+		if err := builder.AddTask(task); err != nil {
+			return "", err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return builder.SumHex(), nil
+}
+
+func (w *PostgresV2Writer) ChecksumV2MigratedEvents(ctx context.Context) (string, error) {
+	rows, err := w.db.Query(
+		ctx,
+		`
+		SELECT task_id, event_type, from_status, to_status, payload_json::text
+		FROM v2_task_events
+		WHERE event_type = 'MIGRATED'
+		ORDER BY task_id ASC, id ASC
+		`,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	builder := newChecksumBuilder()
+	for rows.Next() {
+		var event V2TaskEvent
+		if err := rows.Scan(
+			&event.TaskID,
+			&event.EventType,
+			&event.FromStatus,
+			&event.ToStatus,
+			&event.PayloadJSON,
+		); err != nil {
+			return "", err
+		}
+		if err := builder.AddMigratedEvent(event); err != nil {
+			return "", err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return builder.SumHex(), nil
 }

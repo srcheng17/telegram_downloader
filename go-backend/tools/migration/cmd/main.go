@@ -41,10 +41,15 @@ func main() {
 	}
 
 	fmt.Printf(
-		"migration completed legacy_total=%d migrated_tasks=%d v2_tasks_total=%d v2_events_total=%d\n",
+		"migration completed legacy_total=%d migrated_tasks=%d v2_tasks_total=%d legacy_tasks_checksum=%s v2_tasks_checksum=%s legacy_migrated_events_total=%d v2_migrated_events_total=%d legacy_migrated_events_checksum=%s v2_migrated_events_checksum=%s\n",
 		stats.LegacyTotal,
 		stats.MigratedTasks,
 		stats.V2TasksTotal,
-		stats.V2EventsTotal,
+		stats.LegacyTasksChecksum,
+		stats.V2TasksChecksum,
+		stats.LegacyMigratedEventsTotal,
+		stats.V2MigratedEventsTotal,
+		stats.LegacyMigratedEventsChecksum,
+		stats.V2MigratedEventsChecksum,
 	)
 }

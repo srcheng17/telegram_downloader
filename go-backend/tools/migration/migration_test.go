@@ -3,6 +3,8 @@ package migration
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,6 +33,9 @@ func (f *fakeLegacyReader) ReadLegacyTasks(_ context.Context, offset, limit int)
 type fakeV2Writer struct {
 	tasksByID map[string]V2Task
 	events    []V2TaskEvent
+
+	tasksChecksumOverride          string
+	migratedEventsChecksumOverride string
 }
 
 func newFakeV2Writer() *fakeV2Writer {
@@ -52,8 +57,61 @@ func (f *fakeV2Writer) CountV2Tasks(_ context.Context) (int, error) {
 	return len(f.tasksByID), nil
 }
 
-func (f *fakeV2Writer) CountV2Events(_ context.Context) (int, error) {
-	return len(f.events), nil
+func (f *fakeV2Writer) CountV2MigratedEvents(_ context.Context) (int, error) {
+	total := 0
+	for _, event := range f.events {
+		if event.EventType == "MIGRATED" {
+			total++
+		}
+	}
+	return total, nil
+}
+
+func (f *fakeV2Writer) ChecksumV2Tasks(_ context.Context) (string, error) {
+	if f.tasksChecksumOverride != "" {
+		return f.tasksChecksumOverride, nil
+	}
+
+	ids := make([]string, 0, len(f.tasksByID))
+	for id := range f.tasksByID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	builder := newChecksumBuilder()
+	for _, id := range ids {
+		if err := builder.AddTask(f.tasksByID[id]); err != nil {
+			return "", err
+		}
+	}
+	return builder.SumHex(), nil
+}
+
+func (f *fakeV2Writer) ChecksumV2MigratedEvents(_ context.Context) (string, error) {
+	if f.migratedEventsChecksumOverride != "" {
+		return f.migratedEventsChecksumOverride, nil
+	}
+
+	events := make([]V2TaskEvent, 0, len(f.events))
+	for _, event := range f.events {
+		if event.EventType == "MIGRATED" {
+			events = append(events, event)
+		}
+	}
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].TaskID == events[j].TaskID {
+			return i < j
+		}
+		return events[i].TaskID < events[j].TaskID
+	})
+
+	builder := newChecksumBuilder()
+	for _, event := range events {
+		if err := builder.AddMigratedEvent(event); err != nil {
+			return "", err
+		}
+	}
+	return builder.SumHex(), nil
 }
 
 func TestMigrationCopiesAllTasksAndEvents(t *testing.T) {
@@ -95,8 +153,20 @@ func TestMigrationCopiesAllTasksAndEvents(t *testing.T) {
 	if stats.LegacyTotal != 3 || stats.MigratedTasks != 3 || stats.V2TasksTotal != 3 {
 		t.Fatalf("unexpected stats: %#v", stats)
 	}
-	if stats.V2EventsTotal < 3 {
-		t.Fatalf("expected at least 3 events, got %d", stats.V2EventsTotal)
+	if stats.LegacyMigratedEventsTotal != 3 || stats.V2MigratedEventsTotal != 3 {
+		t.Fatalf("unexpected migrated event totals: %#v", stats)
+	}
+	if stats.LegacyTasksChecksum == "" || stats.V2TasksChecksum == "" {
+		t.Fatalf("expected non-empty task checksums, got %#v", stats)
+	}
+	if stats.LegacyMigratedEventsChecksum == "" || stats.V2MigratedEventsChecksum == "" {
+		t.Fatalf("expected non-empty event checksums, got %#v", stats)
+	}
+	if stats.LegacyTasksChecksum != stats.V2TasksChecksum {
+		t.Fatalf("task checksum mismatch in stats: %#v", stats)
+	}
+	if stats.LegacyMigratedEventsChecksum != stats.V2MigratedEventsChecksum {
+		t.Fatalf("event checksum mismatch in stats: %#v", stats)
 	}
 
 	if writer.tasksByID["legacy-1"].Status != "QUEUED" {
@@ -113,16 +183,94 @@ func TestMigrationCopiesAllTasksAndEvents(t *testing.T) {
 	}
 }
 
-func TestValidateMigrationCounts(t *testing.T) {
-	if err := ValidateMigrationCounts(2, 2, 2); err != nil {
+func TestMigrationFailsOnTaskChecksumMismatch(t *testing.T) {
+	reader := &fakeLegacyReader{
+		tasks: []LegacyTask{
+			{
+				ID:        "legacy-1",
+				URL:       "https://telegra.ph/1",
+				Status:    "PENDING",
+				StartTime: 1700000001,
+			},
+		},
+	}
+	writer := newFakeV2Writer()
+	writer.tasksChecksumOverride = "bad-checksum"
+
+	migrator := Migrator{
+		Reader:    reader,
+		Writer:    writer,
+		BatchSize: 1,
+	}
+
+	_, err := migrator.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected checksum mismatch error")
+	}
+	if got := err.Error(); !strings.Contains(got, "tasks checksum mismatch") {
+		t.Fatalf("expected tasks checksum mismatch error, got %q", got)
+	}
+}
+
+func TestMigrationFailsOnMigratedEventChecksumMismatch(t *testing.T) {
+	reader := &fakeLegacyReader{
+		tasks: []LegacyTask{
+			{
+				ID:        "legacy-1",
+				URL:       "https://telegra.ph/1",
+				Status:    "PENDING",
+				StartTime: 1700000001,
+			},
+		},
+	}
+	writer := newFakeV2Writer()
+	writer.migratedEventsChecksumOverride = "bad-event-checksum"
+
+	migrator := Migrator{
+		Reader:    reader,
+		Writer:    writer,
+		BatchSize: 1,
+	}
+
+	_, err := migrator.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected event checksum mismatch error")
+	}
+	if got := err.Error(); !strings.Contains(got, "migrated-event checksum mismatch") {
+		t.Fatalf("expected event checksum mismatch error, got %q", got)
+	}
+}
+
+func TestValidateMigrationChecksums(t *testing.T) {
+	if err := ValidateMigrationChecksums(2, 2, "t", "t", 2, 2, "e", "e"); err != nil {
 		t.Fatalf("expected pass, got %v", err)
 	}
 
-	if err := ValidateMigrationCounts(2, 1, 1); err == nil {
-		t.Fatal("expected mismatch error")
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "task-count-mismatch",
+			err:  ValidateMigrationChecksums(2, 1, "t", "t", 2, 2, "e", "e"),
+		},
+		{
+			name: "migrated-event-count-mismatch",
+			err:  ValidateMigrationChecksums(2, 2, "t", "t", 2, 1, "e", "e"),
+		},
+		{
+			name: "task-checksum-mismatch",
+			err:  ValidateMigrationChecksums(2, 2, "a", "b", 2, 2, "e", "e"),
+		},
+		{
+			name: "event-checksum-mismatch",
+			err:  ValidateMigrationChecksums(2, 2, "t", "t", 2, 2, "a", "b"),
+		},
 	}
-	if err := ValidateMigrationCounts(2, 2, 1); err == nil {
-		t.Fatal("expected events lower bound error")
+	for _, tc := range cases {
+		if tc.err == nil {
+			t.Fatalf("expected error for case %s", tc.name)
+		}
 	}
 }
 
