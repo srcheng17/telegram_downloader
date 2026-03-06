@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/service"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
 type fakeTaskStore struct {
@@ -323,6 +324,62 @@ func TestCancelTaskReturnsAccepted(t *testing.T) {
 	}
 }
 
+func TestCancelTaskReturns404WhenTaskNotFound(t *testing.T) {
+	repo := &fakeTaskStore{}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/tasks/not-found/cancel", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCancelTaskReturns409WhenTaskAlreadyTerminal(t *testing.T) {
+	repo := &fakeTaskStore{
+		getTask: &Task{
+			ID:     "task-v2-finished",
+			Status: "SUCCESS",
+		},
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/tasks/task-v2-finished/cancel", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.cancelCalls) != 0 {
+		t.Fatalf("expected no cancel calls for terminal task, got %d", len(repo.cancelCalls))
+	}
+}
+
+func TestCancelTaskReturns409OnStatusConflict(t *testing.T) {
+	repo := &fakeTaskStore{
+		getTask: &Task{
+			ID:     "task-v2-race",
+			Status: "RUNNING",
+		},
+		cancelErr: postgres.ErrV2TaskStatusMismatchOrNotFound,
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/tasks/task-v2-race/cancel", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestDownloadArtifactReturnsFile(t *testing.T) {
 	downloadRoot := t.TempDir()
 	artifactPath := filepath.Join(downloadRoot, "task-v2-artifact.cbz")
@@ -364,5 +421,76 @@ func TestDownloadArtifactReturnsFile(t *testing.T) {
 	}
 	if string(body) != "artifact-bytes" {
 		t.Fatalf("expected streamed artifact content, got %q", string(body))
+	}
+}
+
+func TestDownloadArtifactReturns409WhenTaskNotSuccess(t *testing.T) {
+	repo := &fakeTaskStore{
+		getTask: &Task{
+			ID:     "task-v2-pending-artifact",
+			Status: "RUNNING",
+		},
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/tasks/task-v2-pending-artifact/artifact", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestDownloadArtifactReturns404WhenArtifactFileMissing(t *testing.T) {
+	downloadRoot := t.TempDir()
+	repo := &fakeTaskStore{
+		getTask: &Task{
+			ID:            "task-v2-missing-artifact",
+			Status:        "SUCCESS",
+			ResultZipPath: stringPtr(filepath.Join(downloadRoot, "missing.cbz")),
+		},
+	}
+	artifactService := service.NewV2ArtifactService(service.V2ArtifactServiceConfig{
+		DownloadRoot: downloadRoot,
+	})
+
+	r := chi.NewRouter()
+	RegisterRoutes(r, NewTasksHandlerWithArtifactService(repo, &fakeTaskQueue{}, artifactService))
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/tasks/task-v2-missing-artifact/artifact", nil)
+	recorder := httptest.NewRecorder()
+
+	r.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestDownloadArtifactReturns404WhenArtifactPathInvalid(t *testing.T) {
+	downloadRoot := t.TempDir()
+	repo := &fakeTaskStore{
+		getTask: &Task{
+			ID:            "task-v2-invalid-artifact",
+			Status:        "SUCCESS",
+			ResultZipPath: stringPtr("../outside.cbz"),
+		},
+	}
+	artifactService := service.NewV2ArtifactService(service.V2ArtifactServiceConfig{
+		DownloadRoot: downloadRoot,
+	})
+
+	r := chi.NewRouter()
+	RegisterRoutes(r, NewTasksHandlerWithArtifactService(repo, &fakeTaskQueue{}, artifactService))
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/tasks/task-v2-invalid-artifact/artifact", nil)
+	recorder := httptest.NewRecorder()
+
+	r.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

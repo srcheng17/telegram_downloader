@@ -264,6 +264,10 @@ func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CancelTask(r.Context(), taskID, status); err != nil {
+		if errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
+			writeError(w, http.StatusConflict, "task status conflict")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "cancel task")
 		return
 	}

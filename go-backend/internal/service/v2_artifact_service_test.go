@@ -55,3 +55,31 @@ func TestV2ArtifactServiceReturnsNotFoundForMissingFile(t *testing.T) {
 		t.Fatalf("expected ErrV2ArtifactNotFound, got %v", err)
 	}
 }
+
+func TestV2ArtifactServiceOpensRootPrefixedRelativePath(t *testing.T) {
+	baseDir := t.TempDir()
+	downloadRoot := filepath.Join(baseDir, "downloaded_images")
+	if err := os.MkdirAll(downloadRoot, 0o755); err != nil {
+		t.Fatalf("create download root: %v", err)
+	}
+
+	artifactPath := filepath.Join(downloadRoot, "demo.cbz")
+	if err := os.WriteFile(artifactPath, []byte("prefixed-content"), 0o644); err != nil {
+		t.Fatalf("write artifact fixture: %v", err)
+	}
+
+	svc := NewV2ArtifactService(V2ArtifactServiceConfig{DownloadRoot: downloadRoot})
+	artifact, err := svc.OpenArtifact("downloaded_images/demo.cbz")
+	if err != nil {
+		t.Fatalf("open root-prefixed artifact: %v", err)
+	}
+	t.Cleanup(func() { _ = artifact.Close() })
+
+	content, err := io.ReadAll(artifact.File)
+	if err != nil {
+		t.Fatalf("read artifact bytes: %v", err)
+	}
+	if string(content) != "prefixed-content" {
+		t.Fatalf("expected prefixed-content, got %q", string(content))
+	}
+}

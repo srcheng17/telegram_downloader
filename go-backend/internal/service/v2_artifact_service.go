@@ -83,6 +83,7 @@ func (s *V2ArtifactService) resolveSafePath(resultZipPath string) (string, error
 		return "", ErrV2ArtifactPathInvalid
 	}
 	if !filepath.IsAbs(candidatePath) {
+		candidatePath = normalizeRootPrefixedRelativePath(rootAbs, candidatePath)
 		candidatePath = filepath.Join(rootAbs, candidatePath)
 	}
 
@@ -100,6 +101,23 @@ func (s *V2ArtifactService) resolveSafePath(resultZipPath string) (string, error
 	}
 
 	return candidateAbs, nil
+}
+
+func normalizeRootPrefixedRelativePath(rootAbs, candidatePath string) string {
+	rootName := strings.TrimSpace(filepath.Base(rootAbs))
+	if rootName == "" || rootName == "." || rootName == string(filepath.Separator) {
+		return candidatePath
+	}
+
+	if candidatePath == rootName {
+		return ""
+	}
+
+	prefix := rootName + string(filepath.Separator)
+	if strings.HasPrefix(candidatePath, prefix) {
+		return strings.TrimPrefix(candidatePath, prefix)
+	}
+	return candidatePath
 }
 
 func (s *V2ArtifactService) downloadRootOrDefault() string {
