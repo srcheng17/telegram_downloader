@@ -54,7 +54,7 @@ func main() {
 	store := postgres.NewStore(pool)
 	downloadQueue := redisstream.NewProducer(redisClient, cfg.StreamName)
 	v2Store := httpv2.NewPostgresTaskStore(pool)
-	v2Queue := httpv2.NewV2TaskQueue(queuev2.NewProducer(redisClient, cfg.StreamName))
+	v2Queue := httpv2.NewV2TaskQueue(queuev2.NewProducer(redisClient, cfg.V2StreamName))
 	if cfg.UpstreamBaseURL == "" {
 		log.Printf("PYTHON_WEB_BASE_URL not set, go-api will use local defaults for runtime settings")
 	}

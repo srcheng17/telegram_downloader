@@ -13,6 +13,7 @@ type Config struct {
 	DatabaseURL      string
 	RedisURL         string
 	StreamName       string
+	V2StreamName     string
 	ConsumerGroup    string
 	ConsumerName     string
 	UpstreamBaseURL  string
@@ -56,6 +57,10 @@ func LoadFromEnv() (Config, error) {
 	if streamName == "" {
 		streamName = "download_tasks"
 	}
+	v2StreamName := strings.TrimSpace(os.Getenv("V2_STREAM_NAME"))
+	if v2StreamName == "" {
+		v2StreamName = "download_tasks_v2"
+	}
 
 	consumerGroup := strings.TrimSpace(os.Getenv("CONSUMER_GROUP"))
 	if consumerGroup == "" {
@@ -72,6 +77,7 @@ func LoadFromEnv() (Config, error) {
 		DatabaseURL:      databaseURL,
 		RedisURL:         redisURL,
 		StreamName:       streamName,
+		V2StreamName:     v2StreamName,
 		ConsumerGroup:    consumerGroup,
 		ConsumerName:     consumerName,
 		UpstreamBaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("PYTHON_WEB_BASE_URL")), "/"),

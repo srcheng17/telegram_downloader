@@ -3,6 +3,7 @@ package httpv2
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,14 @@ type fakeTaskStore struct {
 	getCalls []string
 	getTask  *Task
 	getErr   error
+
+	markFailedCalls []markFailedCall
+	markFailedErr   error
+}
+
+type markFailedCall struct {
+	taskID  string
+	message string
 }
 
 func (f *fakeTaskStore) CreateTask(_ context.Context, in CreateTaskInput) (Task, error) {
@@ -48,6 +57,14 @@ func (f *fakeTaskStore) GetTask(_ context.Context, taskID string) (*Task, error)
 		return nil, f.getErr
 	}
 	return f.getTask, nil
+}
+
+func (f *fakeTaskStore) MarkTaskFailed(_ context.Context, taskID, message string) error {
+	f.markFailedCalls = append(f.markFailedCalls, markFailedCall{
+		taskID:  taskID,
+		message: message,
+	})
+	return f.markFailedErr
 }
 
 type fakeTaskQueue struct {
@@ -180,5 +197,37 @@ func TestListTasksReturnsPagination(t *testing.T) {
 	}
 	if payload.Tasks[0].ID != "task-v2-page-2" {
 		t.Fatalf("expected task id task-v2-page-2, got %q", payload.Tasks[0].ID)
+	}
+}
+
+func TestCreateTaskEnqueueFailureCompensatesToFailed(t *testing.T) {
+	repo := &fakeTaskStore{
+		createdTask: Task{
+			ID:           "task-v2-queue-fail",
+			URL:          "https://telegra.ph/demo",
+			CanonicalURL: stringPtr("https://telegra.ph/demo"),
+			Status:       "QUEUED",
+		},
+	}
+	queue := &fakeTaskQueue{err: errors.New("stream unavailable")}
+	handler := NewRouter(repo, queue)
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/tasks", strings.NewReader(`{"url":"https://telegra.ph/demo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.markFailedCalls) != 1 {
+		t.Fatalf("expected one mark-failed call, got %d", len(repo.markFailedCalls))
+	}
+	if repo.markFailedCalls[0].taskID != "task-v2-queue-fail" {
+		t.Fatalf("expected mark-failed task id task-v2-queue-fail, got %q", repo.markFailedCalls[0].taskID)
+	}
+	if !strings.Contains(repo.markFailedCalls[0].message, "stream unavailable") {
+		t.Fatalf("expected mark-failed message to include queue error, got %q", repo.markFailedCalls[0].message)
 	}
 }

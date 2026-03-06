@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -62,6 +63,7 @@ type TaskStore interface {
 	CreateTask(ctx context.Context, in CreateTaskInput) (Task, error)
 	ListTasks(ctx context.Context, in ListTasksQuery) (ListTasksResult, error)
 	GetTask(ctx context.Context, taskID string) (*Task, error)
+	MarkTaskFailed(ctx context.Context, taskID, message string) error
 }
 
 type TaskQueueMessage struct {
@@ -121,6 +123,15 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.queue.Enqueue(r.Context(), TaskQueueMessage{TaskID: task.ID, Token: createInput.EnqueueToken}); err != nil {
+		compensationErr := h.store.MarkTaskFailed(
+			r.Context(),
+			task.ID,
+			fmt.Sprintf("enqueue failed: %v", err),
+		)
+		if compensationErr != nil {
+			writeError(w, http.StatusInternalServerError, "enqueue task")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "enqueue task")
 		return
 	}
@@ -376,6 +387,24 @@ func (s *PostgresTaskStore) GetTask(ctx context.Context, taskID string) (*Task, 
 	}
 
 	return &task, nil
+}
+
+func (s *PostgresTaskStore) MarkTaskFailed(ctx context.Context, taskID, message string) error {
+	if s.writer == nil {
+		return errors.New("v2 task writer is not configured")
+	}
+
+	reason := strings.TrimSpace(message)
+	if reason == "" {
+		reason = "enqueue failed"
+	}
+	return s.writer.UpdateTaskStatus(
+		ctx,
+		strings.TrimSpace(taskID),
+		"QUEUED",
+		"FAILED",
+		postgres.StatusPatch{Error: stringPtr(reason)},
+	)
 }
 
 type V2QueueProducer interface {
