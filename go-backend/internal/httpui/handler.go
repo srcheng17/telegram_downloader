@@ -169,6 +169,7 @@ func (h *Handler) render(w http.ResponseWriter, r *http.Request, templateName st
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	addVaryHeader(w.Header(), "HX-Request")
 	layout := "base.html"
 	if isHTMXRequest(r) {
 		layout = "partial.html"
@@ -177,6 +178,21 @@ func (h *Handler) render(w http.ResponseWriter, r *http.Request, templateName st
 		log.Printf("httpui render template=%s: %v", templateName, err)
 		http.Error(w, "render page", http.StatusInternalServerError)
 	}
+}
+
+func addVaryHeader(header http.Header, value string) {
+	if header == nil {
+		return
+	}
+
+	for _, existing := range header.Values("Vary") {
+		for _, part := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
 }
 
 func isHTMXRequest(r *http.Request) bool {

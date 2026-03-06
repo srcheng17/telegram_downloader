@@ -120,20 +120,55 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 
 func TestHTMXRequestReturnsPageFragment(t *testing.T) {
 	router := NewRouter()
-	req := httptest.NewRequest(http.MethodGet, "/logs", nil)
-	req.Header.Set("HX-Request", "true")
-	recorder := httptest.NewRecorder()
-
-	router.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", recorder.Code)
+	cases := []struct {
+		name    string
+		path    string
+		heading string
+		title   string
+	}{
+		{
+			name:    "index",
+			path:    "/",
+			heading: "发起下载任务",
+			title:   "首页",
+		},
+		{
+			name:    "logs",
+			path:    "/logs",
+			heading: "下载日志",
+			title:   "日志",
+		},
+		{
+			name:    "settings",
+			path:    "/settings",
+			heading: "设置",
+			title:   "设置",
+		},
 	}
-	body := recorder.Body.String()
-	assertContains(t, body, "下载日志")
-	assertNotContains(t, body, "<!DOCTYPE html>")
-	assertNotContains(t, body, "<html")
-	assertNotContains(t, body, `<nav class="main-nav">`)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Header.Set("HX-Request", "true")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", recorder.Code)
+			}
+			if vary := recorder.Header().Get("Vary"); vary != "HX-Request" {
+				t.Fatalf("expected Vary header HX-Request, got %q", vary)
+			}
+
+			body := recorder.Body.String()
+			assertContains(t, body, tc.heading)
+			assertContains(t, body, `<title hx-swap-oob="true">`+tc.title+`</title>`)
+			assertNotContains(t, body, "<!DOCTYPE html>")
+			assertNotContains(t, body, "<html")
+			assertNotContains(t, body, `<nav class="main-nav">`)
+		})
+	}
 }
 
 func TestSettingsPageKeepsZeroRetriesValue(t *testing.T) {
