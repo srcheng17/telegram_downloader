@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
 
-test.describe('v2 tasks flow', () => {
-  test('create -> cancel -> filter -> download', async ({ page }) => {
-    test.skip(true, 'placeholder: enable after v2 pages are mounted by runtime router');
+const shouldSkipV2E2E = process.env.RUN_V2_E2E === '0';
 
+test.describe('v2 tasks flow', () => {
+  test.skip(shouldSkipV2E2E, 'v2 e2e is disabled by RUN_V2_E2E=0');
+
+  test('create -> cancel -> filter -> download', async ({ page }) => {
     await test.step('create task', async () => {
       await page.goto('/v2');
       await page.locator('#v2-url').fill('https://telegra.ph/demo-v2');

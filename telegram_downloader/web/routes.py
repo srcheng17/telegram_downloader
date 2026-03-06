@@ -187,6 +187,14 @@ def register_routes(app, runtime):
     def index():
         return render_template("index.html", download_guardrails=dict(DOWNLOAD_GUARDRAILS))
 
+    @app.route("/v2")
+    def v2_index():
+        return render_template("v2/index.html")
+
+    @app.route("/v2/tasks-ui")
+    def v2_tasks_ui():
+        return render_template("v2/tasks.html")
+
     @app.route("/download", methods=["POST"])
     def download():
         url, force_download, metadata = _extract_download_request()
