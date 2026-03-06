@@ -9,12 +9,15 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/config"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpapi"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpv2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/queue/redisstream"
+	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
@@ -50,22 +53,30 @@ func main() {
 
 	store := postgres.NewStore(pool)
 	downloadQueue := redisstream.NewProducer(redisClient, cfg.StreamName)
+	v2Store := httpv2.NewPostgresTaskStore(pool)
+	v2Queue := httpv2.NewV2TaskQueue(queuev2.NewProducer(redisClient, cfg.StreamName))
 	if cfg.UpstreamBaseURL == "" {
 		log.Printf("PYTHON_WEB_BASE_URL not set, go-api will use local defaults for runtime settings")
 	}
+
+	legacyRouter := httpapi.NewRouterWithOptions(
+		store,
+		httpapi.RouterOptions{
+			UpstreamBaseURL:  cfg.UpstreamBaseURL,
+			InternalToken:    cfg.InternalToken,
+			DownloadQueue:    downloadQueue,
+			DownloadTimeout:  cfg.DownloadTimeout,
+			DownloadRetries:  cfg.DownloadRetries,
+			ImageConcurrency: cfg.ImageConcurrency,
+		},
+	)
+	rootRouter := chi.NewRouter()
+	httpv2.RegisterRoutes(rootRouter, httpv2.NewTasksHandler(v2Store, v2Queue))
+	rootRouter.Mount("/", legacyRouter)
+
 	server := &http.Server{
-		Addr: cfg.Addr,
-		Handler: httpapi.NewRouterWithOptions(
-			store,
-			httpapi.RouterOptions{
-				UpstreamBaseURL:  cfg.UpstreamBaseURL,
-				InternalToken:    cfg.InternalToken,
-				DownloadQueue:    downloadQueue,
-				DownloadTimeout:  cfg.DownloadTimeout,
-				DownloadRetries:  cfg.DownloadRetries,
-				ImageConcurrency: cfg.ImageConcurrency,
-			},
-		),
+		Addr:         cfg.Addr,
+		Handler:      rootRouter,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
