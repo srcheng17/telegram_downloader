@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -79,19 +80,77 @@ func TestAppendEventPersistsTransitionAudit(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskStatusUpdatesWhenFromMatches(t *testing.T) {
+	db := newFakeV2RepoDB()
+	db.tasks["task-v2-update"] = fakeV2Task{
+		id:        "task-v2-update",
+		url:       "https://telegra.ph/demo",
+		status:    "QUEUED",
+		createdAt: time.Now().UTC(),
+		updatedAt: time.Now().UTC(),
+	}
+	repo := &PostgresV2TaskRepo{db: db}
+
+	errText := "queued by api"
+	claimedBy := "worker-a"
+	if err := repo.UpdateTaskStatus(context.Background(), "task-v2-update", "QUEUED", "RUNNING", StatusPatch{
+		Error:     &errText,
+		ClaimedBy: &claimedBy,
+	}); err != nil {
+		t.Fatalf("update task status: %v", err)
+	}
+
+	persisted := db.tasks["task-v2-update"]
+	if persisted.status != "RUNNING" {
+		t.Fatalf("expected updated status RUNNING, got %q", persisted.status)
+	}
+	if persisted.error == nil || *persisted.error != errText {
+		t.Fatalf("expected error %q, got %#v", errText, persisted.error)
+	}
+	if persisted.claimedBy == nil || *persisted.claimedBy != claimedBy {
+		t.Fatalf("expected claimed_by %q, got %#v", claimedBy, persisted.claimedBy)
+	}
+}
+
+func TestUpdateTaskStatusReturnsErrorWhenFromMismatched(t *testing.T) {
+	db := newFakeV2RepoDB()
+	db.tasks["task-v2-update"] = fakeV2Task{
+		id:        "task-v2-update",
+		url:       "https://telegra.ph/demo",
+		status:    "RUNNING",
+		createdAt: time.Now().UTC(),
+		updatedAt: time.Now().UTC(),
+	}
+	repo := &PostgresV2TaskRepo{db: db}
+
+	err := repo.UpdateTaskStatus(context.Background(), "task-v2-update", "QUEUED", "SUCCESS", StatusPatch{})
+	if err == nil {
+		t.Fatalf("expected status mismatch update to fail")
+	}
+	if !strings.Contains(err.Error(), "status mismatch") {
+		t.Fatalf("expected mismatch semantics, got %v", err)
+	}
+	if !errors.Is(err, ErrV2TaskStatusMismatchOrNotFound) {
+		t.Fatalf("expected mismatch sentinel error, got %v", err)
+	}
+}
+
 type fakeV2RepoDB struct {
 	tasks  map[string]fakeV2Task
 	events []fakeV2Event
 }
 
 type fakeV2Task struct {
-	id           string
-	url          string
-	canonicalURL string
-	status       string
-	enqueueToken string
-	createdAt    time.Time
-	updatedAt    time.Time
+	id            string
+	url           string
+	canonicalURL  string
+	status        string
+	enqueueToken  string
+	error         *string
+	resultZipPath *string
+	claimedBy     *string
+	createdAt     time.Time
+	updatedAt     time.Time
 }
 
 type fakeV2Event struct {
@@ -137,6 +196,29 @@ func (f *fakeV2RepoDB) Exec(_ context.Context, query string, args ...any) (pgcon
 			payloadJSON: args[4].(string),
 		})
 		return pgconn.NewCommandTag("INSERT 0 1"), nil
+	case strings.Contains(query, "UPDATE v2_tasks"):
+		if len(args) != 6 {
+			return pgconn.CommandTag{}, fmt.Errorf("expected 6 update args, got %d", len(args))
+		}
+		taskID := args[0].(string)
+		fromStatus := args[1].(string)
+		toStatus := args[2].(string)
+
+		task, ok := f.tasks[taskID]
+		if !ok || task.status != fromStatus {
+			return pgconn.NewCommandTag("UPDATE 0"), nil
+		}
+
+		task.status = toStatus
+		task.error = cloneV2String(args[3].(*string))
+		task.resultZipPath = cloneV2String(args[4].(*string))
+		if args[5].(*string) != nil {
+			task.claimedBy = cloneV2String(args[5].(*string))
+		}
+		task.updatedAt = time.Now().UTC()
+		f.tasks[taskID] = task
+
+		return pgconn.NewCommandTag("UPDATE 1"), nil
 	default:
 		return pgconn.CommandTag{}, fmt.Errorf("unexpected exec query: %s", query)
 	}

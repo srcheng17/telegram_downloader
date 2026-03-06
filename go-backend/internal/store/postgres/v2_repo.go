@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -9,6 +11,8 @@ import (
 )
 
 const statusQueued = "QUEUED"
+
+var ErrV2TaskStatusMismatchOrNotFound = errors.New("v2 task status mismatch or not found")
 
 type CreateTaskInput struct {
 	ID           string
@@ -107,7 +111,7 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 }
 
 func (r *PostgresV2TaskRepo) UpdateTaskStatus(ctx context.Context, id string, from, to string, patch StatusPatch) error {
-	_, err := r.db.Exec(
+	tag, err := r.db.Exec(
 		ctx,
 		`
 		UPDATE v2_tasks
@@ -128,7 +132,19 @@ func (r *PostgresV2TaskRepo) UpdateTaskStatus(ctx context.Context, id string, fr
 		patch.ResultZipPath,
 		patch.ClaimedBy,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"%w: id=%s from=%s to=%s",
+			ErrV2TaskStatusMismatchOrNotFound,
+			strings.TrimSpace(id),
+			strings.TrimSpace(from),
+			strings.TrimSpace(to),
+		)
+	}
+	return nil
 }
 
 func (r *PostgresV2TaskRepo) AppendTaskEvent(ctx context.Context, event TaskEvent) error {
