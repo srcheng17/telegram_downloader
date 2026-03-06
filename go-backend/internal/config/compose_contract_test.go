@@ -40,6 +40,10 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	if !strings.Contains(goAPIBlock, "/healthz") {
 		t.Fatalf("go-api must define a healthcheck probing /healthz in %q", composePath)
 	}
+	goAPIStaticMountReadonly := regexp.MustCompile(`(?m)^\s*-\s*\./static:/app/static:ro\s*$`)
+	if !goAPIStaticMountReadonly.MatchString(goAPIBlock) {
+		t.Fatalf("go-api must mount static assets as read-only volume ./static:/app/static:ro in %q", composePath)
+	}
 
 	gatewayBlock := extractComposeServiceBlock(t, composeText, "gateway")
 	gatewayDependsOnHealthyGoAPI := regexp.MustCompile(`(?ms)go-api:\n\s+condition:\s*service_healthy`)

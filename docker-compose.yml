@@ -42,6 +42,7 @@ services:
       DOWNLOAD_PATH: /app/downloaded_images
     volumes:
       - ./downloaded_images:/app/downloaded_images
+      - ./static:/app/static:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5000/healthz || exit 1"]
       interval: 10s
