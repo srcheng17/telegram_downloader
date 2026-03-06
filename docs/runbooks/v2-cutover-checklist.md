@@ -41,7 +41,9 @@ docker compose config
 > 如果目标库已具备最新 schema，可跳过。
 
 - [ ] 启动 `postgres` 与 `redis`
-- [ ] 执行 schema migration（至少包含 go-backend/postgres migrations）
+- [ ] 执行 schema migration
+  - 空库最小集合：`002_v2_schema.sql`、`003_app_settings.sql`
+  - 如库中存在 legacy `tasks` 表，再执行 `001_go_full_rewrite.sql`
 - [ ]（如有）执行 legacy -> v2 迁移工具并记录 checksum
 - [ ] 复核任务总量与关键状态分布
 
@@ -102,12 +104,14 @@ curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/v2/tasks
 - `go test -race ./...`（go-backend）✅
 - `npm run e2e:test` ✅（8/8）
 - `docker compose config` ✅
+- `docker compose up -d --build` ✅
+- `curl /v2/dashboard/summary` ✅（HTTP 200）
+- `curl /v2/tasks` ✅（HTTP 200）
 
-### 6.2 阻塞项
+### 6.2 本机环境问题与处理记录
 
-- `docker compose up -d --build` ⚠️ 阻塞  
-  原因：本机 Docker 拉取镜像时触发 keychain 凭据访问失败（当前会话无法交互解锁 keychain）。
+- 现象：首次执行 `docker compose up -d --build` 触发 `osxkeychain` 不可交互错误。  
+  处理：先解锁 keychain，或临时移除 `~/.docker/config.json` 中 `credsStore` 后重试（完成后恢复）。
 
-- `curl /v2/dashboard/summary`、`curl /v2/tasks` ⚠️ 返回 HTTP 502  
-  说明：在 Compose 未成功拉起前执行，结果不构成切流后有效验收结论。
-
+- 现象：fresh Postgres 下 `/v2/dashboard/summary`、`/v2/tasks` 初次请求返回 500。  
+  处理：补执行 `002_v2_schema.sql`、`003_app_settings.sql` 后恢复为 HTTP 200。

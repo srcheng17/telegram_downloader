@@ -29,10 +29,11 @@
 | 竞态测试 | `go test -race ./...`（go-backend） | ✅ 通过 |
 | E2E | `npm run e2e:test` | ✅ 通过（8/8） |
 | Compose 配置解析 | `docker compose config` | ✅ 通过 |
-| Compose 启动烟雾 | `docker compose up -d --build` | ⚠️ 阻塞（本机 Docker keychain 凭据不可交互解锁） |
-| 切流后接口烟雾 | `curl http://localhost:5002/v2/dashboard/summary` / `curl http://localhost:5002/v2/tasks` | ⚠️ 未形成有效结论（在 Compose 未成功启动前返回 HTTP 502） |
+| Compose 启动烟雾 | `docker compose up -d --build` | ✅ 通过（本机首次执行需先处理 Docker keychain 非交互凭据问题） |
+| Schema 准备 | `psql < 002_v2_schema.sql` + `psql < 003_app_settings.sql` | ✅ 通过（`001` 依赖 legacy `tasks` 表，空库可跳过） |
+| 切流后接口烟雾 | `curl http://localhost:5002/v2/dashboard/summary` / `curl http://localhost:5002/v2/tasks` | ✅ HTTP 200，返回合法 JSON |
 
-> 备注：Compose 启动阻塞属于本机凭据/会话环境问题，不是仓库配置语法问题。已通过 `docker compose config` 验证编排文件可解析。
+> 备注：若在无交互会话中遇到 `osxkeychain` 凭据阻塞，可先解锁 keychain，或临时移除 `~/.docker/config.json` 的 `credsStore` 后重试（完成后恢复原配置）。
 
 ## 增补（2026-03-05）：类型字段拆分、移动端统计折叠与二期架构
 
