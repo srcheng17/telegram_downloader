@@ -380,6 +380,52 @@ func TestRunRetryAfterPreflightFailureDoesNotAllowRunningRecovery(t *testing.T) 
 	}
 }
 
+func TestRunRetryKeepsRunningRecoveryStickyAcrossPreflightFailure(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-running-sticky"] = v2ExecutorTaskRecord{
+		id:           "task-running-sticky",
+		url:          "https://telegra.ph/demo-running-sticky",
+		status:       "QUEUED",
+		enqueueToken: "token-running-sticky",
+	}
+	repo.eventErrCountByToStatus["FAILED"] = 1
+	repo.getTaskErrSequence = []error{nil, errors.New("temporary get task jitter"), nil}
+
+	downloader := &fakeV2ExecutorDownloader{err: errors.New("non-retryable execution failure")}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:          repo,
+		Worker:        "worker-v2-sticky",
+		Download:      downloader,
+		RunRetryCount: 2,
+	})
+
+	consumer := &fakeV2QueueConsumer{
+		reads: []fakeV2ReadResult{
+			{messages: []queuev2.TaskMessage{{TaskID: "task-running-sticky", Token: "token-running-sticky"}}},
+			{err: context.Canceled},
+		},
+	}
+
+	err := executor.Run(context.Background(), consumer)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if repo.getTaskCalls != 3 {
+		t.Fatalf("expected three execute attempts, got getTaskCalls=%d", repo.getTaskCalls)
+	}
+	if downloader.calls != 2 {
+		t.Fatalf("expected downloader to run on attempt 1 and 3, got %d calls", downloader.calls)
+	}
+	persisted := repo.tasks["task-running-sticky"]
+	if persisted.status != "FAILED" {
+		t.Fatalf("expected sticky running recovery to finish FAILED, got %q", persisted.status)
+	}
+	if len(repo.statusUpdates) != 2 {
+		t.Fatalf("expected QUEUED->RUNNING then RUNNING->FAILED, got %d updates", len(repo.statusUpdates))
+	}
+}
+
 type fakeV2ExecutorDownloader struct {
 	artifactPath string
 	err          error

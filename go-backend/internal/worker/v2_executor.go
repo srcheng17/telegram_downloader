@@ -306,7 +306,9 @@ func (e *V2Executor) executeWithRetry(ctx context.Context, msg queuev2.TaskMessa
 		if lastErr == nil {
 			return nil
 		}
-		allowRunning = isRunningPhaseExecutionError(lastErr)
+		if isRunningPhaseExecutionError(lastErr) {
+			allowRunning = true
+		}
 		if attempt >= attempts {
 			break
 		}
