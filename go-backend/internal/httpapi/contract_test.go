@@ -213,6 +213,25 @@ func TestContract_LogsResponseFrozenSchema(t *testing.T) {
 	if len(logs) != 1 {
 		t.Fatalf("expected one log row, got %d", len(logs))
 	}
+	firstLog, ok := logs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first logs row object, got %#v", logs[0])
+	}
+	assertPayloadNonEmptyString(t, firstLog, "id")
+	assertPayloadNonEmptyString(t, firstLog, "url")
+	assertPayloadNonEmptyString(t, firstLog, "status")
+	assertPayloadIsNumber(t, firstLog, "start_time")
+	assertPayloadIsNumber(t, firstLog, "progress")
+	assertPayloadIsNumber(t, firstLog, "total_images")
+	assertPayloadIsNumber(t, firstLog, "image_concurrency")
+	assertPayloadOptionalString(t, firstLog, "author")
+	assertPayloadOptionalString(t, firstLog, "series_name")
+	assertPayloadOptionalString(t, firstLog, "comic_name")
+	assertPayloadOptionalString(t, firstLog, "summary")
+	assertPayloadOptionalString(t, firstLog, "tags_raw")
+	assertPayloadOptionalString(t, firstLog, "tags_normalized")
+	assertPayloadOptionalString(t, firstLog, "genres_raw")
+	assertPayloadOptionalString(t, firstLog, "genres_normalized")
 	assertPayloadNumber(t, payload, "total", 1)
 	assertPayloadNumber(t, payload, "page", 1)
 	assertPayloadNumber(t, payload, "per_page", 25)
@@ -239,44 +258,61 @@ func TestContract_LogsResponseFrozenSchema(t *testing.T) {
 		t.Fatalf("expected at least one status_catalog entry")
 	}
 
-	foundCatalogWithRequiredFields := false
-	for _, rawMeta := range statusCatalog {
+	for statusCode, rawMeta := range statusCatalog {
+		if strings.TrimSpace(statusCode) == "" {
+			t.Fatalf("status_catalog contains empty status code key")
+		}
 		meta, ok := rawMeta.(map[string]any)
 		if !ok {
-			continue
+			t.Fatalf("status_catalog[%q] expected object, got %#v", statusCode, rawMeta)
 		}
-		if _, hasLabel := meta["label"]; !hasLabel {
-			continue
-		}
-		if _, hasCanCancel := meta["can_cancel"]; !hasCanCancel {
-			continue
-		}
-		if _, hasCanDownload := meta["can_download"]; !hasCanDownload {
-			continue
-		}
-		if _, hasTerminal := meta["terminal"]; !hasTerminal {
-			continue
-		}
+		assertExactJSONKeys(t, meta, "label", "can_cancel", "can_download", "terminal")
 		assertPayloadString(t, meta, "label")
-		if _, ok := meta["can_cancel"].(bool); !ok {
-			continue
-		}
-		if _, ok := meta["can_download"].(bool); !ok {
-			continue
-		}
-		if _, ok := meta["terminal"].(bool); !ok {
-			continue
-		}
-		foundCatalogWithRequiredFields = true
-		break
-	}
-	if !foundCatalogWithRequiredFields {
-		t.Fatalf("expected at least one status_catalog entry with label/can_cancel/can_download/terminal")
+		assertPayloadIsBool(t, meta, "can_cancel")
+		assertPayloadIsBool(t, meta, "can_download")
+		assertPayloadIsBool(t, meta, "terminal")
 	}
 
-	if _, ok := payload["summary"].(map[string]any); !ok {
+	summary, ok := payload["summary"].(map[string]any)
+	if !ok {
 		t.Fatalf("expected summary object, got %#v", payload["summary"])
 	}
+	assertExactJSONKeys(
+		t,
+		summary,
+		"total_tasks",
+		"pending_tasks",
+		"in_progress_tasks",
+		"cancel_requested_tasks",
+		"canceled_tasks",
+		"success_tasks",
+		"failed_tasks",
+		"active_tasks",
+		"finished_tasks",
+		"success_rate",
+		"startup_recovery",
+	)
+	assertPayloadIsNumber(t, summary, "total_tasks")
+	assertPayloadIsNumber(t, summary, "pending_tasks")
+	assertPayloadIsNumber(t, summary, "in_progress_tasks")
+	assertPayloadIsNumber(t, summary, "cancel_requested_tasks")
+	assertPayloadIsNumber(t, summary, "canceled_tasks")
+	assertPayloadIsNumber(t, summary, "success_tasks")
+	assertPayloadIsNumber(t, summary, "failed_tasks")
+	assertPayloadIsNumber(t, summary, "active_tasks")
+	assertPayloadIsNumber(t, summary, "finished_tasks")
+	assertPayloadOptionalNumber(t, summary, "success_rate")
+
+	startupRecovery, ok := summary["startup_recovery"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary.startup_recovery object, got %#v", summary["startup_recovery"])
+	}
+	assertExactJSONKeys(t, startupRecovery, "happened", "recovered_total", "recovered_failed", "recovered_canceled", "occurred_at")
+	assertPayloadIsBool(t, startupRecovery, "happened")
+	assertPayloadIsNumber(t, startupRecovery, "recovered_total")
+	assertPayloadIsNumber(t, startupRecovery, "recovered_failed")
+	assertPayloadIsNumber(t, startupRecovery, "recovered_canceled")
+	assertPayloadOptionalString(t, startupRecovery, "occurred_at")
 }
 
 func TestContract_SummaryAllowsNullSuccessRate(t *testing.T) {
@@ -430,5 +466,55 @@ func assertPayloadNumber(t *testing.T, payload map[string]any, key string, expec
 	}
 	if value != expected {
 		t.Fatalf("expected payload[%q]=%v, got %v", key, expected, value)
+	}
+}
+
+func assertPayloadIsBool(t *testing.T, payload map[string]any, key string) bool {
+	t.Helper()
+
+	value, ok := payload[key].(bool)
+	if !ok {
+		t.Fatalf("expected payload[%q] bool, got %#v", key, payload[key])
+	}
+	return value
+}
+
+func assertPayloadIsNumber(t *testing.T, payload map[string]any, key string) float64 {
+	t.Helper()
+
+	value, ok := payload[key].(float64)
+	if !ok {
+		t.Fatalf("expected payload[%q] number, got %#v", key, payload[key])
+	}
+	return value
+}
+
+func assertPayloadOptionalString(t *testing.T, payload map[string]any, key string) {
+	t.Helper()
+
+	value, ok := payload[key]
+	if !ok {
+		t.Fatalf("expected payload[%q] key to exist", key)
+	}
+	if value == nil {
+		return
+	}
+	if _, ok := value.(string); !ok {
+		t.Fatalf("expected payload[%q] nil or string, got %#v", key, value)
+	}
+}
+
+func assertPayloadOptionalNumber(t *testing.T, payload map[string]any, key string) {
+	t.Helper()
+
+	value, ok := payload[key]
+	if !ok {
+		t.Fatalf("expected payload[%q] key to exist", key)
+	}
+	if value == nil {
+		return
+	}
+	if _, ok := value.(float64); !ok {
+		t.Fatalf("expected payload[%q] nil or number, got %#v", key, value)
 	}
 }
