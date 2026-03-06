@@ -74,6 +74,28 @@ type ListTasksQuery struct {
 	Query   string
 }
 
+type LegacyClaimTaskDecision string
+
+const (
+	LegacyClaimTaskDecisionCreated      LegacyClaimTaskDecision = "created"
+	LegacyClaimTaskDecisionReuseSuccess LegacyClaimTaskDecision = "reuse_success"
+	LegacyClaimTaskDecisionReuseActive  LegacyClaimTaskDecision = "reuse_active"
+)
+
+type LegacyClaimTaskInput struct {
+	ID           string
+	URL          string
+	CanonicalURL *string
+	EnqueueToken string
+	ReuseSuccess bool
+}
+
+type LegacyClaimTaskResult struct {
+	Decision     LegacyClaimTaskDecision
+	Task         Task
+	EnqueueToken string
+}
+
 type ListTasksResult struct {
 	Tasks      []Task `json:"tasks"`
 	Total      int    `json:"total"`
@@ -402,6 +424,7 @@ func (h *TasksHandler) DownloadArtifact(w http.ResponseWriter, r *http.Request) 
 type pgxQueryer interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 type PostgresTaskStore struct {
@@ -441,6 +464,164 @@ func (s *PostgresTaskStore) CreateTask(ctx context.Context, in CreateTaskInput) 
 		Status:       record.Status,
 		CreatedAt:    record.CreatedAt,
 		UpdatedAt:    record.UpdatedAt,
+	}, nil
+}
+
+func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyClaimTaskInput) (LegacyClaimTaskResult, error) {
+	if s.db == nil {
+		return LegacyClaimTaskResult{}, errors.New("v2 task database is not configured")
+	}
+
+	taskID := strings.TrimSpace(in.ID)
+	if taskID == "" {
+		return LegacyClaimTaskResult{}, errors.New("legacy claim task id is required")
+	}
+	rawURL := strings.TrimSpace(in.URL)
+	if rawURL == "" {
+		return LegacyClaimTaskResult{}, errors.New("legacy claim url is required")
+	}
+	canonicalURL := normalizeCanonicalURL(rawURL, in.CanonicalURL)
+	enqueueToken := strings.TrimSpace(in.EnqueueToken)
+	if enqueueToken == "" {
+		return LegacyClaimTaskResult{}, errors.New("legacy claim enqueue token is required")
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return LegacyClaimTaskResult{}, err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", canonicalURL); err != nil {
+		return LegacyClaimTaskResult{}, err
+	}
+
+	if in.ReuseSuccess {
+		reusedSuccess, err := querySingleTask(
+			ctx,
+			tx,
+			`
+			SELECT
+				id,
+				url,
+				canonical_url,
+				status,
+				error,
+				result_zip_path,
+				created_at,
+				updated_at
+			FROM v2_tasks
+			WHERE
+				status = $1
+				AND canonical_url = $2
+				AND result_zip_path IS NOT NULL
+				AND result_zip_path != ''
+			ORDER BY created_at DESC
+			LIMIT 1
+			`,
+			TaskStatusSuccess,
+			canonicalURL,
+		)
+		if err != nil {
+			return LegacyClaimTaskResult{}, err
+		}
+		if reusedSuccess != nil {
+			if err := tx.Commit(ctx); err != nil {
+				return LegacyClaimTaskResult{}, err
+			}
+			committed = true
+			return LegacyClaimTaskResult{
+				Decision: LegacyClaimTaskDecisionReuseSuccess,
+				Task:     *reusedSuccess,
+			}, nil
+		}
+	}
+
+	reusedActive, err := querySingleTask(
+		ctx,
+		tx,
+		`
+		SELECT
+			id,
+			url,
+			canonical_url,
+			status,
+			error,
+			result_zip_path,
+			created_at,
+			updated_at
+		FROM v2_tasks
+		WHERE
+			status = ANY($1)
+			AND canonical_url = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+		`,
+		[]string{TaskStatusQueued, TaskStatusRunning},
+		canonicalURL,
+	)
+	if err != nil {
+		return LegacyClaimTaskResult{}, err
+	}
+	if reusedActive != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return LegacyClaimTaskResult{}, err
+		}
+		committed = true
+		return LegacyClaimTaskResult{
+			Decision: LegacyClaimTaskDecisionReuseActive,
+			Task:     *reusedActive,
+		}, nil
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.Exec(
+		ctx,
+		`
+		INSERT INTO v2_tasks (
+			id,
+			url,
+			canonical_url,
+			status,
+			enqueue_token,
+			created_at,
+			updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7
+		)
+		`,
+		taskID,
+		rawURL,
+		canonicalURL,
+		TaskStatusQueued,
+		enqueueToken,
+		now,
+		now,
+	); err != nil {
+		return LegacyClaimTaskResult{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return LegacyClaimTaskResult{}, err
+	}
+	committed = true
+	return LegacyClaimTaskResult{
+		Decision: LegacyClaimTaskDecisionCreated,
+		Task: Task{
+			ID:           taskID,
+			URL:          rawURL,
+			CanonicalURL: stringPtr(canonicalURL),
+			Status:       TaskStatusQueued,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		},
+		EnqueueToken: enqueueToken,
 	}, nil
 }
 
@@ -719,6 +900,29 @@ func normalizeCanonicalURL(url string, canonicalURL *string) string {
 		return strings.TrimSpace(url)
 	}
 	return normalized
+}
+
+func querySingleTask(ctx context.Context, queryer interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}, sql string, args ...any) (*Task, error) {
+	row := queryer.QueryRow(ctx, sql, args...)
+	var task Task
+	if err := row.Scan(
+		&task.ID,
+		&task.URL,
+		&task.CanonicalURL,
+		&task.Status,
+		&task.Error,
+		&task.ResultZipPath,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &task, nil
 }
 
 func buildDashboardSummary(statusCounts map[string]int) DashboardSummary {

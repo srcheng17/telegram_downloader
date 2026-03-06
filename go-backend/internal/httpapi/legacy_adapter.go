@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	legacyAdapterScanPerPage = 100
+	legacyAdapterFallbackScanPerPage = 100
 )
 
 var (
@@ -34,6 +34,10 @@ type LegacyV2TaskStore interface {
 	GetTask(ctx context.Context, taskID string) (*httpv2.Task, error)
 	CancelTask(ctx context.Context, taskID, fromStatus string) error
 	MarkTaskFailed(ctx context.Context, taskID, message string) error
+}
+
+type legacyAtomicClaimStore interface {
+	ClaimTaskForLegacy(ctx context.Context, in httpv2.LegacyClaimTaskInput) (httpv2.LegacyClaimTaskResult, error)
 }
 
 type LegacyV2TaskQueue interface {
@@ -124,6 +128,55 @@ func (a *LegacyAdapter) CreateOrReuseDownloadTask(ctx context.Context, input Leg
 
 	rawURL := strings.TrimSpace(input.RawURL)
 	canonicalURL := canonicalizeURL(input.CanonicalURL, rawURL)
+	createInput := httpv2.CreateTaskInput{
+		ID:           uuid.NewString(),
+		URL:          rawURL,
+		CanonicalURL: stringPtr(canonicalURL),
+		EnqueueToken: uuid.NewString(),
+	}
+	if claimStore, ok := any(a.store).(legacyAtomicClaimStore); ok {
+		claim, err := claimStore.ClaimTaskForLegacy(ctx, httpv2.LegacyClaimTaskInput{
+			ID:           createInput.ID,
+			URL:          createInput.URL,
+			CanonicalURL: createInput.CanonicalURL,
+			EnqueueToken: createInput.EnqueueToken,
+			ReuseSuccess: !input.Force,
+		})
+		if err != nil {
+			return LegacyDownloadResult{}, err
+		}
+
+		switch claim.Decision {
+		case httpv2.LegacyClaimTaskDecisionReuseSuccess:
+			return LegacyDownloadResult{
+				Decision: LegacyDownloadDecisionReuseSuccess,
+				TaskID:   strings.TrimSpace(claim.Task.ID),
+			}, nil
+		case httpv2.LegacyClaimTaskDecisionReuseActive:
+			return LegacyDownloadResult{
+				Decision: LegacyDownloadDecisionReuseActive,
+				TaskID:   strings.TrimSpace(claim.Task.ID),
+			}, nil
+		case httpv2.LegacyClaimTaskDecisionCreated:
+			enqueueToken := strings.TrimSpace(claim.EnqueueToken)
+			if enqueueToken == "" {
+				enqueueToken = createInput.EnqueueToken
+			}
+			taskID := strings.TrimSpace(claim.Task.ID)
+			if taskID == "" {
+				return LegacyDownloadResult{}, errors.New("created v2 task missing id")
+			}
+			if err := a.enqueueCreatedTask(ctx, taskID, enqueueToken); err != nil {
+				return LegacyDownloadResult{}, err
+			}
+			return LegacyDownloadResult{
+				Decision: LegacyDownloadDecisionCreated,
+				TaskID:   taskID,
+			}, nil
+		default:
+			return LegacyDownloadResult{}, fmt.Errorf("unknown legacy claim decision: %s", claim.Decision)
+		}
+	}
 
 	if !input.Force {
 		reusableTask, err := a.findReusableSuccessTask(ctx, canonicalURL)
@@ -149,12 +202,6 @@ func (a *LegacyAdapter) CreateOrReuseDownloadTask(ctx context.Context, input Leg
 		}, nil
 	}
 
-	createInput := httpv2.CreateTaskInput{
-		ID:           uuid.NewString(),
-		URL:          rawURL,
-		CanonicalURL: stringPtr(canonicalURL),
-		EnqueueToken: uuid.NewString(),
-	}
 	createdTask, err := a.store.CreateTask(ctx, createInput)
 	if err != nil {
 		return LegacyDownloadResult{}, err
@@ -164,15 +211,8 @@ func (a *LegacyAdapter) CreateOrReuseDownloadTask(ctx context.Context, input Leg
 	if taskID == "" {
 		return LegacyDownloadResult{}, errors.New("created v2 task missing id")
 	}
-
-	if err := a.queue.Enqueue(ctx, httpv2.TaskQueueMessage{
-		TaskID: taskID,
-		Token:  createInput.EnqueueToken,
-	}); err != nil {
-		compensationCtx, compensationCancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_ = a.store.MarkTaskFailed(compensationCtx, taskID, fmt.Sprintf("enqueue failed: %v", err))
-		compensationCancel()
-		return LegacyDownloadResult{}, fmt.Errorf("%w: %v", ErrLegacyAdapterEnqueueFailed, err)
+	if err := a.enqueueCreatedTask(ctx, taskID, createInput.EnqueueToken); err != nil {
+		return LegacyDownloadResult{}, err
 	}
 
 	return LegacyDownloadResult{
@@ -276,6 +316,19 @@ func (a *LegacyAdapter) BuildSummary(ctx context.Context) (domain.Summary, error
 	return summary, nil
 }
 
+func (a *LegacyAdapter) enqueueCreatedTask(ctx context.Context, taskID string, enqueueToken string) error {
+	if err := a.queue.Enqueue(ctx, httpv2.TaskQueueMessage{
+		TaskID: strings.TrimSpace(taskID),
+		Token:  strings.TrimSpace(enqueueToken),
+	}); err != nil {
+		compensationCtx, compensationCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = a.store.MarkTaskFailed(compensationCtx, strings.TrimSpace(taskID), fmt.Sprintf("enqueue failed: %v", err))
+		compensationCancel()
+		return fmt.Errorf("%w: %v", ErrLegacyAdapterEnqueueFailed, err)
+	}
+	return nil
+}
+
 func (a *LegacyAdapter) CancelTask(ctx context.Context, taskID string) (LegacyCancelResult, error) {
 	if !a.SupportsTaskActions() {
 		return LegacyCancelResult{}, errors.New("legacy adapter cancel dependencies are not configured")
@@ -316,16 +369,7 @@ func (a *LegacyAdapter) CancelTask(ctx context.Context, taskID string) (LegacyCa
 			if latestErr != nil {
 				return LegacyCancelResult{}, latestErr
 			}
-			if latestTask != nil && httpv2.NormalizeTaskStatus(latestTask.Status) == httpv2.TaskStatusCanceled {
-				return LegacyCancelResult{
-					Decision: LegacyCancelDecisionAlreadyRequested,
-					Status:   domain.StatusCanceled,
-				}, nil
-			}
-			return LegacyCancelResult{
-				Decision: LegacyCancelDecisionAlreadyFinished,
-				Status:   mapV2StatusToLegacy(status),
-			}, nil
+			return a.resolveCancelMismatchByLatestStatus(ctx, normalizedID, latestTask)
 		}
 		return LegacyCancelResult{}, err
 	}
@@ -334,6 +378,73 @@ func (a *LegacyAdapter) CancelTask(ctx context.Context, taskID string) (LegacyCa
 		Decision: LegacyCancelDecisionRequested,
 		Status:   domain.StatusCanceled,
 	}, nil
+}
+
+func (a *LegacyAdapter) resolveCancelMismatchByLatestStatus(
+	ctx context.Context,
+	taskID string,
+	latestTask *httpv2.Task,
+) (LegacyCancelResult, error) {
+	if latestTask == nil {
+		return LegacyCancelResult{Decision: LegacyCancelDecisionNotFound}, nil
+	}
+
+	latestStatus := httpv2.NormalizeTaskStatus(latestTask.Status)
+	switch latestStatus {
+	case httpv2.TaskStatusCanceled:
+		return LegacyCancelResult{
+			Decision: LegacyCancelDecisionAlreadyRequested,
+			Status:   domain.StatusCanceled,
+		}, nil
+	case httpv2.TaskStatusSuccess, httpv2.TaskStatusFailed:
+		return LegacyCancelResult{
+			Decision: LegacyCancelDecisionAlreadyFinished,
+			Status:   mapV2StatusToLegacy(latestStatus),
+		}, nil
+	case httpv2.TaskStatusQueued, httpv2.TaskStatusRunning:
+		retryErr := a.store.CancelTask(ctx, taskID, latestStatus)
+		if retryErr == nil {
+			return LegacyCancelResult{
+				Decision: LegacyCancelDecisionRequested,
+				Status:   domain.StatusCanceled,
+			}, nil
+		}
+		if !errors.Is(retryErr, postgres.ErrV2TaskStatusMismatchOrNotFound) {
+			return LegacyCancelResult{}, retryErr
+		}
+
+		refreshedTask, refreshedErr := a.store.GetTask(ctx, taskID)
+		if refreshedErr != nil {
+			return LegacyCancelResult{}, refreshedErr
+		}
+		if refreshedTask == nil {
+			return LegacyCancelResult{Decision: LegacyCancelDecisionNotFound}, nil
+		}
+
+		refreshedStatus := httpv2.NormalizeTaskStatus(refreshedTask.Status)
+		switch refreshedStatus {
+		case httpv2.TaskStatusCanceled:
+			return LegacyCancelResult{
+				Decision: LegacyCancelDecisionAlreadyRequested,
+				Status:   domain.StatusCanceled,
+			}, nil
+		case httpv2.TaskStatusSuccess, httpv2.TaskStatusFailed:
+			return LegacyCancelResult{
+				Decision: LegacyCancelDecisionAlreadyFinished,
+				Status:   mapV2StatusToLegacy(refreshedStatus),
+			}, nil
+		default:
+			return LegacyCancelResult{
+				Decision: LegacyCancelDecisionAlreadyFinished,
+				Status:   mapV2StatusToLegacy(refreshedStatus),
+			}, nil
+		}
+	default:
+		return LegacyCancelResult{
+			Decision: LegacyCancelDecisionAlreadyFinished,
+			Status:   mapV2StatusToLegacy(latestStatus),
+		}, nil
+	}
 }
 
 func (a *LegacyAdapter) OpenTaskArtifact(ctx context.Context, taskID string) (*service.OpenedV2Artifact, error) {
@@ -451,7 +562,7 @@ func (a *LegacyAdapter) findActiveTask(ctx context.Context, canonicalURL string)
 func (a *LegacyAdapter) listMatchingTasks(ctx context.Context, status string, canonicalURL string) ([]httpv2.Task, error) {
 	result, err := a.store.ListTasks(ctx, httpv2.ListTasksQuery{
 		Page:    1,
-		PerPage: legacyAdapterScanPerPage,
+		PerPage: legacyAdapterFallbackScanPerPage,
 		Status:  strings.TrimSpace(status),
 		Query:   canonicalURL,
 	})

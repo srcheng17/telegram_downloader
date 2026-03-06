@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpv2"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
 func TestLegacyAdapterCreateOrReuseDownloadTaskCreatesAndEnqueues(t *testing.T) {
@@ -100,4 +102,100 @@ func TestLegacyAdapterReadLogsMapsFromV2Tasks(t *testing.T) {
 	if response.Summary.InProgressTasks != 1 {
 		t.Fatalf("expected summary.in_progress_tasks=1, got %d", response.Summary.InProgressTasks)
 	}
+}
+
+func TestLegacyAdapterCreateOrReuseDownloadTaskPrefersAtomicClaimPath(t *testing.T) {
+	store := &fakeLegacyAtomicClaimStore{
+		claimResult: httpv2.LegacyClaimTaskResult{
+			Decision:     httpv2.LegacyClaimTaskDecisionCreated,
+			Task:         httpv2.Task{ID: "task-v2-atomic-claim-created"},
+			EnqueueToken: "token-v2-atomic-claim",
+		},
+	}
+	queue := &fakeLegacyV2Queue{}
+	adapter := NewLegacyAdapter(store, queue, nil)
+
+	result, err := adapter.CreateOrReuseDownloadTask(context.Background(), LegacyDownloadInput{
+		RawURL:       "https://telegra.ph/atomic-claim",
+		CanonicalURL: "https://telegra.ph/atomic-claim",
+		Force:        false,
+	})
+	if err != nil {
+		t.Fatalf("create or reuse with atomic claim: %v", err)
+	}
+	if result.Decision != LegacyDownloadDecisionCreated {
+		t.Fatalf("expected created decision, got %q", result.Decision)
+	}
+	if len(store.claimCalls) != 1 {
+		t.Fatalf("expected one atomic claim call, got %d", len(store.claimCalls))
+	}
+	if len(store.createCalls) != 0 {
+		t.Fatalf("expected fallback create path not called, got %d", len(store.createCalls))
+	}
+	if len(store.listCalls) != 0 {
+		t.Fatalf("expected fallback list path not called, got %d", len(store.listCalls))
+	}
+	if len(queue.calls) != 1 {
+		t.Fatalf("expected one enqueue call, got %d", len(queue.calls))
+	}
+	if queue.calls[0].TaskID != "task-v2-atomic-claim-created" {
+		t.Fatalf("expected enqueued task id task-v2-atomic-claim-created, got %q", queue.calls[0].TaskID)
+	}
+	if queue.calls[0].Token != "token-v2-atomic-claim" {
+		t.Fatalf("expected enqueue token token-v2-atomic-claim, got %q", queue.calls[0].Token)
+	}
+}
+
+func TestLegacyAdapterCancelTaskMismatchUsesLatestStatus(t *testing.T) {
+	store := &fakeLegacyV2Store{
+		getTasks: []*httpv2.Task{
+			{ID: "task-v2-cancel-race", Status: httpv2.TaskStatusRunning},
+			{ID: "task-v2-cancel-race", Status: httpv2.TaskStatusSuccess},
+		},
+		cancelErrs: []error{
+			postgres.ErrV2TaskStatusMismatchOrNotFound,
+		},
+	}
+	adapter := NewLegacyAdapter(store, nil, nil)
+
+	result, err := adapter.CancelTask(context.Background(), "task-v2-cancel-race")
+	if err != nil {
+		t.Fatalf("cancel task with mismatch: %v", err)
+	}
+	if result.Decision != LegacyCancelDecisionAlreadyFinished {
+		t.Fatalf("expected already finished decision, got %q", result.Decision)
+	}
+	if result.Status != domain.StatusSuccess {
+		t.Fatalf("expected latest status %q, got %q", domain.StatusSuccess, result.Status)
+	}
+	if len(store.cancelCalls) != 1 {
+		t.Fatalf("expected one cancel attempt before latest decided terminal, got %d", len(store.cancelCalls))
+	}
+}
+
+type fakeLegacyAtomicClaimStore struct {
+	fakeLegacyV2Store
+	claimCalls  []httpv2.LegacyClaimTaskInput
+	claimResult httpv2.LegacyClaimTaskResult
+	claimErr    error
+}
+
+func (f *fakeLegacyAtomicClaimStore) ClaimTaskForLegacy(
+	_ context.Context,
+	in httpv2.LegacyClaimTaskInput,
+) (httpv2.LegacyClaimTaskResult, error) {
+	f.claimCalls = append(f.claimCalls, in)
+	if f.claimErr != nil {
+		return httpv2.LegacyClaimTaskResult{}, f.claimErr
+	}
+	if f.claimResult.Decision != "" || strings.TrimSpace(f.claimResult.Task.ID) != "" || strings.TrimSpace(f.claimResult.EnqueueToken) != "" {
+		return f.claimResult, nil
+	}
+	return httpv2.LegacyClaimTaskResult{
+		Decision: httpv2.LegacyClaimTaskDecisionCreated,
+		Task: httpv2.Task{
+			ID: strings.TrimSpace(in.ID),
+		},
+		EnqueueToken: strings.TrimSpace(in.EnqueueToken),
+	}, nil
 }

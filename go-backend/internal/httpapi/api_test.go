@@ -125,10 +125,12 @@ type fakeLegacyV2Store struct {
 
 	getCalls []string
 	getTask  *httpv2.Task
+	getTasks []*httpv2.Task
 	getErr   error
 
 	cancelCalls []cancelTaskCall
 	cancelErr   error
+	cancelErrs  []error
 
 	markFailedCalls []markFailedCall
 	markFailedErr   error
@@ -167,6 +169,13 @@ func (f *fakeLegacyV2Store) GetTask(_ context.Context, taskID string) (*httpv2.T
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
+	if len(f.getTasks) > 0 {
+		index := len(f.getCalls) - 1
+		if index < len(f.getTasks) {
+			return f.getTasks[index], nil
+		}
+		return f.getTasks[len(f.getTasks)-1], nil
+	}
 	return f.getTask, nil
 }
 
@@ -175,6 +184,11 @@ func (f *fakeLegacyV2Store) CancelTask(_ context.Context, taskID, fromStatus str
 		taskID:     taskID,
 		fromStatus: fromStatus,
 	})
+	if len(f.cancelErrs) > 0 {
+		next := f.cancelErrs[0]
+		f.cancelErrs = f.cancelErrs[1:]
+		return next
+	}
 	return f.cancelErr
 }
 
