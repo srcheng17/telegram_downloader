@@ -30,8 +30,6 @@ services:
     build: .
     container_name: telegraph-web
     command: gunicorn --bind 0.0.0.0:5000 app:app
-    ports:
-      - "${APP_PORT:-5002}:5000"
     environment:
       SECRET_KEY: ${SECRET_KEY:-change-this-secret}
       TASK_EXECUTION_BACKEND: celery
@@ -49,9 +47,9 @@ services:
       redis:
         condition: service_healthy
 
-  worker:
+  py-worker:
     build: .
-    container_name: telegraph-worker
+    container_name: telegraph-py-worker
     command: celery -A telegram_downloader.celery_app.celery_app worker --loglevel=info --concurrency=${WORKER_CONCURRENCY:-2}
     environment:
       TASKS_DB_PATH: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}
@@ -67,3 +65,64 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  go-api:
+    build:
+      context: ./go-backend
+    container_name: telegraph-go-api
+    environment:
+      PORT: "5000"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      STREAM_NAME: ${STREAM_NAME:-download_tasks}
+      CONSUMER_GROUP: ${CONSUMER_GROUP:-go-workers}
+      INTERNAL_ENQUEUE_TOKEN: ${INTERNAL_ENQUEUE_TOKEN:-}
+      GO_DOWNLOAD_TIMEOUT: ${GO_DOWNLOAD_TIMEOUT:-30}
+      GO_DOWNLOAD_RETRIES: ${GO_DOWNLOAD_RETRIES:-10}
+      GO_IMAGE_CONCURRENCY: ${GO_IMAGE_CONCURRENCY:-2}
+      DOWNLOAD_PATH: /app/downloaded_images
+    volumes:
+      - ./downloaded_images:/app/downloaded_images
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  go-worker:
+    build:
+      context: ./go-backend
+    container_name: telegraph-go-worker
+    command: ["/app/go-worker"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      STREAM_NAME: ${STREAM_NAME:-download_tasks}
+      CONSUMER_GROUP: ${CONSUMER_GROUP:-go-workers}
+      CONSUMER_NAME: ${GO_WORKER_CONSUMER_NAME:-}
+      GO_DOWNLOAD_TIMEOUT: ${GO_DOWNLOAD_TIMEOUT:-30}
+      GO_DOWNLOAD_RETRIES: ${GO_DOWNLOAD_RETRIES:-10}
+      GO_IMAGE_CONCURRENCY: ${GO_IMAGE_CONCURRENCY:-2}
+      DOWNLOAD_PATH: /app/downloaded_images
+      TEMP_PATH: /app/temp_downloads
+    volumes:
+      - ./downloaded_images:/app/downloaded_images
+      - ./temp_downloads:/app/temp_downloads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  gateway:
+    image: nginx:1.27-alpine
+    container_name: telegraph-gateway
+    ports:
+      - "${APP_PORT:-5002}:80"
+    volumes:
+      - ./deploy/nginx/canary-go-full.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      web:
+        condition: service_started
+      go-api:
+        condition: service_started

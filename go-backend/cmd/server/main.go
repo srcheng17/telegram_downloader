@@ -10,9 +10,11 @@ import (
 	"syscall"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/config"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpapi"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/queue/redisstream"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
@@ -33,9 +35,23 @@ func main() {
 		log.Fatalf("ping postgres: %v", err)
 	}
 
+	redisOptions, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		log.Fatalf("parse redis url: %v", err)
+	}
+	redisClient := redis.NewClient(redisOptions)
+	defer func() {
+		_ = redisClient.Close()
+	}()
+
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Fatalf("ping redis: %v", err)
+	}
+
 	store := postgres.NewStore(pool)
+	downloadQueue := redisstream.NewProducer(redisClient, cfg.StreamName)
 	if cfg.UpstreamBaseURL == "" {
-		log.Printf("PYTHON_WEB_BASE_URL not set, write endpoints will return 503")
+		log.Printf("PYTHON_WEB_BASE_URL not set, go-api will use local defaults for runtime settings")
 	}
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -44,6 +60,7 @@ func main() {
 			httpapi.RouterOptions{
 				UpstreamBaseURL:  cfg.UpstreamBaseURL,
 				InternalToken:    cfg.InternalToken,
+				DownloadQueue:    downloadQueue,
 				DownloadTimeout:  cfg.DownloadTimeout,
 				DownloadRetries:  cfg.DownloadRetries,
 				ImageConcurrency: cfg.ImageConcurrency,

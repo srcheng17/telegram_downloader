@@ -63,6 +63,9 @@ func LoadFromEnv() (Config, error) {
 	}
 
 	consumerName := strings.TrimSpace(os.Getenv("CONSUMER_NAME"))
+	if consumerName == "" {
+		consumerName = strings.TrimSpace(os.Getenv("HOSTNAME"))
+	}
 
 	return Config{
 		Addr:             addr,
