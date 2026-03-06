@@ -20,9 +20,12 @@ import (
 )
 
 const (
-	defaultV2DownloadRoot   = "downloaded_images"
-	defaultV2QueueReadBlock = 2 * time.Second
-	v2StatusTransitionEvent = "STATUS_TRANSITION"
+	defaultV2DownloadRoot    = "downloaded_images"
+	defaultV2QueueReadBlock  = 2 * time.Second
+	defaultV2TerminalWrite   = 2 * time.Second
+	defaultV2RunRetryCount   = 2
+	defaultV2RunRetryBackoff = 100 * time.Millisecond
+	v2StatusTransitionEvent  = "STATUS_TRANSITION"
 )
 
 type V2TaskSnapshot struct {
@@ -34,8 +37,7 @@ type V2TaskSnapshot struct {
 
 type V2ExecutionRepo interface {
 	GetTaskForExecution(ctx context.Context, taskID string) (V2TaskSnapshot, error)
-	UpdateTaskStatus(ctx context.Context, id string, from, to string, patch postgres.StatusPatch) error
-	AppendTaskEvent(ctx context.Context, event postgres.TaskEvent) error
+	TransitionTaskWithEvent(ctx context.Context, in postgres.TransitionTaskWithEventInput) error
 }
 
 type V2TaskDownloader interface {
@@ -43,28 +45,37 @@ type V2TaskDownloader interface {
 }
 
 type V2ExecutorConfig struct {
-	Repo           V2ExecutionRepo
-	Worker         string
-	Download       V2TaskDownloader
-	TransientRetry int
-	ReadBlock      time.Duration
+	Repo                 V2ExecutionRepo
+	Worker               string
+	Download             V2TaskDownloader
+	TransientRetry       int
+	ReadBlock            time.Duration
+	TerminalWriteTimeout time.Duration
+	RunRetryCount        int
+	RunRetryBackoff      time.Duration
 }
 
 type V2Executor struct {
-	repo           V2ExecutionRepo
-	worker         string
-	downloader     V2TaskDownloader
-	transientRetry int
-	readBlock      time.Duration
+	repo                 V2ExecutionRepo
+	worker               string
+	downloader           V2TaskDownloader
+	transientRetry       int
+	readBlock            time.Duration
+	terminalWriteTimeout time.Duration
+	runRetryCount        int
+	runRetryBackoff      time.Duration
 }
 
 func NewV2Executor(cfg V2ExecutorConfig) *V2Executor {
 	return &V2Executor{
-		repo:           cfg.Repo,
-		worker:         strings.TrimSpace(cfg.Worker),
-		downloader:     cfg.Download,
-		transientRetry: cfg.TransientRetry,
-		readBlock:      cfg.ReadBlock,
+		repo:                 cfg.Repo,
+		worker:               strings.TrimSpace(cfg.Worker),
+		downloader:           cfg.Download,
+		transientRetry:       cfg.TransientRetry,
+		readBlock:            cfg.ReadBlock,
+		terminalWriteTimeout: cfg.TerminalWriteTimeout,
+		runRetryCount:        cfg.RunRetryCount,
+		runRetryBackoff:      cfg.RunRetryBackoff,
 	}
 }
 
@@ -123,8 +134,7 @@ func (e *V2Executor) Execute(ctx context.Context, taskID, token string) error {
 	for attempt := 1; attempt <= attempts; attempt++ {
 		artifactPath, runErr := e.downloader.DownloadAndPackage(ctx, taskID, snapshot.URL)
 		if runErr == nil {
-			return e.transition(
-				ctx,
+			return e.transitionTerminal(
 				taskID,
 				string(domainv2.StatusRunning),
 				string(domainv2.StatusSuccess),
@@ -144,8 +154,7 @@ func (e *V2Executor) Execute(ctx context.Context, taskID, token string) error {
 		if errMessage == "" {
 			errMessage = "worker execution failed"
 		}
-		return e.transition(
-			ctx,
+		return e.transitionTerminal(
 			taskID,
 			string(domainv2.StatusRunning),
 			string(domainv2.StatusFailed),
@@ -178,7 +187,7 @@ func (e *V2Executor) Run(ctx context.Context, consumer V2QueueConsumer) error {
 			return fmt.Errorf("read v2 queue messages: %w", err)
 		}
 		for _, msg := range messages {
-			err := e.Execute(ctx, msg.TaskID, msg.Token)
+			err := e.executeWithRetry(ctx, msg)
 			if err != nil {
 				log.Printf("v2 worker execute failed task_id=%s: %v", strings.TrimSpace(msg.TaskID), err)
 			}
@@ -192,22 +201,25 @@ func (e *V2Executor) transition(
 	patch postgres.StatusPatch,
 	payload map[string]any,
 ) error {
-	if err := e.repo.UpdateTaskStatus(ctx, taskID, from, to, patch); err != nil {
-		return err
-	}
-
-	fromCopy := from
-	toCopy := to
-	if err := e.repo.AppendTaskEvent(ctx, postgres.TaskEvent{
+	return e.repo.TransitionTaskWithEvent(ctx, postgres.TransitionTaskWithEventInput{
 		TaskID:      taskID,
+		FromStatus:  from,
+		ToStatus:    to,
+		Patch:       patch,
 		EventType:   v2StatusTransitionEvent,
-		FromStatus:  &fromCopy,
-		ToStatus:    &toCopy,
 		PayloadJSON: marshalPayload(payload),
-	}); err != nil {
-		return fmt.Errorf("append v2 task event: %w", err)
-	}
-	return nil
+	})
+}
+
+func (e *V2Executor) transitionTerminal(
+	taskID, from, to string,
+	patch postgres.StatusPatch,
+	payload map[string]any,
+) error {
+	terminalCtx, cancel := context.WithTimeout(context.Background(), e.terminalWriteDuration())
+	defer cancel()
+
+	return e.transition(terminalCtx, taskID, from, to, patch, payload)
 }
 
 func (e *V2Executor) maxAttempts() int {
@@ -222,6 +234,58 @@ func (e *V2Executor) readBlockDuration() time.Duration {
 		return e.readBlock
 	}
 	return defaultV2QueueReadBlock
+}
+
+func (e *V2Executor) terminalWriteDuration() time.Duration {
+	if e.terminalWriteTimeout > 0 {
+		return e.terminalWriteTimeout
+	}
+	return defaultV2TerminalWrite
+}
+
+func (e *V2Executor) runRetryAttempts() int {
+	if e.runRetryCount < 0 {
+		return 1
+	}
+	retryCount := e.runRetryCount
+	if retryCount == 0 {
+		retryCount = defaultV2RunRetryCount
+	}
+	return retryCount + 1
+}
+
+func (e *V2Executor) runRetryBackoffDuration(attempt int) time.Duration {
+	base := e.runRetryBackoff
+	if base <= 0 {
+		base = defaultV2RunRetryBackoff
+	}
+	if attempt <= 0 {
+		attempt = 1
+	}
+	return time.Duration(attempt) * base
+}
+
+func (e *V2Executor) executeWithRetry(ctx context.Context, msg queuev2.TaskMessage) error {
+	var lastErr error
+	attempts := e.runRetryAttempts()
+	for attempt := 1; attempt <= attempts; attempt++ {
+		lastErr = e.Execute(ctx, msg.TaskID, msg.Token)
+		if lastErr == nil {
+			return nil
+		}
+		if attempt >= attempts {
+			break
+		}
+
+		timer := time.NewTimer(e.runRetryBackoffDuration(attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return lastErr
 }
 
 func shouldRetryTaskExecutionError(err error) bool {
@@ -302,18 +366,11 @@ func (r *V2PostgresExecutionRepo) GetTaskForExecution(ctx context.Context, taskI
 	return snapshot, nil
 }
 
-func (r *V2PostgresExecutionRepo) UpdateTaskStatus(ctx context.Context, id string, from, to string, patch postgres.StatusPatch) error {
+func (r *V2PostgresExecutionRepo) TransitionTaskWithEvent(ctx context.Context, in postgres.TransitionTaskWithEventInput) error {
 	if r == nil || r.Writer == nil {
 		return errors.New("v2 execution repo writer is not configured")
 	}
-	return r.Writer.UpdateTaskStatus(ctx, id, from, to, patch)
-}
-
-func (r *V2PostgresExecutionRepo) AppendTaskEvent(ctx context.Context, event postgres.TaskEvent) error {
-	if r == nil || r.Writer == nil {
-		return errors.New("v2 execution repo writer is not configured")
-	}
-	return r.Writer.AppendTaskEvent(ctx, event)
+	return r.Writer.TransitionTaskWithEvent(ctx, in)
 }
 
 type V2ServiceDownloader struct {

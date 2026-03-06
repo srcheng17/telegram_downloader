@@ -5,7 +5,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
@@ -134,17 +136,126 @@ func TestExecutorMarksFailedAfterRetryExhausted(t *testing.T) {
 	}
 }
 
+func TestExecutorDoesNotLeavePartialStateWhenEventWriteFails(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-atomic"] = v2ExecutorTaskRecord{
+		id:           "task-atomic",
+		url:          "https://telegra.ph/demo-atomic",
+		status:       "QUEUED",
+		enqueueToken: "token-atomic",
+	}
+	repo.eventErrByToStatus["RUNNING"] = errors.New("append event failed")
+
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-atomic",
+		Download: &fakeV2ExecutorDownloader{artifactPath: "/tmp/task-atomic.cbz"},
+	})
+
+	err := executor.Execute(context.Background(), "task-atomic", "token-atomic")
+	if err == nil {
+		t.Fatalf("expected execute to fail when event write fails")
+	}
+
+	persisted := repo.tasks["task-atomic"]
+	if persisted.status != "QUEUED" {
+		t.Fatalf("expected atomic rollback to keep QUEUED, got %q", persisted.status)
+	}
+	if len(repo.statusUpdates) != 0 {
+		t.Fatalf("expected no persisted status update on event failure, got %d", len(repo.statusUpdates))
+	}
+}
+
+func TestExecutorUsesIndependentTerminalContextWhenRunContextCanceled(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-terminal"] = v2ExecutorTaskRecord{
+		id:           "task-terminal",
+		url:          "https://telegra.ph/demo-terminal",
+		status:       "QUEUED",
+		enqueueToken: "token-terminal",
+	}
+	repo.failTerminalWhenCtxCanceled = true
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	downloader := &fakeV2ExecutorDownloader{
+		executeFn: func(context.Context, string, string) (string, error) {
+			cancel()
+			return "", errors.New("download interrupted")
+		},
+	}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-terminal",
+		Download: downloader,
+	})
+
+	err := executor.Execute(runCtx, "task-terminal", "token-terminal")
+	if err != nil {
+		t.Fatalf("expected terminal transition to use independent context, got %v", err)
+	}
+
+	persisted := repo.tasks["task-terminal"]
+	if persisted.status != "FAILED" {
+		t.Fatalf("expected terminal status FAILED, got %q", persisted.status)
+	}
+}
+
+func TestRunRetriesExecuteUntilSuccess(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-run-retry"] = v2ExecutorTaskRecord{
+		id:           "task-run-retry",
+		url:          "https://telegra.ph/demo-retry-run",
+		status:       "QUEUED",
+		enqueueToken: "token-run-retry",
+	}
+	repo.getTaskErrSequence = []error{errors.New("temporary repo failure")}
+
+	downloader := &fakeV2ExecutorDownloader{artifactPath: "/tmp/task-run-retry.cbz"}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-run",
+		Download: downloader,
+	})
+
+	consumer := &fakeV2QueueConsumer{
+		reads: []fakeV2ReadResult{
+			{messages: []queuev2.TaskMessage{{TaskID: "task-run-retry", Token: "token-run-retry"}}},
+			{err: context.Canceled},
+		},
+	}
+
+	err := executor.Run(context.Background(), consumer)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if repo.getTaskCalls != 2 {
+		t.Fatalf("expected execute retried once in run loop, got getTaskCalls=%d", repo.getTaskCalls)
+	}
+	if downloader.calls != 1 {
+		t.Fatalf("expected downloader to run once after retry recovery, got %d", downloader.calls)
+	}
+	persisted := repo.tasks["task-run-retry"]
+	if persisted.status != "SUCCESS" {
+		t.Fatalf("expected final status SUCCESS after run retry, got %q", persisted.status)
+	}
+}
+
 type fakeV2ExecutorDownloader struct {
 	artifactPath string
 	err          error
+	executeFn    func(ctx context.Context, taskID, pageURL string) (string, error)
 
 	calls   int
 	lastURL string
 }
 
-func (f *fakeV2ExecutorDownloader) DownloadAndPackage(_ context.Context, taskID, pageURL string) (string, error) {
+func (f *fakeV2ExecutorDownloader) DownloadAndPackage(ctx context.Context, taskID, pageURL string) (string, error) {
 	f.calls++
 	f.lastURL = pageURL
+	if f.executeFn != nil {
+		return f.executeFn(ctx, taskID, pageURL)
+	}
 	if f.err != nil {
 		return "", f.err
 	}
@@ -158,6 +269,11 @@ type fakeV2ExecutorRepo struct {
 	tasks         map[string]v2ExecutorTaskRecord
 	statusUpdates []v2ExecutorStatusUpdate
 	events        []v2ExecutorTaskEvent
+
+	getTaskErrSequence          []error
+	eventErrByToStatus          map[string]error
+	failTerminalWhenCtxCanceled bool
+	getTaskCalls                int
 }
 
 type v2ExecutorTaskRecord struct {
@@ -185,10 +301,22 @@ type v2ExecutorTaskEvent struct {
 }
 
 func newFakeV2ExecutorRepo() *fakeV2ExecutorRepo {
-	return &fakeV2ExecutorRepo{tasks: map[string]v2ExecutorTaskRecord{}}
+	return &fakeV2ExecutorRepo{
+		tasks:              map[string]v2ExecutorTaskRecord{},
+		eventErrByToStatus: map[string]error{},
+	}
 }
 
 func (f *fakeV2ExecutorRepo) GetTaskForExecution(_ context.Context, taskID string) (V2TaskSnapshot, error) {
+	f.getTaskCalls++
+	if len(f.getTaskErrSequence) > 0 {
+		err := f.getTaskErrSequence[0]
+		f.getTaskErrSequence = f.getTaskErrSequence[1:]
+		if err != nil {
+			return V2TaskSnapshot{}, err
+		}
+	}
+
 	task, ok := f.tasks[taskID]
 	if !ok {
 		return V2TaskSnapshot{}, errors.New("task not found")
@@ -201,59 +329,58 @@ func (f *fakeV2ExecutorRepo) GetTaskForExecution(_ context.Context, taskID strin
 	}, nil
 }
 
-func (f *fakeV2ExecutorRepo) UpdateTaskStatus(_ context.Context, id string, from, to string, patch postgres.StatusPatch) error {
-	task, ok := f.tasks[id]
+func (f *fakeV2ExecutorRepo) TransitionTaskWithEvent(
+	ctx context.Context,
+	in postgres.TransitionTaskWithEventInput,
+) error {
+	task, ok := f.tasks[in.TaskID]
 	if !ok {
 		return errors.New("task not found")
 	}
-	if task.status != from {
+	if task.status != in.FromStatus {
 		return postgres.ErrV2TaskStatusMismatchOrNotFound
 	}
+	if f.failTerminalWhenCtxCanceled && ctx.Err() != nil && (in.ToStatus == "SUCCESS" || in.ToStatus == "FAILED") {
+		return ctx.Err()
+	}
+	if err, ok := f.eventErrByToStatus[strings.TrimSpace(in.ToStatus)]; ok {
+		return err
+	}
 
-	task.status = to
-	if patch.Error != nil {
-		message := *patch.Error
+	task.status = in.ToStatus
+	if in.Patch.Error != nil {
+		message := *in.Patch.Error
 		task.error = &message
 	} else {
 		task.error = nil
 	}
-	if patch.ResultZipPath != nil {
-		path := *patch.ResultZipPath
+	if in.Patch.ResultZipPath != nil {
+		path := *in.Patch.ResultZipPath
 		task.resultZipPath = &path
 	} else {
 		task.resultZipPath = nil
 	}
-	if patch.ClaimedBy != nil {
-		worker := *patch.ClaimedBy
+	if in.Patch.ClaimedBy != nil {
+		worker := *in.Patch.ClaimedBy
 		task.claimedBy = &worker
 	}
-	f.tasks[id] = task
+	f.tasks[in.TaskID] = task
 
 	f.statusUpdates = append(f.statusUpdates, v2ExecutorStatusUpdate{
-		id:    id,
-		from:  from,
-		to:    to,
-		patch: patch,
+		id:    in.TaskID,
+		from:  in.FromStatus,
+		to:    in.ToStatus,
+		patch: in.Patch,
 	})
-	return nil
-}
-
-func (f *fakeV2ExecutorRepo) AppendTaskEvent(_ context.Context, event postgres.TaskEvent) error {
+	fromStatus := in.FromStatus
+	toStatus := in.ToStatus
 	f.events = append(f.events, v2ExecutorTaskEvent{
-		taskID:      event.TaskID,
-		fromStatus:  cloneStringForV2Executor(event.FromStatus),
-		toStatus:    cloneStringForV2Executor(event.ToStatus),
-		payloadJSON: event.PayloadJSON,
+		taskID:      in.TaskID,
+		fromStatus:  &fromStatus,
+		toStatus:    &toStatus,
+		payloadJSON: in.PayloadJSON,
 	})
 	return nil
-}
-
-func cloneStringForV2Executor(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	copied := *value
-	return &copied
 }
 
 var errRetryableDownload = &temporaryExecutionNetError{message: "temporary upstream failure"}
@@ -272,4 +399,26 @@ func (e *temporaryExecutionNetError) Timeout() bool {
 
 func (e *temporaryExecutionNetError) Temporary() bool {
 	return true
+}
+
+type fakeV2ReadResult struct {
+	messages []queuev2.TaskMessage
+	err      error
+}
+
+type fakeV2QueueConsumer struct {
+	reads []fakeV2ReadResult
+	index int
+}
+
+func (f *fakeV2QueueConsumer) Read(_ context.Context, _ int64, _ time.Duration) ([]queuev2.TaskMessage, error) {
+	if f.index >= len(f.reads) {
+		return nil, context.Canceled
+	}
+	result := f.reads[f.index]
+	f.index++
+	if result.messages == nil {
+		return []queuev2.TaskMessage{}, result.err
+	}
+	return result.messages, result.err
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -45,10 +46,20 @@ type TaskEvent struct {
 	PayloadJSON string
 }
 
+type TransitionTaskWithEventInput struct {
+	TaskID      string
+	FromStatus  string
+	ToStatus    string
+	Patch       StatusPatch
+	EventType   string
+	PayloadJSON string
+}
+
 type V2TaskRepo interface {
 	CreateTask(ctx context.Context, in CreateTaskInput) (TaskRecord, error)
 	UpdateTaskStatus(ctx context.Context, id string, from, to string, patch StatusPatch) error
 	AppendTaskEvent(ctx context.Context, event TaskEvent) error
+	TransitionTaskWithEvent(ctx context.Context, in TransitionTaskWithEventInput) error
 }
 
 type PostgresV2TaskRepo struct {
@@ -111,7 +122,74 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 }
 
 func (r *PostgresV2TaskRepo) UpdateTaskStatus(ctx context.Context, id string, from, to string, patch StatusPatch) error {
-	tag, err := r.db.Exec(
+	return updateV2TaskStatusWithExecutor(ctx, r.db, id, from, to, patch)
+}
+
+func (r *PostgresV2TaskRepo) AppendTaskEvent(ctx context.Context, event TaskEvent) error {
+	return appendV2TaskEventWithExecutor(ctx, r.db, event)
+}
+
+func (r *PostgresV2TaskRepo) TransitionTaskWithEvent(ctx context.Context, in TransitionTaskWithEventInput) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if err := updateV2TaskStatusWithExecutor(
+		ctx,
+		tx,
+		strings.TrimSpace(in.TaskID),
+		strings.TrimSpace(in.FromStatus),
+		strings.TrimSpace(in.ToStatus),
+		in.Patch,
+	); err != nil {
+		return err
+	}
+
+	fromCopy := strings.TrimSpace(in.FromStatus)
+	toCopy := strings.TrimSpace(in.ToStatus)
+	eventType := strings.TrimSpace(in.EventType)
+	if eventType == "" {
+		eventType = "STATUS_TRANSITION"
+	}
+
+	if err := appendV2TaskEventWithExecutor(ctx, tx, TaskEvent{
+		TaskID:      strings.TrimSpace(in.TaskID),
+		EventType:   eventType,
+		FromStatus:  &fromCopy,
+		ToStatus:    &toCopy,
+		PayloadJSON: strings.TrimSpace(in.PayloadJSON),
+	}); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+type v2TaskExec interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func updateV2TaskStatusWithExecutor(
+	ctx context.Context,
+	executor v2TaskExec,
+	id string,
+	from string,
+	to string,
+	patch StatusPatch,
+) error {
+	tag, err := executor.Exec(
 		ctx,
 		`
 		UPDATE v2_tasks
@@ -147,13 +225,13 @@ func (r *PostgresV2TaskRepo) UpdateTaskStatus(ctx context.Context, id string, fr
 	return nil
 }
 
-func (r *PostgresV2TaskRepo) AppendTaskEvent(ctx context.Context, event TaskEvent) error {
+func appendV2TaskEventWithExecutor(ctx context.Context, executor v2TaskExec, event TaskEvent) error {
 	payloadJSON := strings.TrimSpace(event.PayloadJSON)
 	if payloadJSON == "" {
 		payloadJSON = "{}"
 	}
 
-	_, err := r.db.Exec(
+	_, err := executor.Exec(
 		ctx,
 		`
 		INSERT INTO v2_task_events (
