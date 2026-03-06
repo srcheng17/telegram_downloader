@@ -111,9 +111,57 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	assertContains(t, body, `hx-push-url="true"`)
 }
 
+func TestHTMXRequestReturnsPageFragment(t *testing.T) {
+	router := NewRouter()
+	req := httptest.NewRequest(http.MethodGet, "/logs", nil)
+	req.Header.Set("HX-Request", "true")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+	body := recorder.Body.String()
+	assertContains(t, body, "下载日志")
+	assertNotContains(t, body, "<!DOCTYPE html>")
+	assertNotContains(t, body, "<html")
+	assertNotContains(t, body, `<nav class="main-nav">`)
+}
+
+func TestSettingsPageKeepsZeroRetriesValue(t *testing.T) {
+	router := NewRouterWithConfig(Config{
+		Settings: Settings{
+			TaskConcurrency:   2,
+			ImageConcurrency:  2,
+			Timeout:           30,
+			Retries:           0,
+			LogRetentionDays:  7,
+			FileRetentionDays: 7,
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+	body := recorder.Body.String()
+	assertContains(t, body, `name="retries" value="0"`)
+}
+
 func assertContains(t *testing.T, haystack, needle string) {
 	t.Helper()
 	if !strings.Contains(haystack, needle) {
 		t.Fatalf("expected response body to contain %q", needle)
+	}
+}
+
+func assertNotContains(t *testing.T, haystack, needle string) {
+	t.Helper()
+	if strings.Contains(haystack, needle) {
+		t.Fatalf("expected response body not to contain %q", needle)
 	}
 }

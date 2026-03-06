@@ -73,7 +73,7 @@ func main() {
 		},
 	)
 	rootRouter := chi.NewRouter()
-	httpui.RegisterRoutes(rootRouter)
+	httpui.RegisterRoutesWithConfig(rootRouter, buildUIConfig(cfg))
 	httpv2.RegisterRoutes(rootRouter, httpv2.NewTasksHandler(v2Store, v2Queue))
 	rootRouter.Mount("/", legacyRouter)
 
@@ -100,5 +100,24 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("graceful shutdown failed: %v", err)
+	}
+}
+
+func buildUIConfig(cfg config.Config) httpui.Config {
+	return httpui.Config{
+		Settings: httpui.Settings{
+			TaskConcurrency:   2,
+			ImageConcurrency:  cfg.ImageConcurrency,
+			Timeout:           cfg.DownloadTimeout,
+			Retries:           cfg.DownloadRetries,
+			LogRetentionDays:  7,
+			FileRetentionDays: 7,
+		},
+		Guardrails: httpui.Guardrails{
+			AllowedDomains: []string{"telegra.ph", "graph.org"},
+			MaxImages:      300,
+			MaxImageBytes:  25 * 1024 * 1024,
+			MaxTotalBytes:  500 * 1024 * 1024,
+		},
 	}
 }

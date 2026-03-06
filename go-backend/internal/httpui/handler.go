@@ -85,8 +85,8 @@ func NewHandler(config Config) *Handler {
 	}
 }
 
-func (h *Handler) Index(w http.ResponseWriter, _ *http.Request) {
-	h.render(w, "index", pageData{
+func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
+	h.render(w, r, "index", pageData{
 		Title:       "首页",
 		CurrentPath: "/",
 		Settings:    h.settings,
@@ -94,8 +94,8 @@ func (h *Handler) Index(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (h *Handler) Logs(w http.ResponseWriter, _ *http.Request) {
-	h.render(w, "logs", pageData{
+func (h *Handler) Logs(w http.ResponseWriter, r *http.Request) {
+	h.render(w, r, "logs", pageData{
 		Title:       "日志",
 		CurrentPath: "/logs",
 		Settings:    h.settings,
@@ -103,8 +103,8 @@ func (h *Handler) Logs(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (h *Handler) SettingsPage(w http.ResponseWriter, _ *http.Request) {
-	h.render(w, "settings", pageData{
+func (h *Handler) SettingsPage(w http.ResponseWriter, r *http.Request) {
+	h.render(w, r, "settings", pageData{
 		Title:       "设置",
 		CurrentPath: "/settings",
 		Settings:    h.settings,
@@ -112,7 +112,7 @@ func (h *Handler) SettingsPage(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (h *Handler) render(w http.ResponseWriter, templateName string, data pageData) {
+func (h *Handler) render(w http.ResponseWriter, r *http.Request, templateName string, data pageData) {
 	tpl, ok := h.templates[templateName]
 	if !ok {
 		http.Error(w, "template not found", http.StatusInternalServerError)
@@ -120,10 +120,21 @@ func (h *Handler) render(w http.ResponseWriter, templateName string, data pageDa
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tpl.ExecuteTemplate(w, "base.html", data); err != nil {
+	layout := "base.html"
+	if isHTMXRequest(r) {
+		layout = "partial.html"
+	}
+	if err := tpl.ExecuteTemplate(w, layout, data); err != nil {
 		log.Printf("httpui render template=%s: %v", templateName, err)
 		http.Error(w, "render page", http.StatusInternalServerError)
 	}
+}
+
+func isHTMXRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("HX-Request")), "true")
 }
 
 func mustParseTemplate(page string) *template.Template {
@@ -139,7 +150,7 @@ func mustParseTemplate(page string) *template.Template {
 			}
 			return fmt.Sprintf("%d 字节", size)
 		},
-	}).ParseFS(templateFiles, "templates/base.html", page)
+	}).ParseFS(templateFiles, "templates/base.html", "templates/partial.html", page)
 	if err != nil {
 		panic(err)
 	}
@@ -171,9 +182,6 @@ func normalizeSettings(settings Settings) Settings {
 		settings.Timeout = 30
 	}
 	if settings.Retries < 0 {
-		settings.Retries = 10
-	}
-	if settings.Retries == 0 {
 		settings.Retries = 10
 	}
 	if settings.LogRetentionDays <= 0 {
