@@ -24,10 +24,12 @@ const (
 )
 
 type Service struct {
-	HTTPClient    *http.Client
-	MaxImages     int
-	MaxImageBytes int64
-	MaxTotalBytes int64
+	HTTPClient       *http.Client
+	DownloadRetries  int
+	ImageConcurrency int
+	MaxImages        int
+	MaxImageBytes    int64
+	MaxTotalBytes    int64
 }
 
 type LimitKind string
@@ -139,13 +141,7 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 		}
 	}
 
-	workerCount := defaultWorkerCount
-	if len(imageSlots) < workerCount {
-		workerCount = len(imageSlots)
-	}
-	if workerCount <= 0 {
-		workerCount = 1
-	}
+	workerCount := s.imageWorkerCount(len(imageSlots))
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -312,8 +308,9 @@ func (s Service) downloadImageSlot(
 	totalBytesMu *sync.Mutex,
 ) (domain.DownloadedImage, error) {
 	var lastErr error
+	retries := s.downloadRetries()
 	for _, candidateURL := range candidates {
-		image, err := s.downloadImage(ctx, client, candidateURL, totalBytes, totalBytesMu)
+		image, err := s.downloadImageWithRetries(ctx, client, candidateURL, retries, totalBytes, totalBytesMu)
 		if err == nil {
 			return image, nil
 		}
@@ -326,6 +323,53 @@ func (s Service) downloadImageSlot(
 		return domain.DownloadedImage{}, fmt.Errorf("all candidate urls failed: %w", lastErr)
 	}
 	return domain.DownloadedImage{}, errors.New("no candidate urls available for image")
+}
+
+func (s Service) imageWorkerCount(totalImages int) int {
+	workerCount := s.ImageConcurrency
+	if workerCount <= 0 {
+		workerCount = defaultWorkerCount
+	}
+	if totalImages > 0 && totalImages < workerCount {
+		workerCount = totalImages
+	}
+	if workerCount <= 0 {
+		return 1
+	}
+	return workerCount
+}
+
+func (s Service) downloadRetries() int {
+	if s.DownloadRetries > 0 {
+		return s.DownloadRetries
+	}
+	return 0
+}
+
+func (s Service) downloadImageWithRetries(
+	ctx context.Context,
+	client *http.Client,
+	imageURL string,
+	retries int,
+	totalBytes *int64,
+	totalBytesMu *sync.Mutex,
+) (domain.DownloadedImage, error) {
+	attempts := retries + 1
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		image, err := s.downloadImage(ctx, client, imageURL, totalBytes, totalBytesMu)
+		if err == nil {
+			return image, nil
+		}
+		if isLimitExceeded(err) || isContextCancellation(err) {
+			return domain.DownloadedImage{}, err
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return domain.DownloadedImage{}, lastErr
+	}
+	return domain.DownloadedImage{}, errors.New("download image failed")
 }
 
 func (s Service) downloadImage(

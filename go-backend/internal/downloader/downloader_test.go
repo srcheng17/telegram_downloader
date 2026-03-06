@@ -395,6 +395,94 @@ func TestDownloadFailsWhenTotalBytesExceedsLimit(t *testing.T) {
 	}
 }
 
+func TestDownloadRespectsConfiguredImageConcurrency(t *testing.T) {
+	var inFlight atomic.Int32
+	var maxInFlight atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(w, `<html><body><img src="/a.jpg"><img src="/b.jpg"></body></html>`)
+		case "/a.jpg", "/b.jpg":
+			current := inFlight.Add(1)
+			for {
+				observed := maxInFlight.Load()
+				if current <= observed || maxInFlight.CompareAndSwap(observed, current) {
+					break
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+			inFlight.Add(-1)
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := Service{
+		HTTPClient:       server.Client(),
+		ImageConcurrency: 1,
+		MaxImages:        10,
+		MaxImageBytes:    1024,
+		MaxTotalBytes:    4096,
+	}
+
+	result, err := service.Download(context.Background(), server.URL+"/page")
+	if err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if result.DownloadedImages != 2 {
+		t.Fatalf("expected 2 downloaded images, got %d", result.DownloadedImages)
+	}
+	if maxInFlight.Load() != 1 {
+		t.Fatalf("expected max inflight image downloads=1, got %d", maxInFlight.Load())
+	}
+}
+
+func TestDownloadRetriesFailedImageRequests(t *testing.T) {
+	var imageAttempts atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(w, `<html><body><img src="/retry.jpg"></body></html>`)
+		case "/retry.jpg":
+			attempt := imageAttempts.Add(1)
+			if attempt < 3 {
+				http.Error(w, "temporary", http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := Service{
+		HTTPClient:       server.Client(),
+		DownloadRetries:  2,
+		ImageConcurrency: 1,
+		MaxImages:        10,
+		MaxImageBytes:    1024,
+		MaxTotalBytes:    4096,
+	}
+
+	result, err := service.Download(context.Background(), server.URL+"/page")
+	if err != nil {
+		t.Fatalf("expected retry to recover download, got error: %v", err)
+	}
+	if result.DownloadedImages != 1 {
+		t.Fatalf("expected 1 downloaded image, got %d", result.DownloadedImages)
+	}
+	if imageAttempts.Load() != 3 {
+		t.Fatalf("expected 3 attempts (1 + 2 retries), got %d", imageAttempts.Load())
+	}
+}
+
 type roundTripperFunc func(req *http.Request) (*http.Response, error)
 
 func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {

@@ -83,9 +83,11 @@ func main() {
 			HTTPClient: &http.Client{
 				Timeout: time.Duration(cfg.DownloadTimeout) * time.Second,
 			},
-			MaxImages:     maxImagesPerTask,
-			MaxImageBytes: maxBytesPerImage,
-			MaxTotalBytes: maxBytesPerTask,
+			DownloadRetries:  cfg.DownloadRetries,
+			ImageConcurrency: cfg.ImageConcurrency,
+			MaxImages:        maxImagesPerTask,
+			MaxImageBytes:    maxBytesPerImage,
+			MaxTotalBytes:    maxBytesPerTask,
 		},
 		DownloadRoot: downloadRoot,
 	})
