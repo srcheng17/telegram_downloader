@@ -48,6 +48,7 @@ type Guardrails struct {
 type Config struct {
 	Settings   Settings
 	Guardrails Guardrails
+	StaticDir  string
 }
 
 func NewRouter() http.Handler {
@@ -70,7 +71,8 @@ func RegisterRoutesWithConfig(r chi.Router, config Config) {
 	r.Get("/", h.Index)
 	r.Get("/logs", h.Logs)
 	r.Get("/settings", h.SettingsPage)
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir(resolveStaticDir()))))
+	r.Post("/settings", h.SaveSettings)
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir(resolveStaticDir(config.StaticDir)))))
 }
 
 func NewHandler(config Config) *Handler {
@@ -110,6 +112,10 @@ func (h *Handler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 		Settings:    h.settings,
 		Guardrails:  h.guardrails,
 	})
+}
+
+func (h *Handler) SaveSettings(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
 func (h *Handler) render(w http.ResponseWriter, r *http.Request, templateName string, data pageData) {
@@ -153,7 +159,11 @@ func mustParseTemplate(page string) *template.Template {
 	return tpl
 }
 
-func resolveStaticDir() string {
+func resolveStaticDir(configured string) string {
+	if configured = strings.TrimSpace(configured); configured != "" {
+		return configured
+	}
+
 	candidates := []string{
 		"static",
 		filepath.Join("..", "static"),

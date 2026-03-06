@@ -3,6 +3,8 @@ package httpui
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -150,6 +152,44 @@ func TestSettingsPageKeepsZeroRetriesValue(t *testing.T) {
 	}
 	body := recorder.Body.String()
 	assertContains(t, body, `name="retries" value="0"`)
+}
+
+func TestSettingsPagePostRedirectsBack(t *testing.T) {
+	router := NewRouter()
+	req := httptest.NewRequest(http.MethodPost, "/settings", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("expected status 303, got %d", recorder.Code)
+	}
+	if location := recorder.Header().Get("Location"); location != "/settings" {
+		t.Fatalf("expected redirect location /settings, got %q", location)
+	}
+}
+
+func TestStaticRouteUsesConfiguredStaticDir(t *testing.T) {
+	staticDir := t.TempDir()
+	const fileName = "sentinel.txt"
+	if err := os.WriteFile(filepath.Join(staticDir, fileName), []byte("configured-static-dir"), 0o644); err != nil {
+		t.Fatalf("write static file: %v", err)
+	}
+
+	router := NewRouterWithConfig(Config{
+		StaticDir: staticDir,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/static/"+fileName, nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+	if body := recorder.Body.String(); body != "configured-static-dir" {
+		t.Fatalf("expected body %q, got %q", "configured-static-dir", body)
+	}
 }
 
 func assertContains(t *testing.T, haystack, needle string) {

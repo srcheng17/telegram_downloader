@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/go-chi/chi/v5"
@@ -119,5 +120,21 @@ func buildUIConfig(cfg config.Config) httpui.Config {
 			MaxImageBytes:  25 * 1024 * 1024,
 			MaxTotalBytes:  500 * 1024 * 1024,
 		},
+		StaticDir: resolveUIStaticDir(),
 	}
+}
+
+func resolveUIStaticDir() string {
+	candidates := []string{
+		os.Getenv("GO_UI_STATIC_DIR"),
+		os.Getenv("UI_STATIC_DIR"),
+		os.Getenv("STATIC_DIR"),
+	}
+	for _, candidate := range candidates {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return "/app/static"
 }

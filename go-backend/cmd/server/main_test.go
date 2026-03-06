@@ -9,6 +9,10 @@ import (
 )
 
 func TestBuildUIConfigUsesRuntimeValues(t *testing.T) {
+	t.Setenv("GO_UI_STATIC_DIR", "")
+	t.Setenv("UI_STATIC_DIR", "")
+	t.Setenv("STATIC_DIR", "")
+
 	input := config.Config{
 		DownloadTimeout:  88,
 		DownloadRetries:  0,
@@ -31,8 +35,20 @@ func TestBuildUIConfigUsesRuntimeValues(t *testing.T) {
 			MaxImageBytes:  25 * 1024 * 1024,
 			MaxTotalBytes:  500 * 1024 * 1024,
 		},
+		StaticDir: "/app/static",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected ui config:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestBuildUIConfigUsesStaticDirFromEnv(t *testing.T) {
+	t.Setenv("GO_UI_STATIC_DIR", "/tmp/go-ui-static")
+	t.Setenv("UI_STATIC_DIR", "/tmp/ui-static")
+	t.Setenv("STATIC_DIR", "/tmp/fallback-static")
+
+	got := buildUIConfig(config.Config{})
+	if got.StaticDir != "/tmp/go-ui-static" {
+		t.Fatalf("expected static dir from GO_UI_STATIC_DIR, got %q", got.StaticDir)
 	}
 }
