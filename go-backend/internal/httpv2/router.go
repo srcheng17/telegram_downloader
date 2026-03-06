@@ -16,4 +16,6 @@ func RegisterRoutes(r chi.Router, h *TasksHandler) {
 	r.Post("/v2/tasks", h.CreateTask)
 	r.Get("/v2/tasks", h.ListTasks)
 	r.Get("/v2/tasks/{task_id}", h.GetTask)
+	r.Post("/v2/tasks/{task_id}/cancel", h.CancelTask)
+	r.Get("/v2/tasks/{task_id}/artifact", h.DownloadArtifact)
 }

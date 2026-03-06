@@ -4,10 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/service"
 )
 
 type fakeTaskStore struct {
@@ -23,6 +30,9 @@ type fakeTaskStore struct {
 	getTask  *Task
 	getErr   error
 
+	cancelCalls []cancelTaskCall
+	cancelErr   error
+
 	markFailedCalls       []markFailedCall
 	markFailedErr         error
 	markFailedCtxErr      error
@@ -32,6 +42,11 @@ type fakeTaskStore struct {
 type markFailedCall struct {
 	taskID  string
 	message string
+}
+
+type cancelTaskCall struct {
+	taskID     string
+	fromStatus string
 }
 
 func (f *fakeTaskStore) CreateTask(_ context.Context, in CreateTaskInput) (Task, error) {
@@ -59,6 +74,14 @@ func (f *fakeTaskStore) GetTask(_ context.Context, taskID string) (*Task, error)
 		return nil, f.getErr
 	}
 	return f.getTask, nil
+}
+
+func (f *fakeTaskStore) CancelTask(_ context.Context, taskID, fromStatus string) error {
+	f.cancelCalls = append(f.cancelCalls, cancelTaskCall{
+		taskID:     taskID,
+		fromStatus: fromStatus,
+	})
+	return f.cancelErr
 }
 
 func (f *fakeTaskStore) MarkTaskFailed(ctx context.Context, taskID, message string) error {
@@ -269,5 +292,77 @@ func TestCreateTaskCompensationUsesIndependentTimeoutContext(t *testing.T) {
 	}
 	if !repo.markFailedHasDeadline {
 		t.Fatalf("expected compensation context to have timeout deadline")
+	}
+}
+
+func TestCancelTaskReturnsAccepted(t *testing.T) {
+	repo := &fakeTaskStore{
+		getTask: &Task{
+			ID:     "task-v2-cancel",
+			Status: "RUNNING",
+		},
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/tasks/task-v2-cancel/cancel", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.cancelCalls) != 1 {
+		t.Fatalf("expected one cancel call, got %d", len(repo.cancelCalls))
+	}
+	if repo.cancelCalls[0].taskID != "task-v2-cancel" {
+		t.Fatalf("expected cancel task id task-v2-cancel, got %q", repo.cancelCalls[0].taskID)
+	}
+	if repo.cancelCalls[0].fromStatus != "RUNNING" {
+		t.Fatalf("expected cancel from status RUNNING, got %q", repo.cancelCalls[0].fromStatus)
+	}
+}
+
+func TestDownloadArtifactReturnsFile(t *testing.T) {
+	downloadRoot := t.TempDir()
+	artifactPath := filepath.Join(downloadRoot, "task-v2-artifact.cbz")
+	if err := os.WriteFile(artifactPath, []byte("artifact-bytes"), 0o644); err != nil {
+		t.Fatalf("write artifact fixture: %v", err)
+	}
+
+	repo := &fakeTaskStore{
+		getTask: &Task{
+			ID:            "task-v2-artifact",
+			Status:        "SUCCESS",
+			ResultZipPath: stringPtr(artifactPath),
+		},
+	}
+	artifactService := service.NewV2ArtifactService(service.V2ArtifactServiceConfig{
+		DownloadRoot: downloadRoot,
+	})
+
+	r := chi.NewRouter()
+	RegisterRoutes(r, NewTasksHandlerWithArtifactService(repo, &fakeTaskQueue{}, artifactService))
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/tasks/task-v2-artifact/artifact", nil)
+	recorder := httptest.NewRecorder()
+
+	r.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Header().Get("Content-Type") != "application/vnd.comicbook+zip" {
+		t.Fatalf("expected cbz content type, got %q", recorder.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(recorder.Header().Get("Content-Disposition"), "task-v2-artifact.cbz") {
+		t.Fatalf("expected attachment filename header, got %q", recorder.Header().Get("Content-Disposition"))
+	}
+	body, err := io.ReadAll(recorder.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if string(body) != "artifact-bytes" {
+		t.Fatalf("expected streamed artifact content, got %q", string(body))
 	}
 }

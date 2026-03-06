@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/service"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
 
@@ -65,6 +66,7 @@ type TaskStore interface {
 	CreateTask(ctx context.Context, in CreateTaskInput) (Task, error)
 	ListTasks(ctx context.Context, in ListTasksQuery) (ListTasksResult, error)
 	GetTask(ctx context.Context, taskID string) (*Task, error)
+	CancelTask(ctx context.Context, taskID, fromStatus string) error
 	MarkTaskFailed(ctx context.Context, taskID, message string) error
 }
 
@@ -77,13 +79,30 @@ type TaskQueue interface {
 	Enqueue(ctx context.Context, message TaskQueueMessage) error
 }
 
+type ArtifactService interface {
+	OpenArtifact(resultZipPath string) (*service.OpenedV2Artifact, error)
+}
+
 type TasksHandler struct {
-	store TaskStore
-	queue TaskQueue
+	store     TaskStore
+	queue     TaskQueue
+	artifacts ArtifactService
 }
 
 func NewTasksHandler(store TaskStore, queue TaskQueue) *TasksHandler {
-	return &TasksHandler{store: store, queue: queue}
+	return NewTasksHandlerWithArtifactService(
+		store,
+		queue,
+		service.NewV2ArtifactService(service.V2ArtifactServiceConfig{}),
+	)
+}
+
+func NewTasksHandlerWithArtifactService(store TaskStore, queue TaskQueue, artifacts ArtifactService) *TasksHandler {
+	return &TasksHandler{
+		store:     store,
+		queue:     queue,
+		artifacts: artifacts,
+	}
 }
 
 func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +226,103 @@ func (h *TasksHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, task)
+}
+
+func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
+	if h.store == nil {
+		writeError(w, http.StatusInternalServerError, "task store is not configured")
+		return
+	}
+
+	taskID := strings.TrimSpace(chi.URLParam(r, "task_id"))
+	if taskID == "" {
+		writeError(w, http.StatusBadRequest, "task_id is required")
+		return
+	}
+
+	task, err := h.store.GetTask(r.Context(), taskID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get task")
+		return
+	}
+	if task == nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+
+	status := strings.ToUpper(strings.TrimSpace(task.Status))
+	switch status {
+	case "CANCELED":
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"task_id": taskID,
+			"status":  "CANCELED",
+		})
+		return
+	case "SUCCESS", "FAILED":
+		writeError(w, http.StatusConflict, "task already completed")
+		return
+	}
+
+	if err := h.store.CancelTask(r.Context(), taskID, status); err != nil {
+		writeError(w, http.StatusInternalServerError, "cancel task")
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"task_id": taskID,
+		"status":  "CANCELED",
+	})
+}
+
+func (h *TasksHandler) DownloadArtifact(w http.ResponseWriter, r *http.Request) {
+	if h.store == nil {
+		writeError(w, http.StatusInternalServerError, "task store is not configured")
+		return
+	}
+	if h.artifacts == nil {
+		writeError(w, http.StatusInternalServerError, "artifact service is not configured")
+		return
+	}
+
+	taskID := strings.TrimSpace(chi.URLParam(r, "task_id"))
+	if taskID == "" {
+		writeError(w, http.StatusBadRequest, "task_id is required")
+		return
+	}
+
+	task, err := h.store.GetTask(r.Context(), taskID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get task")
+		return
+	}
+	if task == nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if strings.ToUpper(strings.TrimSpace(task.Status)) != "SUCCESS" {
+		writeError(w, http.StatusConflict, "task artifact is not ready")
+		return
+	}
+
+	resultPath := ""
+	if task.ResultZipPath != nil {
+		resultPath = strings.TrimSpace(*task.ResultZipPath)
+	}
+
+	artifact, err := h.artifacts.OpenArtifact(resultPath)
+	if err != nil {
+		if errors.Is(err, service.ErrV2ArtifactNotFound) || errors.Is(err, service.ErrV2ArtifactPathInvalid) {
+			writeError(w, http.StatusNotFound, "artifact not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "open artifact")
+		return
+	}
+	defer artifact.Close()
+
+	w.Header().Set("Content-Type", artifact.ContentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", artifact.FileName))
+	http.ServeContent(w, r, artifact.FileName, artifact.ModTime, artifact.File)
 }
 
 type pgxQueryer interface {
@@ -412,6 +528,31 @@ func (s *PostgresTaskStore) MarkTaskFailed(ctx context.Context, taskID, message 
 		"FAILED",
 		postgres.StatusPatch{Error: stringPtr(reason)},
 	)
+}
+
+func (s *PostgresTaskStore) CancelTask(ctx context.Context, taskID, fromStatus string) error {
+	if s.writer == nil {
+		return errors.New("v2 task writer is not configured")
+	}
+
+	status := strings.ToUpper(strings.TrimSpace(fromStatus))
+	switch status {
+	case "QUEUED", "RUNNING":
+	default:
+		return fmt.Errorf("task cannot be canceled from status %s", status)
+	}
+
+	reason := "Cancelled by user."
+	return s.writer.TransitionTaskWithEvent(ctx, postgres.TransitionTaskWithEventInput{
+		TaskID:     strings.TrimSpace(taskID),
+		FromStatus: status,
+		ToStatus:   "CANCELED",
+		Patch: postgres.StatusPatch{
+			Error: stringPtr(reason),
+		},
+		EventType:   "STATUS_TRANSITION",
+		PayloadJSON: `{"action":"cancel"}`,
+	})
 }
 
 type V2QueueProducer interface {
