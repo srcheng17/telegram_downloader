@@ -82,7 +82,7 @@ func TestSettingsPageUsesDynamicSettingsValues(t *testing.T) {
 func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	router := NewRouterWithConfig(Config{
 		Guardrails: Guardrails{
-			AllowedDomains: []string{"example.com", "demo.test"},
+			AllowedDomains: []string{"telegra.ph", "www.telegra.ph", "graph.org", "www.graph.org"},
 			MaxImages:      456,
 			MaxImageBytes:  33554432,
 			MaxTotalBytes:  1073741824,
@@ -98,10 +98,10 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	}
 
 	body := recorder.Body.String()
-	assertContains(t, body, "example.com, demo.test")
+	assertContains(t, body, "telegra.ph, www.telegra.ph, graph.org, www.graph.org")
 	assertContains(t, body, ">456<")
-	assertContains(t, body, "32 MB")
-	assertContains(t, body, "1024 MB")
+	assertContains(t, body, "33554432 字节")
+	assertContains(t, body, "1073741824 字节")
 	assertContains(t, body, `href="/" hx-get="/" hx-target="#content" hx-push-url="true"`)
 	assertContains(t, body, `href="/logs" hx-get="/logs" hx-target="#content" hx-push-url="true"`)
 	assertContains(t, body, `href="/settings" hx-get="/settings" hx-target="#content" hx-push-url="true"`)

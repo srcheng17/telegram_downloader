@@ -2,12 +2,12 @@ package httpui
 
 import (
 	"embed"
-	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -144,11 +144,7 @@ func mustParseTemplate(page string) *template.Template {
 			if size <= 0 {
 				return "-"
 			}
-			const mb = int64(1024 * 1024)
-			if size%mb == 0 {
-				return fmt.Sprintf("%d MB", size/mb)
-			}
-			return fmt.Sprintf("%d 字节", size)
+			return strconv.FormatInt(size, 10) + " 字节"
 		},
 	}).ParseFS(templateFiles, "templates/base.html", "templates/partial.html", page)
 	if err != nil {
@@ -195,7 +191,7 @@ func normalizeSettings(settings Settings) Settings {
 
 func normalizeGuardrails(guardrails Guardrails) Guardrails {
 	if len(guardrails.AllowedDomains) == 0 {
-		guardrails.AllowedDomains = []string{"telegra.ph", "graph.org"}
+		guardrails.AllowedDomains = []string{"telegra.ph", "www.telegra.ph", "graph.org", "www.graph.org"}
 	} else {
 		guardrails.AllowedDomains = append([]string(nil), guardrails.AllowedDomains...)
 	}

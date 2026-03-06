@@ -26,7 +26,7 @@ func TestBuildUIConfigUsesRuntimeValues(t *testing.T) {
 			FileRetentionDays: 7,
 		},
 		Guardrails: httpui.Guardrails{
-			AllowedDomains: []string{"telegra.ph", "graph.org"},
+			AllowedDomains: []string{"telegra.ph", "www.telegra.ph", "graph.org", "www.graph.org"},
 			MaxImages:      300,
 			MaxImageBytes:  25 * 1024 * 1024,
 			MaxTotalBytes:  500 * 1024 * 1024,
