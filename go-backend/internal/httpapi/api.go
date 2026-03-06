@@ -200,7 +200,7 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"ok":      false,
-			"message": "Invalid request payload.",
+			"message": "Please provide a Telegraph URL.",
 		})
 		return
 	}

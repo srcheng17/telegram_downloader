@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -755,5 +756,39 @@ func TestDownloadUsesRuntimeSettingsSnapshotWhenBridgeConfigured(t *testing.T) {
 			capturedSubmit.Retries,
 			capturedSubmit.ImageConcurrency,
 		)
+	}
+}
+
+func decodeJSONResponse(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal json response: %v body=%s", err, string(body))
+	}
+	return payload
+}
+
+func assertExactJSONKeys(t *testing.T, payload map[string]any, expected ...string) {
+	t.Helper()
+
+	expectedSet := make(map[string]struct{}, len(expected))
+	for _, key := range expected {
+		expectedSet[key] = struct{}{}
+	}
+
+	if len(payload) != len(expectedSet) {
+		actualKeys := make([]string, 0, len(payload))
+		for key := range payload {
+			actualKeys = append(actualKeys, key)
+		}
+		sort.Strings(actualKeys)
+		t.Fatalf("expected %d keys, got %d (%v)", len(expectedSet), len(payload), actualKeys)
+	}
+
+	for key := range payload {
+		if _, ok := expectedSet[key]; !ok {
+			t.Fatalf("unexpected key %q in payload %#v", key, payload)
+		}
 	}
 }
