@@ -265,6 +265,18 @@ func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.store.CancelTask(r.Context(), taskID, status); err != nil {
 		if errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
+			latestTask, latestErr := h.store.GetTask(r.Context(), taskID)
+			if latestErr != nil {
+				writeError(w, http.StatusInternalServerError, "get task")
+				return
+			}
+			if latestTask != nil && strings.ToUpper(strings.TrimSpace(latestTask.Status)) == "CANCELED" {
+				writeJSON(w, http.StatusAccepted, map[string]any{
+					"task_id": taskID,
+					"status":  "CANCELED",
+				})
+				return
+			}
 			writeError(w, http.StatusConflict, "task status conflict")
 			return
 		}

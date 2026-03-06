@@ -83,3 +83,31 @@ func TestV2ArtifactServiceOpensRootPrefixedRelativePath(t *testing.T) {
 		t.Fatalf("expected prefixed-content, got %q", string(content))
 	}
 }
+
+func TestV2ArtifactServiceRejectsSymlinkEscapingDownloadRoot(t *testing.T) {
+	baseDir := t.TempDir()
+	downloadRoot := filepath.Join(baseDir, "downloaded_images")
+	outsideDir := filepath.Join(baseDir, "outside")
+	if err := os.MkdirAll(downloadRoot, 0o755); err != nil {
+		t.Fatalf("create download root: %v", err)
+	}
+	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+		t.Fatalf("create outside dir: %v", err)
+	}
+
+	outsideFile := filepath.Join(outsideDir, "secret.cbz")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write outside fixture: %v", err)
+	}
+
+	linkPath := filepath.Join(downloadRoot, "escaped.cbz")
+	if err := os.Symlink(outsideFile, linkPath); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	svc := NewV2ArtifactService(V2ArtifactServiceConfig{DownloadRoot: downloadRoot})
+	_, err := svc.OpenArtifact("escaped.cbz")
+	if !errors.Is(err, ErrV2ArtifactPathInvalid) {
+		t.Fatalf("expected ErrV2ArtifactPathInvalid, got %v", err)
+	}
+}

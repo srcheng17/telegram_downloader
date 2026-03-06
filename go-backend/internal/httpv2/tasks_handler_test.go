@@ -30,6 +30,7 @@ type fakeTaskStore struct {
 	getCalls []string
 	getTask  *Task
 	getErr   error
+	getTasks []*Task
 
 	cancelCalls []cancelTaskCall
 	cancelErr   error
@@ -73,6 +74,13 @@ func (f *fakeTaskStore) GetTask(_ context.Context, taskID string) (*Task, error)
 	f.getCalls = append(f.getCalls, taskID)
 	if f.getErr != nil {
 		return nil, f.getErr
+	}
+	if len(f.getTasks) > 0 {
+		index := len(f.getCalls) - 1
+		if index < len(f.getTasks) {
+			return f.getTasks[index], nil
+		}
+		return f.getTasks[len(f.getTasks)-1], nil
 	}
 	return f.getTask, nil
 }
@@ -377,6 +385,35 @@ func TestCancelTaskReturns409OnStatusConflict(t *testing.T) {
 
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCancelTaskReturnsAcceptedWhenConflictResolvedAsCanceled(t *testing.T) {
+	repo := &fakeTaskStore{
+		getTasks: []*Task{
+			{
+				ID:     "task-v2-cancel-race",
+				Status: "RUNNING",
+			},
+			{
+				ID:     "task-v2-cancel-race",
+				Status: "CANCELED",
+			},
+		},
+		cancelErr: postgres.ErrV2TaskStatusMismatchOrNotFound,
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/tasks/task-v2-cancel-race/cancel", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.getCalls) != 2 {
+		t.Fatalf("expected 2 get calls (initial + conflict reload), got %d", len(repo.getCalls))
 	}
 }
 

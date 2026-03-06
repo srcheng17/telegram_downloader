@@ -40,12 +40,29 @@ func NewV2ArtifactService(cfg V2ArtifactServiceConfig) *V2ArtifactService {
 }
 
 func (s *V2ArtifactService) OpenArtifact(resultZipPath string) (*OpenedV2Artifact, error) {
-	safePath, err := s.resolveSafePath(resultZipPath)
+	rootAbs, safePath, err := s.resolveSafePath(resultZipPath)
 	if err != nil {
 		return nil, err
 	}
 
-	file, err := os.Open(safePath)
+	containmentRoot := rootAbs
+	resolvedRoot, rootErr := filepath.EvalSymlinks(rootAbs)
+	if rootErr == nil {
+		containmentRoot = resolvedRoot
+	}
+
+	resolvedPath, err := filepath.EvalSymlinks(safePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrV2ArtifactNotFound
+		}
+		return nil, ErrV2ArtifactPathInvalid
+	}
+	if !isWithinRootPath(containmentRoot, resolvedPath) {
+		return nil, ErrV2ArtifactPathInvalid
+	}
+
+	file, err := os.Open(resolvedPath)
 	if err != nil {
 		return nil, ErrV2ArtifactNotFound
 	}
@@ -58,29 +75,29 @@ func (s *V2ArtifactService) OpenArtifact(resultZipPath string) (*OpenedV2Artifac
 
 	return &OpenedV2Artifact{
 		File:        file,
-		FileName:    filepath.Base(safePath),
-		ContentType: artifactContentType(safePath),
+		FileName:    filepath.Base(resolvedPath),
+		ContentType: artifactContentType(resolvedPath),
 		ModTime:     info.ModTime(),
 	}, nil
 }
 
-func (s *V2ArtifactService) resolveSafePath(resultZipPath string) (string, error) {
+func (s *V2ArtifactService) resolveSafePath(resultZipPath string) (string, string, error) {
 	raw := strings.TrimSpace(resultZipPath)
 	if raw == "" {
-		return "", ErrV2ArtifactNotFound
+		return "", "", ErrV2ArtifactNotFound
 	}
 	if strings.ContainsRune(raw, rune(0)) {
-		return "", ErrV2ArtifactPathInvalid
+		return "", "", ErrV2ArtifactPathInvalid
 	}
 
 	rootAbs, err := filepath.Abs(s.downloadRootOrDefault())
 	if err != nil {
-		return "", ErrV2ArtifactPathInvalid
+		return "", "", ErrV2ArtifactPathInvalid
 	}
 
 	candidatePath := filepath.Clean(raw)
 	if candidatePath == "." {
-		return "", ErrV2ArtifactPathInvalid
+		return "", "", ErrV2ArtifactPathInvalid
 	}
 	if !filepath.IsAbs(candidatePath) {
 		candidatePath = normalizeRootPrefixedRelativePath(rootAbs, candidatePath)
@@ -89,18 +106,14 @@ func (s *V2ArtifactService) resolveSafePath(resultZipPath string) (string, error
 
 	candidateAbs, err := filepath.Abs(candidatePath)
 	if err != nil {
-		return "", ErrV2ArtifactPathInvalid
+		return "", "", ErrV2ArtifactPathInvalid
 	}
 
-	rel, err := filepath.Rel(rootAbs, candidateAbs)
-	if err != nil {
-		return "", ErrV2ArtifactPathInvalid
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", ErrV2ArtifactPathInvalid
+	if !isWithinRootPath(rootAbs, candidateAbs) {
+		return "", "", ErrV2ArtifactPathInvalid
 	}
 
-	return candidateAbs, nil
+	return rootAbs, candidateAbs, nil
 }
 
 func normalizeRootPrefixedRelativePath(rootAbs, candidatePath string) string {
@@ -118,6 +131,17 @@ func normalizeRootPrefixedRelativePath(rootAbs, candidatePath string) string {
 		return strings.TrimPrefix(candidatePath, prefix)
 	}
 	return candidatePath
+}
+
+func isWithinRootPath(rootPath, candidatePath string) bool {
+	rel, err := filepath.Rel(rootPath, candidatePath)
+	if err != nil {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return false
+	}
+	return true
 }
 
 func (s *V2ArtifactService) downloadRootOrDefault() string {
