@@ -19,7 +19,7 @@ type LegacyTask struct {
 
 type LegacyReader interface {
 	CountLegacyTasks(ctx context.Context) (int, error)
-	ReadLegacyTasks(ctx context.Context, offset, limit int) ([]LegacyTask, error)
+	ReadLegacyTasksAfterID(ctx context.Context, lastID string, limit int) ([]LegacyTask, error)
 }
 
 type legacyTaskQuerier interface {
@@ -43,13 +43,11 @@ func (r *PostgresLegacyReader) CountLegacyTasks(ctx context.Context) (int, error
 	return total, nil
 }
 
-func (r *PostgresLegacyReader) ReadLegacyTasks(ctx context.Context, offset, limit int) ([]LegacyTask, error) {
+func (r *PostgresLegacyReader) ReadLegacyTasksAfterID(ctx context.Context, lastID string, limit int) ([]LegacyTask, error) {
 	if limit <= 0 {
 		limit = 1
 	}
-	if offset < 0 {
-		offset = 0
-	}
+	lastID = strings.TrimSpace(lastID)
 
 	rows, err := r.db.Query(
 		ctx,
@@ -63,11 +61,12 @@ func (r *PostgresLegacyReader) ReadLegacyTasks(ctx context.Context, offset, limi
 			error,
 			result_zip_path
 		FROM tasks
+		WHERE ($1 = '' OR id > $1)
 		ORDER BY id ASC
-		LIMIT $1 OFFSET $2
+		LIMIT $2
 		`,
+		lastID,
 		limit,
-		offset,
 	)
 	if err != nil {
 		return nil, err

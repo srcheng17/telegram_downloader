@@ -57,11 +57,12 @@ func (m Migrator) Run(ctx context.Context) (MigrationStats, error) {
 	expectedTasksChecksum := newChecksumBuilder()
 	expectedMigratedEventsChecksum := newChecksumBuilder()
 	migratedTasks := 0
+	lastID := ""
 
-	for offset := 0; ; offset += batchSize {
-		legacyTasks, err := m.Reader.ReadLegacyTasks(ctx, offset, batchSize)
+	for {
+		legacyTasks, err := m.Reader.ReadLegacyTasksAfterID(ctx, lastID, batchSize)
 		if err != nil {
-			return MigrationStats{}, fmt.Errorf("read legacy tasks batch offset=%d: %w", offset, err)
+			return MigrationStats{}, fmt.Errorf("read legacy tasks after id=%q: %w", lastID, err)
 		}
 		if len(legacyTasks) == 0 {
 			break
@@ -113,13 +114,11 @@ func (m Migrator) Run(ctx context.Context) (MigrationStats, error) {
 		}
 
 		if err := m.Writer.WriteV2Batch(ctx, v2Tasks, v2Events); err != nil {
-			return MigrationStats{}, fmt.Errorf("write v2 migration batch offset=%d: %w", offset, err)
+			return MigrationStats{}, fmt.Errorf("write v2 migration batch last_id=%q: %w", lastID, err)
 		}
 
 		migratedTasks += len(v2Tasks)
-		if len(legacyTasks) < batchSize {
-			break
-		}
+		lastID = strings.TrimSpace(legacyTasks[len(legacyTasks)-1].ID)
 	}
 
 	v2TasksTotal, err := m.Writer.CountV2Tasks(ctx)
@@ -293,12 +292,16 @@ func (b *checksumBuilder) AddTask(task V2Task) error {
 }
 
 func (b *checksumBuilder) AddMigratedEvent(event V2TaskEvent) error {
+	normalizedPayload, err := normalizeJSONForChecksum(event.PayloadJSON)
+	if err != nil {
+		return err
+	}
 	return b.addRecord(migratedEventChecksumRecord{
 		TaskID:      strings.TrimSpace(event.TaskID),
 		EventType:   strings.TrimSpace(event.EventType),
 		FromStatus:  stringValue(event.FromStatus),
 		ToStatus:    stringValue(event.ToStatus),
-		PayloadJSON: strings.TrimSpace(event.PayloadJSON),
+		PayloadJSON: normalizedPayload,
 	})
 }
 
@@ -336,4 +339,21 @@ type migratedEventChecksumRecord struct {
 	FromStatus  string `json:"from_status"`
 	ToStatus    string `json:"to_status"`
 	PayloadJSON string `json:"payload_json"`
+}
+
+func normalizeJSONForChecksum(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = "{}"
+	}
+
+	var decoded any
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return "", fmt.Errorf("normalize checksum json: %w", err)
+	}
+	normalized, err := json.Marshal(decoded)
+	if err != nil {
+		return "", fmt.Errorf("marshal normalized checksum json: %w", err)
+	}
+	return string(normalized), nil
 }

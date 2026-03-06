@@ -141,6 +141,39 @@ func (w *PostgresV2Writer) WriteV2Batch(ctx context.Context, tasks []V2Task, eve
 			createdAt = time.Now().UTC()
 		}
 
+		taskID := strings.TrimSpace(event.TaskID)
+		if eventType == "MIGRATED" {
+			if _, err := tx.Exec(
+				ctx,
+				`
+				INSERT INTO v2_task_events (
+					task_id,
+					event_type,
+					from_status,
+					to_status,
+					payload_json,
+					created_at
+				)
+				SELECT
+					$1, $2, $3, $4, $5::jsonb, $6
+				WHERE NOT EXISTS (
+					SELECT 1
+					FROM v2_task_events
+					WHERE task_id = $1 AND event_type = $2
+				)
+				`,
+				taskID,
+				eventType,
+				event.FromStatus,
+				event.ToStatus,
+				payloadJSON,
+				createdAt,
+			); err != nil {
+				return err
+			}
+			continue
+		}
+
 		if _, err := tx.Exec(
 			ctx,
 			`
@@ -155,7 +188,7 @@ func (w *PostgresV2Writer) WriteV2Batch(ctx context.Context, tasks []V2Task, eve
 				$1, $2, $3, $4, $5::jsonb, $6
 			)
 			`,
-			strings.TrimSpace(event.TaskID),
+			taskID,
 			eventType,
 			event.FromStatus,
 			event.ToStatus,
