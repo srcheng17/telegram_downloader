@@ -38,6 +38,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       DOWNLOAD_PATH: /app/downloaded_images
       TEMP_PATH: /app/temp_downloads
+      GO_BACKEND_BASE_URL: http://go-api:5000
     volumes:
       - ./downloaded_images:/app/downloaded_images
       - ./temp_downloads:/app/temp_downloads

@@ -22,9 +22,9 @@ from telegram_downloader.url_validation import is_allowed_telegraph_url, normali
 
 def register_routes(app, runtime):
     def _proxy_v2_request(path):
-        base_url = (os.environ.get("GO_BACKEND_BASE_URL") or "http://localhost:5000").strip()
+        base_url = (os.environ.get("GO_BACKEND_BASE_URL") or "http://go-api:5000").strip()
         if not base_url:
-            base_url = "http://localhost:5000"
+            base_url = "http://go-api:5000"
         base_url = base_url.rstrip("/")
 
         upstream_url = f"{base_url}{path}"
