@@ -29,6 +29,42 @@
 - 新增 `docker-compose.yml`，提供 `web/worker/redis/postgres` 一体化编排。
 - 新增停机迁移脚本：`scripts/migrate_sqlite_to_postgres.py`。
 
+## 增补（2026-03-06）：Go 全量重构上线验证与发布说明
+
+### A. 新架构拓扑（go-api + go-worker）
+
+- 新增 `go-api`（只负责 HTTP 契约与入队）与 `go-worker`（消费 Redis Streams 执行下载）。
+- `go-api` 已接入 Redis Streams producer；`go-worker` 已接入真实 `Executor + Downloader` 执行链路。
+- 新增网关配置 `deploy/nginx/canary-go-full.conf`：`/download`、`/api/*`、`/healthz` 全量转发到 `go-api`，页面请求仍走 Python `web`。
+
+### B. 迁移与启动步骤（最小可运行）
+
+1. 启动编排：
+   ```bash
+   docker compose up -d --build
+   ```
+2. 若目标库是全新 Postgres，需要先初始化 `tasks` 基表（可复用 Python 仓储建表逻辑），再执行：
+   ```bash
+   docker exec -i telegraph-postgres psql -U telegraph -d telegraph < go-backend/internal/store/postgres/migrations/001_go_full_rewrite.sql
+   ```
+3. 烟雾检查：
+   ```bash
+   curl -sS http://localhost:5002/healthz
+   curl -sS http://localhost:5002/api/summary
+   ```
+
+### C. 回滚命令（切回 Python API）
+
+1. 将 `deploy/nginx/canary-go-full.conf` 中 `/download`、`/api/*`、`/healthz` 的 `proxy_pass` 切回 `web`。
+2. 重载网关：
+   ```bash
+   docker compose exec gateway nginx -s reload
+   ```
+3. 需要时停用 Go 链路：
+   ```bash
+   docker compose stop go-api go-worker
+   ```
+
 ## 增补（2026-03-04）：CBZ 元数据与中文化
 
 ### A. CBZ 与 ComicInfo 元数据
