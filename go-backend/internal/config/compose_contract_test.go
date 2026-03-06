@@ -17,6 +17,7 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	}
 
 	services := extractComposeServices(t, string(content))
+	composeText := string(content)
 	expectedServices := map[string]struct{}{
 		"go-api":    {},
 		"go-worker": {},
@@ -30,6 +31,20 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 			sortedServiceNames(expectedServices),
 			sortedServiceNames(services),
 		)
+	}
+
+	goAPIBlock := extractComposeServiceBlock(t, composeText, "go-api")
+	if !strings.Contains(goAPIBlock, "    healthcheck:\n") {
+		t.Fatalf("go-api must define healthcheck in %q", composePath)
+	}
+	if !strings.Contains(goAPIBlock, "/healthz") {
+		t.Fatalf("go-api must define a healthcheck probing /healthz in %q", composePath)
+	}
+
+	gatewayBlock := extractComposeServiceBlock(t, composeText, "gateway")
+	gatewayDependsOnHealthyGoAPI := regexp.MustCompile(`(?ms)go-api:\n\s+condition:\s*service_healthy`)
+	if !gatewayDependsOnHealthyGoAPI.MatchString(gatewayBlock) {
+		t.Fatalf("gateway must depend on go-api with service_healthy condition in %q", composePath)
 	}
 
 	nginxPath := findNginxConfigPath(t)
@@ -129,6 +144,46 @@ func extractComposeServices(t *testing.T, composeContent string) map[string]stru
 		t.Fatalf("no services parsed from docker-compose.yml")
 	}
 	return services
+}
+
+func extractComposeServiceBlock(t *testing.T, composeContent, serviceName string) string {
+	t.Helper()
+
+	lines := strings.Split(composeContent, "\n")
+	target := "  " + serviceName + ":"
+
+	inServices := false
+	inTarget := false
+	block := make([]string, 0, 16)
+	for _, raw := range lines {
+		line := strings.TrimRight(raw, "\r")
+		trimmed := strings.TrimSpace(line)
+
+		if !inServices {
+			if trimmed == "services:" {
+				inServices = true
+			}
+			continue
+		}
+
+		if !inTarget {
+			if line == target {
+				inTarget = true
+				block = append(block, line)
+			}
+			continue
+		}
+
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") {
+			break
+		}
+		block = append(block, line)
+	}
+
+	if len(block) == 0 {
+		t.Fatalf("service %q not found in docker-compose.yml", serviceName)
+	}
+	return strings.Join(block, "\n") + "\n"
 }
 
 func sortedServiceNames(services map[string]struct{}) []string {
