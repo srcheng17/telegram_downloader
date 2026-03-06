@@ -55,7 +55,7 @@
 
 ### C. 回滚命令（切回 Python API）
 
-1. 将 `deploy/nginx/canary-go-full.conf` 中 `/download`、`/api/*`、`/healthz` 的 `proxy_pass` 切回 `http://telegraph_python_web`。
+1. 将 `deploy/nginx/canary-go-full.conf` 中 `/download`、`/api/*` 的 `proxy_pass` 切回 `http://telegraph_python_web`。
 2. 重载网关：
    ```bash
    docker compose exec gateway nginx -s reload
@@ -63,6 +63,11 @@
 3. 需要时停用 Go 链路：
    ```bash
    docker compose stop go-api go-worker
+   ```
+4. 回滚后验证（Python 可用接口）：
+   ```bash
+   curl -sS -o /dev/null -w "%{http_code}\n" http://localhost:5002/
+   curl -sS -o /dev/null -w "%{http_code}\n" http://localhost:5002/api/summary
    ```
 
 ## 增补（2026-03-04）：CBZ 元数据与中文化
