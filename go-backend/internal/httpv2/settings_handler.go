@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -20,6 +21,12 @@ type SettingsStore interface {
 
 type SettingsHandler struct {
 	store SettingsStore
+}
+
+type settingsUpdatePayload struct {
+	Timeout          *int `json:"timeout"`
+	Retries          *int `json:"retries"`
+	ImageConcurrency *int `json:"image_concurrency"`
 }
 
 func NewSettingsHandler(store SettingsStore) *SettingsHandler {
@@ -57,13 +64,23 @@ func (h *SettingsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var payload config.SettingsSnapshot
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	var payload settingsUpdatePayload
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+	if payload.Timeout == nil || payload.Retries == nil || payload.ImageConcurrency == nil {
+		writeError(w, http.StatusBadRequest, "timeout, retries, image_concurrency are required")
+		return
+	}
 
-	normalized := config.NormalizeSettingsSnapshot(payload)
+	normalized := config.NormalizeSettingsSnapshot(config.SettingsSnapshot{
+		Timeout:          *payload.Timeout,
+		Retries:          *payload.Retries,
+		ImageConcurrency: *payload.ImageConcurrency,
+	})
 	snapshot, err := h.store.UpdateSettings(r.Context(), normalized)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "update settings")
@@ -76,8 +93,10 @@ type appSettingsExecer interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
+var appSettingsInit sync.Map
+
 func (s *PostgresTaskStore) GetSettings(ctx context.Context) (config.SettingsSnapshot, error) {
-	if err := s.ensureAppSettingsTable(ctx); err != nil {
+	if err := s.ensureAppSettingsDefaultRow(ctx); err != nil {
 		return config.SettingsSnapshot{}, err
 	}
 
@@ -100,7 +119,7 @@ func (s *PostgresTaskStore) GetSettings(ctx context.Context) (config.SettingsSna
 }
 
 func (s *PostgresTaskStore) UpdateSettings(ctx context.Context, snapshot config.SettingsSnapshot) (config.SettingsSnapshot, error) {
-	if err := s.ensureAppSettingsTable(ctx); err != nil {
+	if err := s.ensureAppSettingsDefaultRow(ctx); err != nil {
 		return config.SettingsSnapshot{}, err
 	}
 
@@ -136,7 +155,7 @@ func (s *PostgresTaskStore) UpdateSettings(ctx context.Context, snapshot config.
 	return normalized, nil
 }
 
-func (s *PostgresTaskStore) ensureAppSettingsTable(ctx context.Context) error {
+func (s *PostgresTaskStore) ensureAppSettingsDefaultRow(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("v2 task database is not configured")
 	}
@@ -145,20 +164,9 @@ func (s *PostgresTaskStore) ensureAppSettingsTable(ctx context.Context) error {
 		return err
 	}
 
-	_, err = execer.Exec(
-		ctx,
-		`
-		CREATE TABLE IF NOT EXISTS app_settings (
-			id SMALLINT PRIMARY KEY,
-			timeout INTEGER NOT NULL,
-			retries INTEGER NOT NULL,
-			image_concurrency INTEGER NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
-		`,
-	)
-	if err != nil {
-		return err
+	key := execer
+	if _, ok := appSettingsInit.Load(key); ok {
+		return nil
 	}
 
 	defaults := config.DefaultSettingsSnapshot()
@@ -176,7 +184,11 @@ func (s *PostgresTaskStore) ensureAppSettingsTable(ctx context.Context) error {
 		defaults.Retries,
 		defaults.ImageConcurrency,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	appSettingsInit.Store(key, struct{}{})
+	return nil
 }
 
 func (s *PostgresTaskStore) settingsExecer() (appSettingsExecer, error) {
