@@ -118,7 +118,18 @@ func (m Migrator) Run(ctx context.Context) (MigrationStats, error) {
 		}
 
 		migratedTasks += len(v2Tasks)
-		lastID = strings.TrimSpace(legacyTasks[len(legacyTasks)-1].ID)
+		nextLastID := strings.TrimSpace(legacyTasks[len(legacyTasks)-1].ID)
+		if nextLastID == "" {
+			return MigrationStats{}, errors.New("migration data anomaly: empty keyset cursor")
+		}
+		if lastID != "" && nextLastID <= lastID {
+			return MigrationStats{}, fmt.Errorf(
+				"migration keyset cursor did not advance: previous=%q next=%q",
+				lastID,
+				nextLastID,
+			)
+		}
+		lastID = nextLastID
 	}
 
 	v2TasksTotal, err := m.Writer.CountV2Tasks(ctx)

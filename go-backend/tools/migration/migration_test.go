@@ -423,3 +423,101 @@ func TestMigratorReturnsReaderError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+type scriptedLegacyReader struct {
+	total   int
+	batches [][]LegacyTask
+	calls   int
+}
+
+func (s *scriptedLegacyReader) CountLegacyTasks(context.Context) (int, error) {
+	if s.total > 0 {
+		return s.total, nil
+	}
+	total := 0
+	for _, batch := range s.batches {
+		total += len(batch)
+	}
+	return total, nil
+}
+
+func (s *scriptedLegacyReader) ReadLegacyTasksAfterID(context.Context, string, int) ([]LegacyTask, error) {
+	if s.calls >= len(s.batches) {
+		return nil, nil
+	}
+	batch := s.batches[s.calls]
+	s.calls++
+	return batch, nil
+}
+
+func TestMigratorFailsFastOnEmptyBatchCursor(t *testing.T) {
+	reader := &scriptedLegacyReader{
+		total: 1,
+		batches: [][]LegacyTask{
+			{
+				{
+					ID:        "   ",
+					URL:       "https://telegra.ph/1",
+					Status:    "PENDING",
+					StartTime: 1700000001,
+				},
+			},
+		},
+	}
+	migrator := Migrator{
+		Reader:    reader,
+		Writer:    newFakeV2Writer(),
+		BatchSize: 1,
+	}
+
+	_, err := migrator.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for empty keyset cursor")
+	}
+	if !strings.Contains(err.Error(), "empty keyset cursor") {
+		t.Fatalf("expected empty keyset cursor error, got %q", err.Error())
+	}
+}
+
+func TestMigratorFailsFastWhenCursorDoesNotAdvance(t *testing.T) {
+	reader := &scriptedLegacyReader{
+		total: 2,
+		batches: [][]LegacyTask{
+			{
+				{
+					ID:        "legacy-1",
+					URL:       "https://telegra.ph/1",
+					Status:    "PENDING",
+					StartTime: 1700000001,
+				},
+			},
+			{
+				{
+					ID:        "legacy-1",
+					URL:       "https://telegra.ph/1",
+					Status:    "PENDING",
+					StartTime: 1700000001,
+				},
+			},
+		},
+	}
+	migrator := Migrator{
+		Reader:    reader,
+		Writer:    newFakeV2Writer(),
+		BatchSize: 1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := migrator.Run(ctx)
+	if err == nil {
+		t.Fatal("expected cursor not advanced error")
+	}
+	if strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("expected fast cursor error, got timeout: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "keyset cursor did not advance") {
+		t.Fatalf("expected keyset cursor did not advance error, got %q", err.Error())
+	}
+}
