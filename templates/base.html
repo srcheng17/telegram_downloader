@@ -6,9 +6,12 @@
     <title>{% block title %}Telegraph Downloader{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for_static_bust_cache('style.css') }}">
     <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
+    {% block legacy_scripts %}
     <script src="{{ url_for_static_bust_cache('index.js') }}" defer></script>
     <script src="{{ url_for_static_bust_cache('logs.js') }}" defer></script>
     <script src="{{ url_for_static_bust_cache('app.js') }}" defer></script>
+    {% endblock %}
+    {% block page_scripts %}{% endblock %}
 </head>
 <body>
     <header class="app-header">
@@ -18,11 +21,13 @@
         </div>
     </header>
     <div class="container">
+        {% block main_nav %}
         <nav class="main-nav">
             <a class="nav-link {% if request.path == url_for('index') %}active{% endif %}" href="{{ url_for('index') }}" hx-get="{{ url_for('index') }}" hx-target="#content" hx-push-url="true">首页</a>
             <a class="nav-link {% if request.path == url_for('logs') %}active{% endif %}" href="{{ url_for('logs') }}" hx-get="{{ url_for('logs') }}" hx-target="#content" hx-push-url="true">日志</a>
             <a class="nav-link {% if request.path == url_for('settings') %}active{% endif %}" href="{{ url_for('settings') }}" hx-get="{{ url_for('settings') }}" hx-target="#content" hx-push-url="true">设置</a>
         </nav>
+        {% endblock %}
         <main id="content">
             <div class="card">
                 {% block content %}{% endblock %}

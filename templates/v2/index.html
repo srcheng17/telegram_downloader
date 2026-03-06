@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}V2 · 创建任务{% endblock %}
+
+{% block legacy_scripts %}{% endblock %}
+{% block page_scripts %}
+<script src="{{ url_for_static_bust_cache('v2/api-client.js') }}" defer></script>
+<script src="{{ url_for_static_bust_cache('v2/dashboard.js') }}" defer></script>
+{% endblock %}
+
+{% block content %}
+<section
+    id="v2-dashboard-page"
+    class="home-page"
+    data-tasks-page-url="/v2/tasks-ui"
+>
+    <div class="section-header">
+        <h2>V2 任务创建</h2>
+        <p class="muted">通过 v2 协议提交下载任务，并跳转到 v2 列表页查看执行状态。</p>
+    </div>
+
+    <form id="v2-create-task-form" novalidate>
+        <div class="form-group">
+            <label for="v2-url">Telegraph 链接</label>
+            <input
+                id="v2-url"
+                name="url"
+                type="url"
+                placeholder="https://telegra.ph/..."
+                required
+            >
+        </div>
+        <button id="v2-create-submit" type="submit">创建任务</button>
+    </form>
+
+    <div id="v2-dashboard-feedback" class="inline-feedback" role="status" aria-live="polite"></div>
+
+    <div id="v2-create-result" class="download-actions is-hidden" aria-hidden="true">
+        <p id="v2-create-result-text" class="muted"></p>
+        <a id="v2-open-tasks-link" class="btn-secondary" href="/v2/tasks-ui">查看任务列表</a>
+    </div>
+</section>
+{% endblock %}
