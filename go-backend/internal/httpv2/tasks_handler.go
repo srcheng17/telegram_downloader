@@ -716,12 +716,7 @@ func buildDashboardSummary(statusCounts map[string]int) DashboardSummary {
 	failed := safeCount("FAILED")
 	canceled := safeCount("CANCELED")
 
-	total := 0
-	for _, count := range statusCounts {
-		if count > 0 {
-			total += count
-		}
-	}
+	total := queued + running + success + failed + canceled
 	active := queued + running
 	finished := success + failed + canceled
 	successRate := 0.0

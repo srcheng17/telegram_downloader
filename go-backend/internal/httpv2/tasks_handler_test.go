@@ -588,6 +588,106 @@ func TestDashboardSummaryReturnsSnapshot(t *testing.T) {
 		"finished_tasks",
 		"success_rate",
 	)
+
+	var summary DashboardSummary
+	if err := json.Unmarshal(recorder.Body.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary struct: %v", err)
+	}
+	if summary.TotalTasks != 8 {
+		t.Fatalf("expected total_tasks=8, got %d", summary.TotalTasks)
+	}
+	if summary.ActiveTasks != 3 {
+		t.Fatalf("expected active_tasks=3, got %d", summary.ActiveTasks)
+	}
+	if summary.FinishedTasks != 5 {
+		t.Fatalf("expected finished_tasks=5, got %d", summary.FinishedTasks)
+	}
+	if summary.TotalTasks != summary.ActiveTasks+summary.FinishedTasks {
+		t.Fatalf(
+			"expected conservation total=active+finished, got total=%d active=%d finished=%d",
+			summary.TotalTasks,
+			summary.ActiveTasks,
+			summary.FinishedTasks,
+		)
+	}
+	if summary.SuccessRate != 60 {
+		t.Fatalf("expected success_rate=60.0, got %v", summary.SuccessRate)
+	}
+}
+
+func TestDashboardSummaryIgnoresUnknownStatusForTotal(t *testing.T) {
+	repo := &fakeTaskStore{
+		summaryCounts: map[string]int{
+			"QUEUED":  1,
+			"RUNNING": 1,
+			"UNKNOWN": 99,
+		},
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/dashboard/summary", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var summary DashboardSummary
+	if err := json.Unmarshal(recorder.Body.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary struct: %v", err)
+	}
+	if summary.TotalTasks != 2 {
+		t.Fatalf("expected total_tasks to ignore unknown statuses, got %d", summary.TotalTasks)
+	}
+	if summary.TotalTasks != summary.ActiveTasks+summary.FinishedTasks {
+		t.Fatalf(
+			"expected conservation total=active+finished, got total=%d active=%d finished=%d",
+			summary.TotalTasks,
+			summary.ActiveTasks,
+			summary.FinishedTasks,
+		)
+	}
+}
+
+func TestDashboardSummarySuccessRateZeroWhenFinishedZero(t *testing.T) {
+	repo := &fakeTaskStore{
+		summaryCounts: map[string]int{
+			"QUEUED":  2,
+			"RUNNING": 3,
+			"FAILED":  -9,
+		},
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/dashboard/summary", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var summary DashboardSummary
+	if err := json.Unmarshal(recorder.Body.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary struct: %v", err)
+	}
+	if summary.FinishedTasks != 0 {
+		t.Fatalf("expected finished_tasks=0, got %d", summary.FinishedTasks)
+	}
+	if summary.SuccessRate != 0 {
+		t.Fatalf("expected success_rate=0 when finished is zero, got %v", summary.SuccessRate)
+	}
+	if summary.TotalTasks != summary.ActiveTasks+summary.FinishedTasks {
+		t.Fatalf(
+			"expected conservation total=active+finished, got total=%d active=%d finished=%d",
+			summary.TotalTasks,
+			summary.ActiveTasks,
+			summary.FinishedTasks,
+		)
+	}
 }
 
 func assertErrorResponseShape(t *testing.T, body []byte) {
