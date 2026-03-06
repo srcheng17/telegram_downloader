@@ -30,6 +30,19 @@ class _FakeTaskStore:
     def list_tasks_with_result_zip_older_than(self, cutoff_start_time, exclude_statuses=None):
         return self._iter_expired_with_zip(cutoff_start_time, exclude_statuses)
 
+    def list_tasks_older_than(self, cutoff_start_time, exclude_statuses=None):
+        exclusions = set(exclude_statuses or [])
+        return [
+            {
+                "id": task["id"],
+                "start_time": task["start_time"],
+                "status": task["status"],
+                "result_zip_path": task.get("result_zip_path"),
+            }
+            for task in self.tasks
+            if task["start_time"] < cutoff_start_time and task["status"] not in exclusions
+        ]
+
     def delete_older_than(self, cutoff_start_time, exclude_statuses=None):
         exclusions = set(exclude_statuses or [])
         before = len(self.tasks)
@@ -38,6 +51,14 @@ class _FakeTaskStore:
             for task in self.tasks
             if not (task["start_time"] < cutoff_start_time and task["status"] not in exclusions)
         ]
+        return before - len(self.tasks)
+
+    def delete_tasks_by_ids(self, task_ids):
+        targets = set(task_ids or [])
+        if not targets:
+            return 0
+        before = len(self.tasks)
+        self.tasks = [task for task in self.tasks if task["id"] not in targets]
         return before - len(self.tasks)
 
     def clear_result_zip_path(self, task_id):
@@ -143,6 +164,55 @@ class LogCleanupServiceTests(unittest.TestCase):
             self.assertNotIn("task-old-log", task_ids)
             self.assertIn("task-old-file", task_ids)
             self.assertIsNone(next(task for task in store.tasks if task["id"] == "task-old-file")["result_zip_path"])
+
+    def test_log_cleanup_defers_deleting_rows_with_valid_files_until_file_retention(self):
+        now = time.time()
+
+        with tempfile.TemporaryDirectory() as root_dir:
+            download_root = Path(root_dir) / "downloaded_images"
+            temp_root = Path(root_dir) / "temp_downloads"
+            download_root.mkdir(parents=True, exist_ok=True)
+            temp_root.mkdir(parents=True, exist_ok=True)
+
+            retained_file = download_root / "retained.zip"
+            retained_file.write_bytes(b"zip")
+
+            store = _FakeTaskStore(
+                [
+                    {
+                        "id": "task-with-file",
+                        "start_time": now - (3 * 86400),
+                        "status": "SUCCESS",
+                        "result_zip_path": str(retained_file),
+                    },
+                    {
+                        "id": "task-no-file",
+                        "start_time": now - (3 * 86400),
+                        "status": "FAILED",
+                        "result_zip_path": None,
+                    },
+                ]
+            )
+
+            cleanup = LogCleanupService(
+                task_store=store,
+                logger=logging.getLogger("cleanup-test-retention"),
+                get_retention_days=lambda: 2,
+                get_file_retention_days=lambda: 7,
+                interval_seconds=3600,
+            )
+
+            with patch.dict(
+                os.environ,
+                {"DOWNLOAD_PATH": str(download_root), "TEMP_PATH": str(temp_root)},
+                clear=False,
+            ):
+                cleanup._run_once()
+
+            task_ids = {task["id"] for task in store.tasks}
+            self.assertIn("task-with-file", task_ids)
+            self.assertNotIn("task-no-file", task_ids)
+            self.assertTrue(retained_file.exists())
 
 
 if __name__ == "__main__":

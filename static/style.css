@@ -318,22 +318,25 @@ textarea {
 }
 
 .guardrails-summary {
+    margin: 0;
+    padding: 0.2rem 0.2rem 0.25rem;
+}
+
+.collapsible-summary {
     list-style: none;
     cursor: pointer;
     user-select: none;
-    margin: 0;
-    padding: 0.2rem 0.2rem 0.25rem;
+    color: #1e3a8a;
     font-size: 1rem;
     font-weight: 700;
     letter-spacing: -0.01em;
-    color: #1e3a8a;
 }
 
-.guardrails-summary::-webkit-details-marker {
+.collapsible-summary::-webkit-details-marker {
     display: none;
 }
 
-.guardrails-summary::before {
+.collapsible-summary::before {
     content: "▸";
     display: inline-block;
     margin-right: 0.42rem;
@@ -341,7 +344,8 @@ textarea {
     transition: transform 0.2s ease;
 }
 
-.guardrails-panel[open] .guardrails-summary::before {
+.guardrails-panel[open] .collapsible-summary::before,
+.summary-collapsible[open] .collapsible-summary::before {
     transform: rotate(90deg);
 }
 
@@ -429,32 +433,16 @@ textarea {
 }
 
 .summary-toggle {
-    list-style: none;
-    cursor: pointer;
-    user-select: none;
     margin: 0;
-    color: #1e3a8a;
-    font-size: 0.9rem;
-    font-weight: 700;
-}
-
-.summary-toggle::-webkit-details-marker {
-    display: none;
-}
-
-.summary-toggle::before {
-    content: "▾";
-    display: inline-block;
-    margin-right: 0.36rem;
-    transition: transform 0.2s ease;
-}
-
-.summary-collapsible:not([open]) .summary-toggle::before {
-    transform: rotate(-90deg);
 }
 
 .summary-collapsible .summary-grid {
     margin-top: 0.62rem;
+}
+
+.required-mark {
+    color: #dc2626;
+    font-weight: 700;
 }
 
 .summary-card {

@@ -66,26 +66,45 @@ class LogCleanupService:
             self._logger.warning("Failed to remove file %s: %s", real_candidate, exc)
             return False
 
-    def _cleanup_expired_task_logs_and_files(self, cutoff_start_time, download_root):
-        expired_tasks = self._task_store.list_tasks_with_result_zip_older_than(
-            cutoff_start_time,
-            exclude_statuses=ACTIVE_TASK_STATUSES,
-        )
-        removed_files = 0
-        for task in expired_tasks:
-            if self._remove_file_if_within_root(task.get("result_zip_path"), download_root):
-                removed_files += 1
+    def _has_valid_file_within_root(self, file_path, root_path):
+        if not file_path:
+            return False
+        real_root = os.path.realpath(root_path)
+        real_candidate = os.path.realpath(file_path)
+        if not self._safe_common_path(real_candidate, real_root):
+            return False
+        return os.path.isfile(real_candidate)
 
-        deleted_count = self._task_store.delete_older_than(
-            cutoff_start_time,
+    def _cleanup_expired_task_logs(self, cutoff_log_time, cutoff_file_time, download_root):
+        expired_tasks = self._task_store.list_tasks_older_than(
+            cutoff_log_time,
             exclude_statuses=ACTIVE_TASK_STATUSES,
         )
+
+        deletable_task_ids = []
+        deferred_by_file_retention = 0
+        for task in expired_tasks:
+            task_id = task.get("id")
+            if not task_id:
+                continue
+            start_time = float(task.get("start_time") or 0)
+            zip_path = task.get("result_zip_path")
+            if (
+                zip_path
+                and start_time >= cutoff_file_time
+                and self._has_valid_file_within_root(zip_path, download_root)
+            ):
+                deferred_by_file_retention += 1
+                continue
+            deletable_task_ids.append(task_id)
+
+        deleted_count = self._task_store.delete_tasks_by_ids(deletable_task_ids)
 
         if deleted_count:
             self._logger.info(
-                "Deleted %s expired task logs (removed %s associated files)",
+                "Deleted %s expired task logs (deferred %s due to file retention)",
                 deleted_count,
-                removed_files,
+                deferred_by_file_retention,
             )
 
     def _cleanup_expired_task_files(self, cutoff_start_time, download_root):
@@ -183,8 +202,8 @@ class LogCleanupService:
         download_root = os.path.realpath(os.environ.get("DOWNLOAD_PATH", "downloaded_images"))
         temp_root = os.path.realpath(os.environ.get("TEMP_PATH", "temp_downloads"))
 
-        self._cleanup_expired_task_logs_and_files(cutoff_log_time, download_root)
         self._cleanup_expired_task_files(cutoff_file_time, download_root)
+        self._cleanup_expired_task_logs(cutoff_log_time, cutoff_file_time, download_root)
         self._cleanup_orphaned_files(cutoff_file_time, download_root, temp_root)
 
     def _run(self):

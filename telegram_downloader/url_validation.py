@@ -1,6 +1,7 @@
 """URL allow-list checks to reduce SSRF risk."""
 
-from urllib.parse import ParseResult, urlparse, urlunparse
+import re
+from urllib.parse import urlparse, urlunsplit
 
 
 def is_allowed_telegraph_url(raw_url, allowed_hosts):
@@ -17,15 +18,18 @@ def is_allowed_telegraph_url(raw_url, allowed_hosts):
 
 
 def normalize_telegraph_url(raw_url):
-    """Normalize Telegraph URL for duplicate-task comparisons."""
+    """
+    Normalize Telegraph URLs for duplicate detection.
+
+    The content identity is the article path; query/fragment noise and
+    scheme/www variants should not create separate download jobs.
+    """
     try:
         parsed = urlparse((raw_url or "").strip())
     except ValueError:
         return ""
 
-    if parsed.scheme.lower() not in {"http", "https"}:
-        return ""
-    if not parsed.hostname:
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return ""
 
     host = parsed.hostname.lower()
@@ -33,17 +37,8 @@ def normalize_telegraph_url(raw_url):
         host = host[4:]
 
     path = parsed.path or "/"
-    while "//" in path:
-        path = path.replace("//", "/")
+    path = re.sub(r"/{2,}", "/", path)
     if path != "/":
-        path = path.rstrip("/") or "/"
+        path = path.rstrip("/")
 
-    normalized = ParseResult(
-        scheme="https",
-        netloc=host,
-        path=path,
-        params="",
-        query="",
-        fragment="",
-    )
-    return urlunparse(normalized)
+    return urlunsplit(("https", host, path, "", ""))

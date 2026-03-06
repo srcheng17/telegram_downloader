@@ -32,7 +32,7 @@
         </div>
     </div>
     <details id="summary-collapsible-home" class="summary-collapsible" open>
-        <summary class="summary-toggle">任务概览（点击展开/收起）</summary>
+        <summary class="summary-toggle collapsible-summary">任务概览</summary>
         <div id="summary-panel" class="summary-grid" aria-live="polite">
             <article class="summary-card">
                 <p class="summary-label">任务总数</p>
@@ -53,7 +53,7 @@
         </div>
     </details>
     <details class="guardrails-panel" aria-labelledby="guardrails-title">
-        <summary id="guardrails-title" class="guardrails-summary">下载护栏说明（点击展开）</summary>
+        <summary id="guardrails-title" class="guardrails-summary collapsible-summary">下载护栏说明</summary>
         <div class="guardrails-content">
             <p class="guardrails-description">每个任务都会进行校验和资源限制，以保障服务稳定性与下载质量。</p>
             <dl class="guardrail-list">
@@ -98,34 +98,34 @@
     </details>
     <form id="download-form" action="/download" method="post" novalidate>
         <div class="form-group">
-            <label for="url">Telegraph 链接</label>
+            <label for="url">Telegraph 链接 <span class="required-mark" aria-hidden="true">*</span></label>
             <input type="text" id="url" name="url" placeholder="https://telegra.ph/..." required>
         </div>
 
         <div class="home-metadata-grid">
             <div class="form-group">
-                <label for="author">作者（可选）</label>
+                <label for="author">作者</label>
                 <input type="text" id="author" name="author" placeholder="例如：张三">
             </div>
             <div class="form-group">
-                <label for="series_name">漫画系列名（可选）</label>
+                <label for="series_name">漫画系列名</label>
                 <input type="text" id="series_name" name="series_name" placeholder="例如：银河系列">
             </div>
             <div class="form-group">
-                <label for="comic_name">漫画名（可选）</label>
+                <label for="comic_name">漫画名</label>
                 <input type="text" id="comic_name" name="comic_name" placeholder="例如：银河冒险记">
             </div>
             <div class="form-group home-metadata-full">
-                <label for="summary">书籍详情介绍（可选）</label>
+                <label for="summary">书籍详情介绍</label>
                 <textarea id="summary" name="summary" rows="3" placeholder="可填写作品简介或补充信息"></textarea>
             </div>
             <div class="form-group home-metadata-full">
-                <label for="tags">标签（可选）</label>
+                <label for="tags">标签</label>
                 <input type="text" id="tags" name="tags" placeholder="例如：科幻,冒险，连载">
                 <p class="field-help">支持英文逗号 (,) 与中文逗号（，）分隔多个标签。</p>
             </div>
             <div class="form-group home-metadata-full">
-                <label for="genres">类型（可选）</label>
+                <label for="genres">类型</label>
                 <input type="text" id="genres" name="genres" placeholder="例如：青年,悬疑，热血">
                 <p class="field-help">支持英文逗号 (,) 与中文逗号（，）分隔多个类型。</p>
             </div>

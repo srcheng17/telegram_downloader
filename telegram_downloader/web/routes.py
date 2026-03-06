@@ -164,6 +164,13 @@ def register_routes(app, runtime):
         normalized = str(value).strip()
         return normalized or None
 
+    def _is_internal_enqueue_authorized():
+        expected_token = (os.environ.get("INTERNAL_ENQUEUE_TOKEN") or "").strip()
+        if not expected_token:
+            return True
+        provided_token = (request.headers.get("X-Internal-Token") or "").strip()
+        return provided_token == expected_token
+
     def _extract_metadata(payload):
         author = _normalize_metadata_text(payload.get("author"))
         series_name = _normalize_metadata_text(payload.get("series_name"))
@@ -434,6 +441,76 @@ def register_routes(app, runtime):
             result_zip_path=None,
         )
         return jsonify({"ok": True, "message": "Cancellation requested."}), 202
+
+    @app.route("/api/internal/enqueue-download", methods=["POST"])
+    def internal_enqueue_download():
+        if not _is_internal_enqueue_authorized():
+            return jsonify({"ok": False, "message": "Unauthorized."}), 401
+
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "message": "Invalid request payload."}), 400
+
+        task_id = (payload.get("task_id") or "").strip()
+        url = (payload.get("url") or "").strip()
+        if not task_id or not url:
+            return jsonify({"ok": False, "message": "task_id and url are required."}), 400
+
+        task = runtime.task_store.get_task(task_id)
+        if task is None:
+            return jsonify({"ok": False, "message": "Task not found."}), 404
+
+        status = task.get("status")
+        if status in TERMINAL_TASK_STATUSES:
+            return jsonify({"ok": False, "message": f"Task already finished with status {status}."}), 409
+        if status != "PENDING":
+            return jsonify({"ok": False, "message": f"Task status {status} cannot be enqueued."}), 409
+
+        settings = runtime.get_settings_snapshot()
+        timeout = clamp_int(payload.get("timeout"), settings["timeout"], 1, 300)
+        retries = clamp_int(payload.get("retries"), settings["retries"], 0, 20)
+        image_concurrency = clamp_int(
+            payload.get("image_concurrency"),
+            settings["image_concurrency"],
+            1,
+            20,
+        )
+
+        runtime.task_orchestrator.submit_download(
+            task_id,
+            url,
+            timeout,
+            retries,
+            image_concurrency,
+        )
+        app.logger.info(
+            "Internal enqueue accepted for task %s (timeout=%s, retries=%s, image_concurrency=%s)",
+            task_id,
+            timeout,
+            retries,
+            image_concurrency,
+        )
+        return jsonify({"ok": True, "task_id": task_id}), 202
+
+    @app.route("/api/internal/settings-snapshot", methods=["GET"])
+    def internal_settings_snapshot():
+        if not _is_internal_enqueue_authorized():
+            return jsonify({"ok": False, "message": "Unauthorized."}), 401
+
+        settings = runtime.get_settings_snapshot()
+        return jsonify(
+            {
+                "ok": True,
+                "timeout": clamp_int(settings.get("timeout"), 30, 1, 300),
+                "retries": clamp_int(settings.get("retries"), 10, 0, 20),
+                "image_concurrency": clamp_int(
+                    settings.get("image_concurrency"),
+                    2,
+                    1,
+                    20,
+                ),
+            }
+        )
 
     @app.route("/api/tasks/<task_id>/download", methods=["GET", "HEAD"])
     def download_task_file(task_id):

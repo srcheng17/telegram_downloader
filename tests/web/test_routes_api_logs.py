@@ -306,6 +306,77 @@ class WebRoutesApiLogsTests(unittest.TestCase):
         response = self.client.get("/api/tasks/done-missing/download")
         self.assertEqual(response.status_code, 404)
 
+    def test_internal_enqueue_download_requires_token_when_configured(self):
+        self._add_task(task_id="pending-internal-auth", start_time=100, status="PENDING")
+
+        with patch.dict(os.environ, {"INTERNAL_ENQUEUE_TOKEN": "secret-token"}):
+            response = self.client.post(
+                "/api/internal/enqueue-download",
+                json={"task_id": "pending-internal-auth", "url": "https://telegra.ph/a"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+
+    def test_internal_enqueue_download_submits_task(self):
+        self._add_task(task_id="pending-internal-ok", start_time=100, status="PENDING")
+
+        with patch.object(runtime.task_orchestrator, "submit_download") as submit_mock:
+            with patch.dict(os.environ, {"INTERNAL_ENQUEUE_TOKEN": "secret-token"}):
+                response = self.client.post(
+                    "/api/internal/enqueue-download",
+                    json={
+                        "task_id": "pending-internal-ok",
+                        "url": "https://telegra.ph/abc",
+                        "timeout": 999,
+                        "retries": -1,
+                        "image_concurrency": 999,
+                    },
+                    headers={"X-Internal-Token": "secret-token"},
+                )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        submit_mock.assert_called_once()
+        call_args = submit_mock.call_args[0]
+        self.assertEqual(call_args[0], "pending-internal-ok")
+        self.assertEqual(call_args[1], "https://telegra.ph/abc")
+        self.assertEqual(call_args[2], 300)  # clamped timeout
+        self.assertEqual(call_args[3], 0)  # clamped retries
+        self.assertEqual(call_args[4], 20)  # clamped image_concurrency
+
+    def test_internal_settings_snapshot_requires_token_when_configured(self):
+        with patch.dict(os.environ, {"INTERNAL_ENQUEUE_TOKEN": "secret-token"}):
+            response = self.client.get("/api/internal/settings-snapshot")
+
+        self.assertEqual(response.status_code, 401)
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+
+    def test_internal_settings_snapshot_returns_runtime_settings(self):
+        runtime.update_settings(
+            {
+                "timeout": 999,
+                "retries": -10,
+                "image_concurrency": 999,
+            }
+        )
+
+        with patch.dict(os.environ, {"INTERNAL_ENQUEUE_TOKEN": "secret-token"}):
+            response = self.client.get(
+                "/api/internal/settings-snapshot",
+                headers={"X-Internal-Token": "secret-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["timeout"], 300)
+        self.assertEqual(payload["retries"], 0)
+        self.assertEqual(payload["image_concurrency"], 20)
+
     def test_index_route_injects_download_guardrails_context(self):
         with patch("telegram_downloader.web.routes.render_template", return_value="ok") as render_mock:
             response = self.client.get("/")
