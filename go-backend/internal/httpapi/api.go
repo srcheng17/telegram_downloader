@@ -277,6 +277,7 @@ type DownloadSettingsProvider interface {
 
 type API struct {
 	store                   TaskReader
+	legacyAdapter           *LegacyAdapter
 	upstreamBaseURL         string
 	httpClient              *http.Client
 	downloadSubmitter       DownloadSubmitter
@@ -292,6 +293,9 @@ type RouterOptions struct {
 	HTTPClient              *http.Client
 	DownloadSubmitter       DownloadSubmitter
 	DownloadQueue           queue.DownloadQueue
+	V2TaskStore             LegacyV2TaskStore
+	V2TaskQueue             LegacyV2TaskQueue
+	V2ArtifactService       LegacyV2ArtifactService
 	RuntimeSettingsProvider DownloadSettingsProvider
 	InternalToken           string
 	DisableRootRoutes       bool
@@ -322,6 +326,7 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 
 	api := &API{
 		store:                   store,
+		legacyAdapter:           NewLegacyAdapter(options.V2TaskStore, options.V2TaskQueue, options.V2ArtifactService),
 		upstreamBaseURL:         upstreamBaseURL,
 		httpClient:              httpClient,
 		downloadSubmitter:       downloadSubmitter,
@@ -370,6 +375,16 @@ func (a *API) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *API) handleSummary(w http.ResponseWriter, r *http.Request) {
+	if a.legacyAdapter != nil && a.legacyAdapter.SupportsSummary() {
+		summary, err := a.legacyAdapter.BuildSummary(r.Context())
+		if err != nil {
+			writeInternalError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, summary)
+		return
+	}
+
 	summary, err := a.buildSummary(r.Context())
 	if err != nil {
 		writeInternalError(w, err)
@@ -380,6 +395,16 @@ func (a *API) handleSummary(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 	query := normalizeLogQuery(r)
+
+	if a.legacyAdapter != nil && a.legacyAdapter.SupportsLogs() {
+		payload, err := a.legacyAdapter.ReadLogs(r.Context(), query)
+		if err != nil {
+			writeInternalError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
 
 	result, err := a.store.ListLogs(r.Context(), query)
 	if err != nil {
@@ -444,6 +469,61 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 	canonicalURL := normalizeTelegraphURL(rawURL)
 	if canonicalURL == "" {
 		canonicalURL = rawURL
+	}
+
+	if a.legacyAdapter != nil && a.legacyAdapter.SupportsDownload() {
+		result, err := a.legacyAdapter.CreateOrReuseDownloadTask(r.Context(), LegacyDownloadInput{
+			RawURL:       rawURL,
+			CanonicalURL: canonicalURL,
+			Force:        forceDownload,
+		})
+		if err != nil {
+			if errors.Is(err, ErrLegacyAdapterEnqueueFailed) {
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"ok":      false,
+					"message": "Failed to enqueue task.",
+				})
+				return
+			}
+			writeInternalError(w, err)
+			return
+		}
+
+		switch result.Decision {
+		case LegacyDownloadDecisionReuseSuccess:
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":                 true,
+				"duplicate":          true,
+				"needs_confirmation": true,
+				"task_id":            result.TaskID,
+				"download_url":       "/api/tasks/" + url.PathEscape(result.TaskID) + "/download",
+				"force_applied":      forceDownload,
+			})
+			return
+		case LegacyDownloadDecisionReuseActive:
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":            true,
+				"duplicate":     true,
+				"active":        true,
+				"task_id":       result.TaskID,
+				"logs_url":      "/logs",
+				"force_applied": forceDownload,
+			})
+			return
+		case LegacyDownloadDecisionCreated:
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"ok":            true,
+				"duplicate":     false,
+				"active":        false,
+				"task_id":       result.TaskID,
+				"logs_url":      "/logs",
+				"force_applied": forceDownload,
+			})
+			return
+		default:
+			writeInternalError(w, fmt.Errorf("unknown legacy adapter decision: %s", result.Decision))
+			return
+		}
 	}
 
 	runtimeSettings := a.resolveDownloadSettings(r.Context())
@@ -544,6 +624,44 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task_id"))
+	if a.legacyAdapter != nil && a.legacyAdapter.SupportsTaskActions() {
+		result, err := a.legacyAdapter.CancelTask(r.Context(), taskID)
+		if err != nil {
+			writeInternalError(w, err)
+			return
+		}
+
+		switch result.Decision {
+		case LegacyCancelDecisionNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"ok":      false,
+				"message": "Task not found.",
+			})
+			return
+		case LegacyCancelDecisionAlreadyRequested:
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":      true,
+				"message": "Cancellation already requested.",
+			})
+			return
+		case LegacyCancelDecisionAlreadyFinished:
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"ok":      false,
+				"message": "Task already finished with status " + strings.TrimSpace(result.Status) + ".",
+			})
+			return
+		case LegacyCancelDecisionRequested:
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"ok":      true,
+				"message": "Cancellation requested.",
+			})
+			return
+		default:
+			writeInternalError(w, fmt.Errorf("unknown legacy cancel decision: %s", result.Decision))
+			return
+		}
+	}
+
 	task, err := a.store.GetTask(r.Context(), taskID)
 	if err != nil {
 		writeInternalError(w, err)
@@ -586,6 +704,49 @@ func (a *API) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleTaskDownload(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task_id"))
+	if a.legacyAdapter != nil && a.legacyAdapter.SupportsArtifactDownload() {
+		artifact, err := a.legacyAdapter.OpenTaskArtifact(r.Context(), taskID)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrLegacyAdapterTaskNotFound):
+				writeJSON(w, http.StatusNotFound, map[string]any{
+					"ok":      false,
+					"message": "Task not found.",
+				})
+			case errors.Is(err, ErrLegacyAdapterTaskNotReady):
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"ok":      false,
+					"message": "Task is not completed yet.",
+				})
+			case errors.Is(err, ErrLegacyAdapterTaskOutputNotFound):
+				writeJSON(w, http.StatusNotFound, map[string]any{
+					"ok":      false,
+					"message": "Output file not found for this task.",
+				})
+			case errors.Is(err, ErrLegacyAdapterArtifactUnavailable):
+				writeJSON(w, http.StatusNotFound, map[string]any{
+					"ok":      false,
+					"message": "Stored file is unavailable.",
+				})
+			default:
+				writeInternalError(w, err)
+			}
+			return
+		}
+
+		if r.Method == http.MethodHead {
+			artifact.Close()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		defer artifact.Close()
+
+		w.Header().Set("Content-Type", artifact.ContentType)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", artifact.FileName))
+		http.ServeContent(w, r, artifact.FileName, artifact.ModTime, artifact.File)
+		return
+	}
+
 	task, err := a.store.GetTask(r.Context(), taskID)
 	if err != nil {
 		writeInternalError(w, err)

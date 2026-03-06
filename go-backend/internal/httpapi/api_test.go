@@ -12,8 +12,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpv2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/queue"
 )
 
@@ -34,6 +36,11 @@ type fakeTaskReader struct {
 type markFailedCall struct {
 	taskID  string
 	message string
+}
+
+type cancelTaskCall struct {
+	taskID     string
+	fromStatus string
 }
 
 func (f *fakeTaskReader) ClaimDownloadTask(
@@ -104,6 +111,92 @@ type fakeDownloadQueue struct {
 
 func (f *fakeDownloadQueue) EnqueueDownload(_ context.Context, msg queue.EnqueueMessage) error {
 	f.calls = append(f.calls, msg)
+	return f.err
+}
+
+type fakeLegacyV2Store struct {
+	createCalls []httpv2.CreateTaskInput
+	createTask  httpv2.Task
+	createErr   error
+
+	listCalls  []httpv2.ListTasksQuery
+	listResult httpv2.ListTasksResult
+	listErr    error
+
+	getCalls []string
+	getTask  *httpv2.Task
+	getErr   error
+
+	cancelCalls []cancelTaskCall
+	cancelErr   error
+
+	markFailedCalls []markFailedCall
+	markFailedErr   error
+
+	statusCounts map[string]int
+}
+
+func (f *fakeLegacyV2Store) CreateTask(_ context.Context, in httpv2.CreateTaskInput) (httpv2.Task, error) {
+	f.createCalls = append(f.createCalls, in)
+	if f.createErr != nil {
+		return httpv2.Task{}, f.createErr
+	}
+	if strings.TrimSpace(f.createTask.ID) != "" {
+		return f.createTask, nil
+	}
+	return httpv2.Task{
+		ID:           in.ID,
+		URL:          in.URL,
+		CanonicalURL: in.CanonicalURL,
+		Status:       "QUEUED",
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}, nil
+}
+
+func (f *fakeLegacyV2Store) ListTasks(_ context.Context, in httpv2.ListTasksQuery) (httpv2.ListTasksResult, error) {
+	f.listCalls = append(f.listCalls, in)
+	if f.listErr != nil {
+		return httpv2.ListTasksResult{}, f.listErr
+	}
+	return f.listResult, nil
+}
+
+func (f *fakeLegacyV2Store) GetTask(_ context.Context, taskID string) (*httpv2.Task, error) {
+	f.getCalls = append(f.getCalls, taskID)
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.getTask, nil
+}
+
+func (f *fakeLegacyV2Store) CancelTask(_ context.Context, taskID, fromStatus string) error {
+	f.cancelCalls = append(f.cancelCalls, cancelTaskCall{
+		taskID:     taskID,
+		fromStatus: fromStatus,
+	})
+	return f.cancelErr
+}
+
+func (f *fakeLegacyV2Store) MarkTaskFailed(_ context.Context, taskID, message string) error {
+	f.markFailedCalls = append(f.markFailedCalls, markFailedCall{taskID: taskID, message: message})
+	return f.markFailedErr
+}
+
+func (f *fakeLegacyV2Store) GetTaskStatusCounts(_ context.Context) (map[string]int, error) {
+	if f.statusCounts == nil {
+		return map[string]int{}, nil
+	}
+	return f.statusCounts, nil
+}
+
+type fakeLegacyV2Queue struct {
+	calls []httpv2.TaskQueueMessage
+	err   error
+}
+
+func (f *fakeLegacyV2Queue) Enqueue(_ context.Context, message httpv2.TaskQueueMessage) error {
+	f.calls = append(f.calls, message)
 	return f.err
 }
 
@@ -311,6 +404,127 @@ func TestV2PageEntrypoints(t *testing.T) {
 			t.Fatalf("expected v2 tasks table in html, got body=%q", body)
 		}
 	})
+}
+
+func TestLegacyDownloadEndpointCreatesV2Task(t *testing.T) {
+	legacyStore := &fakeTaskReader{}
+	v2Store := &fakeLegacyV2Store{
+		createTask: httpv2.Task{
+			ID:           "task-v2-from-legacy-download",
+			URL:          "https://telegra.ph/legacy-download",
+			CanonicalURL: stringPtr("https://telegra.ph/legacy-download"),
+			Status:       "QUEUED",
+		},
+	}
+	v2Queue := &fakeLegacyV2Queue{}
+	handler := NewRouterWithOptions(
+		legacyStore,
+		RouterOptions{
+			V2TaskStore: v2Store,
+			V2TaskQueue: v2Queue,
+		},
+	)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/download",
+		strings.NewReader("url=https%3A%2F%2Ftelegra.ph%2Flegacy-download"),
+	)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(v2Store.createCalls) != 1 {
+		t.Fatalf("expected one v2 create call, got %d", len(v2Store.createCalls))
+	}
+	if len(v2Queue.calls) != 1 {
+		t.Fatalf("expected one v2 queue call, got %d", len(v2Queue.calls))
+	}
+	if v2Queue.calls[0].TaskID != "task-v2-from-legacy-download" {
+		t.Fatalf("expected v2 queue task id task-v2-from-legacy-download, got %q", v2Queue.calls[0].TaskID)
+	}
+	if len(legacyStore.claimCalls) != 0 {
+		t.Fatalf("expected legacy claim path not called, got %d calls", len(legacyStore.claimCalls))
+	}
+}
+
+func TestLegacyLogsEndpointReadsFromV2Tasks(t *testing.T) {
+	legacyStore := &fakeTaskReader{
+		logResult: domain.LogListResult{
+			Logs: []domain.TaskLog{
+				{ID: "legacy-task-row", URL: "https://telegra.ph/legacy"},
+			},
+			Total:      1,
+			Page:       1,
+			PerPage:    25,
+			TotalPages: 1,
+		},
+	}
+	v2Store := &fakeLegacyV2Store{
+		listResult: httpv2.ListTasksResult{
+			Tasks: []httpv2.Task{
+				{
+					ID:           "task-v2-log-row",
+					URL:          "https://telegra.ph/v2",
+					CanonicalURL: stringPtr("https://telegra.ph/v2"),
+					Status:       "QUEUED",
+					CreatedAt:    time.Unix(1700000100, 0).UTC(),
+					UpdatedAt:    time.Unix(1700000100, 0).UTC(),
+				},
+			},
+			Total:      1,
+			Page:       1,
+			PerPage:    25,
+			TotalPages: 1,
+		},
+		statusCounts: map[string]int{
+			"QUEUED": 1,
+		},
+	}
+	handler := NewRouterWithOptions(
+		legacyStore,
+		RouterOptions{
+			V2TaskStore: v2Store,
+		},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?page=1&per_page=25", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var payload domain.LogsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal logs response: %v", err)
+	}
+	if len(payload.Logs) != 1 {
+		t.Fatalf("expected one log row, got %d", len(payload.Logs))
+	}
+	if payload.Logs[0].ID != "task-v2-log-row" {
+		t.Fatalf("expected v2 task row id task-v2-log-row, got %q", payload.Logs[0].ID)
+	}
+	if payload.Logs[0].Status != domain.StatusPending {
+		t.Fatalf("expected mapped status %q, got %q", domain.StatusPending, payload.Logs[0].Status)
+	}
+	if payload.Total != 1 {
+		t.Fatalf("expected total=1, got %d", payload.Total)
+	}
+	if !payload.HasActiveTasks {
+		t.Fatalf("expected has_active_tasks=true")
+	}
+	if payload.Summary.PendingTasks != 1 {
+		t.Fatalf("expected summary.pending_tasks=1, got %d", payload.Summary.PendingTasks)
+	}
+	if payload.Logs[0].ID == "legacy-task-row" {
+		t.Fatalf("expected logs from v2 model, got legacy row")
+	}
 }
 
 func TestDownloadCreatesTaskAndSubmitsJob(t *testing.T) {

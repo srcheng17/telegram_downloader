@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	domainv2 "github.com/ryancheng/telegram-downloader/go-backend/internal/domain/v2"
 	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/service"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
@@ -27,7 +28,26 @@ const (
 	defaultListPerPage  = 20
 	maxListPerPage      = 100
 	compensationTimeout = 3 * time.Second
+
+	TaskStatusQueued   = string(domainv2.StatusQueued)
+	TaskStatusRunning  = string(domainv2.StatusRunning)
+	TaskStatusSuccess  = string(domainv2.StatusSuccess)
+	TaskStatusFailed   = string(domainv2.StatusFailed)
+	TaskStatusCanceled = string(domainv2.StatusCanceled)
 )
+
+func NormalizeTaskStatus(status string) string {
+	return strings.ToUpper(strings.TrimSpace(status))
+}
+
+func IsActiveTaskStatus(status string) bool {
+	switch NormalizeTaskStatus(status) {
+	case TaskStatusQueued, TaskStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
 
 type CreateTaskInput struct {
 	ID           string
@@ -156,7 +176,7 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(task.Status) == "" {
-		task.Status = "QUEUED"
+		task.Status = TaskStatusQueued
 	}
 
 	if err := h.queue.Enqueue(r.Context(), TaskQueueMessage{TaskID: task.ID, Token: createInput.EnqueueToken}); err != nil {
@@ -288,15 +308,15 @@ func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := strings.ToUpper(strings.TrimSpace(task.Status))
+	status := NormalizeTaskStatus(task.Status)
 	switch status {
-	case "CANCELED":
+	case TaskStatusCanceled:
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"task_id": taskID,
-			"status":  "CANCELED",
+			"status":  TaskStatusCanceled,
 		})
 		return
-	case "SUCCESS", "FAILED":
+	case TaskStatusSuccess, TaskStatusFailed:
 		writeError(w, http.StatusConflict, "task already completed")
 		return
 	}
@@ -308,10 +328,10 @@ func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "get task")
 				return
 			}
-			if latestTask != nil && strings.ToUpper(strings.TrimSpace(latestTask.Status)) == "CANCELED" {
+			if latestTask != nil && NormalizeTaskStatus(latestTask.Status) == TaskStatusCanceled {
 				writeJSON(w, http.StatusAccepted, map[string]any{
 					"task_id": taskID,
-					"status":  "CANCELED",
+					"status":  TaskStatusCanceled,
 				})
 				return
 			}
@@ -324,7 +344,7 @@ func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"task_id": taskID,
-		"status":  "CANCELED",
+		"status":  TaskStatusCanceled,
 	})
 }
 
@@ -353,7 +373,7 @@ func (h *TasksHandler) DownloadArtifact(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
-	if strings.ToUpper(strings.TrimSpace(task.Status)) != "SUCCESS" {
+	if NormalizeTaskStatus(task.Status) != TaskStatusSuccess {
 		writeError(w, http.StatusConflict, "task artifact is not ready")
 		return
 	}
@@ -611,8 +631,8 @@ func (s *PostgresTaskStore) MarkTaskFailed(ctx context.Context, taskID, message 
 	return s.writer.UpdateTaskStatus(
 		ctx,
 		strings.TrimSpace(taskID),
-		"QUEUED",
-		"FAILED",
+		TaskStatusQueued,
+		TaskStatusFailed,
 		postgres.StatusPatch{Error: stringPtr(reason)},
 	)
 }
@@ -622,9 +642,9 @@ func (s *PostgresTaskStore) CancelTask(ctx context.Context, taskID, fromStatus s
 		return errors.New("v2 task writer is not configured")
 	}
 
-	status := strings.ToUpper(strings.TrimSpace(fromStatus))
+	status := NormalizeTaskStatus(fromStatus)
 	switch status {
-	case "QUEUED", "RUNNING":
+	case TaskStatusQueued, TaskStatusRunning:
 	default:
 		return fmt.Errorf("task cannot be canceled from status %s", status)
 	}
@@ -633,7 +653,7 @@ func (s *PostgresTaskStore) CancelTask(ctx context.Context, taskID, fromStatus s
 	return s.writer.TransitionTaskWithEvent(ctx, postgres.TransitionTaskWithEventInput{
 		TaskID:     strings.TrimSpace(taskID),
 		FromStatus: status,
-		ToStatus:   "CANCELED",
+		ToStatus:   TaskStatusCanceled,
 		Patch: postgres.StatusPatch{
 			Error: stringPtr(reason),
 		},
@@ -710,11 +730,11 @@ func buildDashboardSummary(statusCounts map[string]int) DashboardSummary {
 		return value
 	}
 
-	queued := safeCount("QUEUED")
-	running := safeCount("RUNNING")
-	success := safeCount("SUCCESS")
-	failed := safeCount("FAILED")
-	canceled := safeCount("CANCELED")
+	queued := safeCount(TaskStatusQueued)
+	running := safeCount(TaskStatusRunning)
+	success := safeCount(TaskStatusSuccess)
+	failed := safeCount(TaskStatusFailed)
+	canceled := safeCount(TaskStatusCanceled)
 
 	total := queued + running + success + failed + canceled
 	active := queued + running
