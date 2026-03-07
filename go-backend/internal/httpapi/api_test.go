@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -663,6 +664,95 @@ func TestDownloadCreatesTaskAndSubmitsJob(t *testing.T) {
 	}
 	if submitter.calls[0].TaskID != "created-task-1" {
 		t.Fatalf("expected submit task_id created-task-1, got %q", submitter.calls[0].TaskID)
+	}
+}
+
+func TestDownloadNormalizesAuthorByCommaOnly(t *testing.T) {
+	repo := &fakeTaskReader{}
+	repo.claimResponses = []domain.ClaimDownloadTaskResult{
+		{
+			Decision: domain.ClaimDecisionCreated,
+			Task: domain.TaskLog{
+				ID: "created-task-author-normalization",
+			},
+		},
+	}
+	submitter := &fakeDownloadSubmitter{}
+	handler := NewRouterWithOptions(
+		repo,
+		RouterOptions{
+			DownloadSubmitter: submitter,
+		},
+	)
+
+	form := url.Values{}
+	form.Set("url", "https://telegra.ph/author-normalization")
+	form.Set("author", "  Jane Doe #1 ,  John Smith，Alice  Bob  ")
+	req := httptest.NewRequest(http.MethodPost, "/download", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.claimCalls) != 1 {
+		t.Fatalf("expected one claim call, got %d", len(repo.claimCalls))
+	}
+	if repo.claimCalls[0].Task.Author == nil {
+		t.Fatalf("expected author metadata to be forwarded")
+	}
+	if *repo.claimCalls[0].Task.Author != "Jane Doe #1,John Smith,Alice  Bob" {
+		t.Fatalf("expected author to normalize only comma delimiters, got %q", *repo.claimCalls[0].Task.Author)
+	}
+}
+
+func TestDownloadNormalizesTagsAndGenresByCommaSpaceAndHash(t *testing.T) {
+	repo := &fakeTaskReader{}
+	repo.claimResponses = []domain.ClaimDownloadTaskResult{
+		{
+			Decision: domain.ClaimDecisionCreated,
+			Task: domain.TaskLog{
+				ID: "created-task-tag-genre-normalization",
+			},
+		},
+	}
+	submitter := &fakeDownloadSubmitter{}
+	handler := NewRouterWithOptions(
+		repo,
+		RouterOptions{
+			DownloadSubmitter: submitter,
+		},
+	)
+
+	form := url.Values{}
+	form.Set("url", "https://telegra.ph/tag-genre-normalization")
+	form.Set("tags", " tag1  tag2,#tag3，tag2   # tag4,,tag1  ")
+	form.Set("genres", " 类型A #类型B，类型C   类型A ## 类型D  ")
+	req := httptest.NewRequest(http.MethodPost, "/download", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.claimCalls) != 1 {
+		t.Fatalf("expected one claim call, got %d", len(repo.claimCalls))
+	}
+	if repo.claimCalls[0].Task.TagsNormalized == nil {
+		t.Fatalf("expected tags_normalized to be forwarded")
+	}
+	if *repo.claimCalls[0].Task.TagsNormalized != "tag1,tag2,tag3,tag4" {
+		t.Fatalf("expected tags to normalize by comma, space, and hash with dedupe, got %q", *repo.claimCalls[0].Task.TagsNormalized)
+	}
+	if repo.claimCalls[0].Task.GenresNormalized == nil {
+		t.Fatalf("expected genres_normalized to be forwarded")
+	}
+	if *repo.claimCalls[0].Task.GenresNormalized != "类型A,类型B,类型C,类型D" {
+		t.Fatalf("expected genres to normalize by comma, space, and hash with dedupe, got %q", *repo.claimCalls[0].Task.GenresNormalized)
 	}
 }
 
