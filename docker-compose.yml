@@ -35,7 +35,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       STREAM_NAME: ${STREAM_NAME:-download_tasks}
-      INTERNAL_ENQUEUE_TOKEN: ${INTERNAL_ENQUEUE_TOKEN:-go-bridge-token}
+      INTERNAL_ENQUEUE_TOKEN: ${INTERNAL_ENQUEUE_TOKEN:?required}
       GO_DOWNLOAD_TIMEOUT: ${GO_DOWNLOAD_TIMEOUT:-30}
       GO_DOWNLOAD_RETRIES: ${GO_DOWNLOAD_RETRIES:-10}
       GO_IMAGE_CONCURRENCY: ${GO_IMAGE_CONCURRENCY:-2}
@@ -64,6 +64,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       STREAM_NAME: ${STREAM_NAME:-download_tasks}
+      INTERNAL_ENQUEUE_TOKEN: ${INTERNAL_ENQUEUE_TOKEN:?required}
       CONSUMER_GROUP: ${CONSUMER_GROUP:-go-workers}
       CONSUMER_NAME: ${GO_WORKER_CONSUMER_NAME:-}
       GO_DOWNLOAD_TIMEOUT: ${GO_DOWNLOAD_TIMEOUT:-30}

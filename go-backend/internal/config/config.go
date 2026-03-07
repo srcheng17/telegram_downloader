@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -56,9 +57,14 @@ func LoadFromEnv() (Config, error) {
 		addr = ":" + addr
 	}
 
+	production := isProductionEnv()
+
 	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	if databaseURL == "" {
 		databaseURL = strings.TrimSpace(os.Getenv("TASKS_DB_PATH"))
+	}
+	if production && databaseURL == "" {
+		return Config{}, errors.New("DATABASE_URL is required in production")
 	}
 	if databaseURL == "" {
 		databaseURL = "postgresql://telegraph:telegraph@localhost:5432/telegraph?sslmode=disable"
@@ -98,6 +104,11 @@ func LoadFromEnv() (Config, error) {
 		ImageConcurrency: parseIntEnv("GO_IMAGE_CONCURRENCY", defaultSettings.ImageConcurrency),
 	})
 
+	internalToken := strings.TrimSpace(os.Getenv("INTERNAL_ENQUEUE_TOKEN"))
+	if production && internalToken == "" {
+		return Config{}, errors.New("INTERNAL_ENQUEUE_TOKEN is required in production")
+	}
+
 	return Config{
 		Addr:             addr,
 		DatabaseURL:      databaseURL,
@@ -107,7 +118,7 @@ func LoadFromEnv() (Config, error) {
 		ConsumerGroup:    consumerGroup,
 		ConsumerName:     consumerName,
 		UpstreamBaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("PYTHON_WEB_BASE_URL")), "/"),
-		InternalToken:    strings.TrimSpace(os.Getenv("INTERNAL_ENQUEUE_TOKEN")),
+		InternalToken:    internalToken,
 		DownloadTimeout:  settings.Timeout,
 		DownloadRetries:  settings.Retries,
 		ImageConcurrency: settings.ImageConcurrency,
@@ -116,6 +127,21 @@ func LoadFromEnv() (Config, error) {
 		IdleTimeout:      60 * time.Second,
 		ShutdownTimeout:  10 * time.Second,
 	}, nil
+}
+
+func isProductionEnv() bool {
+	candidates := []string{
+		os.Getenv("APP_ENV"),
+		os.Getenv("GO_ENV"),
+		os.Getenv("ENV"),
+	}
+	for _, candidate := range candidates {
+		switch strings.ToLower(strings.TrimSpace(candidate)) {
+		case "production", "prod":
+			return true
+		}
+	}
+	return false
 }
 
 func isPostgresURL(value string) bool {
