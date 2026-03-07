@@ -116,6 +116,9 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	assertContains(t, body, `hx-get="/logs"`)
 	assertContains(t, body, `hx-target="#content"`)
 	assertContains(t, body, `hx-push-url="true"`)
+	assertContains(t, body, "支持英文逗号 (,) 与中文逗号（，）分隔多个作者。")
+	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格与 # 分隔多个标签，自动清理多余空格。")
+	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格与 # 分隔多个类型，自动清理多余空格。")
 }
 
 func TestHTMXRequestReturnsPageFragment(t *testing.T) {
