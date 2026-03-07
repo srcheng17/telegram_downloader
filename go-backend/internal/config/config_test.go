@@ -84,7 +84,7 @@ func TestDefaultSettingsSnapshot(t *testing.T) {
 func TestLoadFromEnvFailsWhenDatabaseURLMissingInProduction(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("DATABASE_URL", "")
-	t.Setenv("TASKS_DB_PATH", "")
+	t.Setenv("TASKS_DB_PATH", "postgresql://telegraph:telegraph@postgres:5432/telegraph?sslmode=disable")
 	t.Setenv("INTERNAL_ENQUEUE_TOKEN", "token-prod")
 
 	_, err := LoadFromEnv()

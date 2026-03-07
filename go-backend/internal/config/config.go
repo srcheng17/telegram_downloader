@@ -59,12 +59,14 @@ func LoadFromEnv() (Config, error) {
 
 	production := isProductionEnv()
 
-	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	rawDatabaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if production && rawDatabaseURL == "" {
+		return Config{}, errors.New("DATABASE_URL is required in production")
+	}
+
+	databaseURL := rawDatabaseURL
 	if databaseURL == "" {
 		databaseURL = strings.TrimSpace(os.Getenv("TASKS_DB_PATH"))
-	}
-	if production && databaseURL == "" {
-		return Config{}, errors.New("DATABASE_URL is required in production")
 	}
 	if databaseURL == "" {
 		databaseURL = "postgresql://telegraph:telegraph@localhost:5432/telegraph?sslmode=disable"
