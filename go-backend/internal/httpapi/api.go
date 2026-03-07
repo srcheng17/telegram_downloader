@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -1034,20 +1035,54 @@ func extractDownloadRequest(r *http.Request) (string, bool, downloadMetadata, er
 func extractFromMap(payload map[string]any) (string, bool, downloadMetadata) {
 	rawURL := normalizePayloadText(payload["url"], maxURLLength)
 	forceDownload := coerceBool(payload["force"])
+	rawAuthor := normalizePayloadText(payload["author"], maxMetadataFieldLength)
 	tagsRaw := normalizePayloadText(payload["tags"], maxMetadataFieldLength)
 	genresRaw := normalizePayloadText(payload["genres"], maxMetadataFieldLength)
 
 	metadata := downloadMetadata{
-		author:           optionalString(normalizePayloadText(payload["author"], maxMetadataFieldLength)),
+		author:           optionalString(normalizeAuthorList(rawAuthor)),
 		seriesName:       optionalString(normalizePayloadText(payload["series_name"], maxMetadataFieldLength)),
 		comicName:        optionalString(normalizePayloadText(payload["comic_name"], maxMetadataFieldLength)),
 		summary:          optionalString(normalizePayloadText(payload["summary"], maxMetadataFieldLength)),
 		tagsRaw:          optionalString(tagsRaw),
-		tagsNormalized:   optionalString(strings.ReplaceAll(tagsRaw, "，", ",")),
+		tagsNormalized:   optionalString(normalizeTagLikeList(tagsRaw)),
 		genresRaw:        optionalString(genresRaw),
-		genresNormalized: optionalString(strings.ReplaceAll(genresRaw, "，", ",")),
+		genresNormalized: optionalString(normalizeTagLikeList(genresRaw)),
 	}
 	return rawURL, forceDownload, metadata
+}
+
+func normalizeAuthorList(raw string) string {
+	return normalizeDelimitedList(raw, func(r rune) bool {
+		return r == ',' || r == '，'
+	})
+}
+
+func normalizeTagLikeList(raw string) string {
+	return normalizeDelimitedList(raw, func(r rune) bool {
+		return r == ',' || r == '，' || r == '#' || unicode.IsSpace(r)
+	})
+}
+
+func normalizeDelimitedList(raw string, isDelimiter func(rune) bool) string {
+	items := strings.FieldsFunc(raw, isDelimiter)
+	if len(items) == 0 {
+		return ""
+	}
+	seen := make(map[string]struct{}, len(items))
+	normalized := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	return strings.Join(normalized, ",")
 }
 
 func isAllowedTelegraphURL(rawURL string) bool {
