@@ -442,6 +442,39 @@ func TestCancelTaskReturnsAcceptedWhenConflictResolvedAsCanceled(t *testing.T) {
 	}
 }
 
+func TestCancelTaskReturnsAcceptedWhenConflictResolvedAsCancelRequested(t *testing.T) {
+	repo := &fakeTaskStore{
+		getTasks: []*Task{
+			{
+				ID:     "task-v2-cancel-requested-race",
+				Status: "RUNNING",
+			},
+			{
+				ID:     "task-v2-cancel-requested-race",
+				Status: TaskStatusCancelRequested,
+			},
+		},
+		cancelErr: postgres.ErrV2TaskStatusMismatchOrNotFound,
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/tasks/task-v2-cancel-requested-race/cancel", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["status"] != TaskStatusCancelRequested {
+		t.Fatalf("expected status %q, got %#v", TaskStatusCancelRequested, payload["status"])
+	}
+}
+
 func TestDownloadArtifactReturnsFile(t *testing.T) {
 	downloadRoot := t.TempDir()
 	artifactPath := filepath.Join(downloadRoot, "task-v2-artifact.cbz")

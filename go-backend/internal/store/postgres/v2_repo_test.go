@@ -188,6 +188,38 @@ func TestUpdateTaskHeartbeatTouchesRunningTask(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskStatusIncrementsRetryCountOnRunningFailure(t *testing.T) {
+	db := newFakeV2RepoDB()
+	db.tasks["task-v2-retry"] = fakeV2Task{
+		id:         "task-v2-retry",
+		url:        "https://telegra.ph/demo",
+		status:     "RUNNING",
+		retryCount: 2,
+		createdAt:  time.Now().UTC(),
+		updatedAt:  time.Now().UTC(),
+	}
+	repo := &PostgresV2TaskRepo{db: db}
+
+	reason := "download failed"
+	if err := repo.UpdateTaskStatus(
+		context.Background(),
+		"task-v2-retry",
+		"RUNNING",
+		"FAILED",
+		StatusPatch{Error: &reason},
+	); err != nil {
+		t.Fatalf("update task status: %v", err)
+	}
+
+	persisted := db.tasks["task-v2-retry"]
+	if persisted.status != "FAILED" {
+		t.Fatalf("expected status FAILED, got %q", persisted.status)
+	}
+	if persisted.retryCount != 3 {
+		t.Fatalf("expected retry_count=3, got %d", persisted.retryCount)
+	}
+}
+
 type fakeV2RepoDB struct {
 	tasks  map[string]fakeV2Task
 	events []fakeV2Event

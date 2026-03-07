@@ -540,6 +540,48 @@ func TestExecutorStopsRunningTaskWhenCancelRequested(t *testing.T) {
 	}
 }
 
+func TestExecutorMonitorStopsDownloadWhenCancelRequested(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-cancel-monitor"] = v2ExecutorTaskRecord{
+		id:           "task-cancel-monitor",
+		url:          "https://telegra.ph/demo-cancel-monitor",
+		status:       "QUEUED",
+		enqueueToken: "token-cancel-monitor",
+	}
+	repo.cancelRequestedAfterHeartbeat = 1
+
+	downloader := &fakeV2ExecutorDownloader{
+		executeFn: func(ctx context.Context, _ string, _ string) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:              repo,
+		Worker:            "worker-v2-cancel-monitor",
+		Download:          downloader,
+		HeartbeatInterval: 5 * time.Millisecond,
+	})
+
+	err := executor.Execute(context.Background(), "task-cancel-monitor", "token-cancel-monitor")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if repo.heartbeatCalls == 0 {
+		t.Fatalf("expected monitor heartbeat updates")
+	}
+	if len(repo.statusUpdates) != 2 {
+		t.Fatalf("expected QUEUED->RUNNING then CANCEL_REQUESTED->CANCELED transitions, got %d", len(repo.statusUpdates))
+	}
+	if repo.statusUpdates[1].from != "CANCEL_REQUESTED" || repo.statusUpdates[1].to != "CANCELED" {
+		t.Fatalf("expected second transition CANCEL_REQUESTED->CANCELED, got %s->%s", repo.statusUpdates[1].from, repo.statusUpdates[1].to)
+	}
+	persisted := repo.tasks["task-cancel-monitor"]
+	if persisted.status != "CANCELED" {
+		t.Fatalf("expected persisted status CANCELED, got %q", persisted.status)
+	}
+}
+
 type fakeV2ExecutorDownloader struct {
 	artifactPath string
 	err          error
@@ -569,13 +611,14 @@ type fakeV2ExecutorRepo struct {
 	statusUpdates []v2ExecutorStatusUpdate
 	events        []v2ExecutorTaskEvent
 
-	getTaskErrSequence          []error
-	getTaskStatusSequence       []string
-	eventErrByToStatus          map[string]error
-	eventErrCountByToStatus     map[string]int
-	failTerminalWhenCtxCanceled bool
-	getTaskCalls                int
-	heartbeatCalls              int
+	getTaskErrSequence            []error
+	getTaskStatusSequence         []string
+	eventErrByToStatus            map[string]error
+	eventErrCountByToStatus       map[string]int
+	failTerminalWhenCtxCanceled   bool
+	getTaskCalls                  int
+	heartbeatCalls                int
+	cancelRequestedAfterHeartbeat int
 }
 
 type v2ExecutorTaskRecord struct {
@@ -648,6 +691,10 @@ func (f *fakeV2ExecutorRepo) UpdateTaskHeartbeat(_ context.Context, taskID, work
 	}
 	if task.claimedBy != nil && *task.claimedBy != strings.TrimSpace(worker) {
 		return nil
+	}
+	if f.cancelRequestedAfterHeartbeat > 0 && f.heartbeatCalls >= f.cancelRequestedAfterHeartbeat {
+		task.status = "CANCEL_REQUESTED"
+		f.tasks[taskID] = task
 	}
 	return nil
 }

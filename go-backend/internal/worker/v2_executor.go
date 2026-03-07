@@ -444,11 +444,15 @@ func (e *V2Executor) startExecutionMonitor(
 
 	observe := func(ctx context.Context) bool {
 		heartbeatCtx, heartbeatCancel := context.WithTimeout(context.Background(), heartbeatInterval)
-		_ = e.repo.UpdateTaskHeartbeat(heartbeatCtx, taskID, e.worker)
+		heartbeatErr := e.repo.UpdateTaskHeartbeat(heartbeatCtx, taskID, e.worker)
 		heartbeatCancel()
+		if heartbeatErr != nil {
+			log.Printf("v2 worker heartbeat update failed task_id=%s worker=%s: %v", strings.TrimSpace(taskID), strings.TrimSpace(e.worker), heartbeatErr)
+		}
 
 		requested, err := e.isTaskCancelRequested(ctx, taskID)
 		if err != nil {
+			log.Printf("v2 worker cancel check failed task_id=%s: %v", strings.TrimSpace(taskID), err)
 			return false
 		}
 		if requested {
