@@ -116,7 +116,10 @@ func main() {
 		Download:       &worker.V2ServiceDownloader{Service: downloadService, DownloadRoot: downloadRoot},
 		TransientRetry: cfg.DownloadRetries,
 	})
-	v2Consumer := queuev2.NewConsumer(redisClient, cfg.V2StreamName)
+	if err := redisClient.XGroupCreateMkStream(ctx, cfg.V2StreamName, cfg.ConsumerGroup, "$").Err(); err != nil && !isBusyGroupErr(err) {
+		log.Fatalf("create v2 stream consumer group: %v", err)
+	}
+	v2Consumer := queuev2.NewConsumer(redisClient, cfg.V2StreamName, cfg.ConsumerGroup, consumerName)
 
 	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -145,4 +148,11 @@ func main() {
 	}
 
 	log.Printf("go-worker stopped")
+}
+
+func isBusyGroupErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToUpper(err.Error()), "BUSYGROUP")
 }

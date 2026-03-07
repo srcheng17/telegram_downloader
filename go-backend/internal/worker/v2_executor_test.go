@@ -260,7 +260,7 @@ func TestRunRetryRecoversRunningTaskAfterTerminalTransitionFailure(t *testing.T)
 
 	consumer := &fakeV2QueueConsumer{
 		reads: []fakeV2ReadResult{
-			{messages: []queuev2.TaskMessage{{TaskID: "task-running-recovery", Token: "token-running-recovery"}}},
+			{messages: []queuev2.TaskMessage{{MessageID: "1-0", TaskID: "task-running-recovery", Token: "token-running-recovery"}}},
 			{err: context.Canceled},
 		},
 	}
@@ -282,6 +282,80 @@ func TestRunRetryRecoversRunningTaskAfterTerminalTransitionFailure(t *testing.T)
 	}
 	if repo.getTaskCalls != 2 {
 		t.Fatalf("expected execute retried after terminal failure, got getTaskCalls=%d", repo.getTaskCalls)
+	}
+}
+
+func TestRunAcksMessageAfterSuccessfulExecution(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-run-ack"] = v2ExecutorTaskRecord{
+		id:           "task-run-ack",
+		url:          "https://telegra.ph/demo-run-ack",
+		status:       "QUEUED",
+		enqueueToken: "token-run-ack",
+	}
+
+	downloader := &fakeV2ExecutorDownloader{artifactPath: "/tmp/task-run-ack.cbz"}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-run-ack",
+		Download: downloader,
+	})
+
+	consumer := &fakeV2QueueConsumer{
+		reads: []fakeV2ReadResult{
+			{messages: []queuev2.TaskMessage{{MessageID: "10-0", TaskID: "task-run-ack", Token: "token-run-ack"}}},
+			{err: context.Canceled},
+		},
+	}
+
+	err := executor.Run(context.Background(), consumer)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if len(consumer.ackedMessageIDs) != 1 {
+		t.Fatalf("expected one ack call, got %d", len(consumer.ackedMessageIDs))
+	}
+	if consumer.ackedMessageIDs[0] != "10-0" {
+		t.Fatalf("expected acked message id 10-0, got %#v", consumer.ackedMessageIDs)
+	}
+}
+
+func TestRunProcessesClaimedPendingMessageBeforeReadGroup(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-run-claimed"] = v2ExecutorTaskRecord{
+		id:           "task-run-claimed",
+		url:          "https://telegra.ph/demo-run-claimed",
+		status:       "QUEUED",
+		enqueueToken: "token-run-claimed",
+	}
+
+	downloader := &fakeV2ExecutorDownloader{artifactPath: "/tmp/task-run-claimed.cbz"}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-run-claimed",
+		Download: downloader,
+	})
+
+	consumer := &fakeV2QueueConsumer{
+		claims: []fakeV2ReadResult{
+			{messages: []queuev2.TaskMessage{{MessageID: "11-0", TaskID: "task-run-claimed", Token: "token-run-claimed"}}},
+			{err: context.Canceled},
+		},
+	}
+
+	err := executor.Run(context.Background(), consumer)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if consumer.readCalls != 0 {
+		t.Fatalf("expected no ReadGroup calls when pending claim provided work, got %d", consumer.readCalls)
+	}
+	if len(consumer.ackedMessageIDs) != 1 || consumer.ackedMessageIDs[0] != "11-0" {
+		t.Fatalf("expected reclaimed message to be acked, got %#v", consumer.ackedMessageIDs)
+	}
+	if downloader.calls != 1 {
+		t.Fatalf("expected downloader called once for reclaimed task, got %d", downloader.calls)
 	}
 }
 
@@ -608,18 +682,51 @@ type fakeV2ReadResult struct {
 }
 
 type fakeV2QueueConsumer struct {
-	reads []fakeV2ReadResult
-	index int
+	reads  []fakeV2ReadResult
+	claims []fakeV2ReadResult
+
+	readIndex  int
+	claimIndex int
+	readCalls  int
+	claimCalls int
+
+	ackedMessageIDs []string
+	ackErr          error
 }
 
-func (f *fakeV2QueueConsumer) Read(_ context.Context, _ int64, _ time.Duration) ([]queuev2.TaskMessage, error) {
-	if f.index >= len(f.reads) {
+func (f *fakeV2QueueConsumer) ReadGroup(_ context.Context, _ int64, _ time.Duration) ([]queuev2.TaskMessage, error) {
+	f.readCalls++
+	if f.readIndex >= len(f.reads) {
 		return nil, context.Canceled
 	}
-	result := f.reads[f.index]
-	f.index++
+	result := f.reads[f.readIndex]
+	f.readIndex++
 	if result.messages == nil {
 		return []queuev2.TaskMessage{}, result.err
 	}
 	return result.messages, result.err
+}
+
+func (f *fakeV2QueueConsumer) ClaimPending(_ context.Context, _ time.Duration, _ int64) ([]queuev2.TaskMessage, error) {
+	f.claimCalls++
+	if f.claimIndex >= len(f.claims) {
+		return []queuev2.TaskMessage{}, nil
+	}
+	result := f.claims[f.claimIndex]
+	f.claimIndex++
+	if result.messages == nil {
+		return []queuev2.TaskMessage{}, result.err
+	}
+	return result.messages, result.err
+}
+
+func (f *fakeV2QueueConsumer) Ack(_ context.Context, messageIDs ...string) error {
+	for _, id := range messageIDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		f.ackedMessageIDs = append(f.ackedMessageIDs, trimmed)
+	}
+	return f.ackErr
 }

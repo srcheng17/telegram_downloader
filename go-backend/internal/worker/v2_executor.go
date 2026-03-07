@@ -211,17 +211,35 @@ func (e *V2Executor) Run(ctx context.Context, consumer V2QueueConsumer) error {
 			return nil
 		}
 
-		messages, err := consumer.Read(ctx, 1, e.readBlockDuration())
+		messages, err := consumer.ClaimPending(ctx, e.readBlockDuration(), 1)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("read v2 queue messages: %w", err)
+			return fmt.Errorf("claim pending v2 queue messages: %w", err)
 		}
+		if len(messages) == 0 {
+			messages, err = consumer.ReadGroup(ctx, 1, e.readBlockDuration())
+			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+					return nil
+				}
+				return fmt.Errorf("read v2 queue messages: %w", err)
+			}
+		}
+
 		for _, msg := range messages {
 			err := e.executeWithRetry(ctx, msg)
 			if err != nil {
 				log.Printf("v2 worker execute failed task_id=%s: %v", strings.TrimSpace(msg.TaskID), err)
+				continue
+			}
+			if strings.TrimSpace(msg.MessageID) == "" {
+				continue
+			}
+
+			if err := consumer.Ack(ctx, msg.MessageID); err != nil {
+				return fmt.Errorf("ack v2 queue message task_id=%s message_id=%s: %w", strings.TrimSpace(msg.TaskID), strings.TrimSpace(msg.MessageID), err)
 			}
 		}
 	}
@@ -389,7 +407,9 @@ func stringPtrV2Executor(value string) *string {
 }
 
 type V2QueueConsumer interface {
-	Read(ctx context.Context, count int64, block time.Duration) ([]queuev2.TaskMessage, error)
+	ReadGroup(ctx context.Context, count int64, block time.Duration) ([]queuev2.TaskMessage, error)
+	ClaimPending(ctx context.Context, minIdle time.Duration, count int64) ([]queuev2.TaskMessage, error)
+	Ack(ctx context.Context, messageIDs ...string) error
 }
 
 type V2DBTaskReader interface {
