@@ -275,6 +275,8 @@ type DownloadSettingsProvider interface {
 	GetDownloadSettings(ctx context.Context) (DownloadRuntimeSettings, error)
 }
 
+type ReadyzChecker func(ctx context.Context) (bool, error)
+
 type API struct {
 	store                   TaskReader
 	legacyAdapter           *LegacyAdapter
@@ -283,6 +285,7 @@ type API struct {
 	downloadSubmitter       DownloadSubmitter
 	downloadQueue           queue.DownloadQueue
 	runtimeSettingsProvider DownloadSettingsProvider
+	readyzChecker           ReadyzChecker
 	downloadTimeout         int
 	downloadRetries         int
 	imageConcurrency        int
@@ -302,6 +305,7 @@ type RouterOptions struct {
 	DownloadTimeout         int
 	DownloadRetries         int
 	ImageConcurrency        int
+	ReadyzChecker           ReadyzChecker
 }
 
 func NewRouter(store TaskReader) http.Handler {
@@ -332,6 +336,7 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 		downloadSubmitter:       downloadSubmitter,
 		downloadQueue:           options.DownloadQueue,
 		runtimeSettingsProvider: runtimeSettingsProvider,
+		readyzChecker:           options.ReadyzChecker,
 		downloadTimeout:         positiveOrDefault(options.DownloadTimeout, defaultTimeoutSeconds),
 		downloadRetries:         nonNegativeOrDefault(options.DownloadRetries, defaultRetries),
 		imageConcurrency:        positiveOrDefault(options.ImageConcurrency, defaultImageConcurrency),
@@ -345,6 +350,7 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 	router.Get("/v2", api.handleV2DashboardPage)
 	router.Get("/v2/tasks-ui", api.handleV2TasksPage)
 	router.Get("/healthz", api.handleHealthz)
+	router.Get("/readyz", api.handleReadyz)
 	router.Get("/api/summary", api.handleSummary)
 	router.Get("/api/logs", api.handleLogs)
 	router.Post("/download", api.handleDownload)
@@ -372,6 +378,30 @@ func (a *API) handleV2TasksPage(w http.ResponseWriter, _ *http.Request) {
 
 func (a *API) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "go-backend"})
+}
+
+func (a *API) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if a.readyzChecker == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ready": true, "service": "go-backend"})
+		return
+	}
+
+	ready, err := a.readyzChecker(r.Context())
+	if err != nil {
+		writeInternalError(w, fmt.Errorf("readyz check failed: %w", err))
+		return
+	}
+	if !ready {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":      false,
+			"ready":   false,
+			"service": "go-backend",
+			"reason":  "migrations_pending",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ready": true, "service": "go-backend"})
 }
 
 func (a *API) handleSummary(w http.ResponseWriter, r *http.Request) {

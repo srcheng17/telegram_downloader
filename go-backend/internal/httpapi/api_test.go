@@ -362,6 +362,36 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestReadyzReturns503WhenMigrationsPending(t *testing.T) {
+	handler := NewRouterWithOptions(
+		&fakeTaskReader{},
+		RouterOptions{
+			ReadyzChecker: func(context.Context) (bool, error) {
+				return false, nil
+			},
+		},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal readyz payload: %v", err)
+	}
+	if payload["ready"] != false {
+		t.Fatalf("expected ready=false, got %#v", payload["ready"])
+	}
+	if payload["reason"] != "migrations_pending" {
+		t.Fatalf("expected reason migrations_pending, got %#v", payload["reason"])
+	}
+}
+
 func TestV2PageEntrypoints(t *testing.T) {
 	handler := NewRouter(&fakeTaskReader{})
 

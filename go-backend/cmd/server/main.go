@@ -23,6 +23,7 @@ import (
 	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/service"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
+	pgmigrations "github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres/migrations"
 )
 
 func main() {
@@ -40,6 +41,9 @@ func main() {
 
 	if err := pool.Ping(ctx); err != nil {
 		log.Fatalf("ping postgres: %v", err)
+	}
+	if err := pgmigrations.Run(ctx, pool); err != nil {
+		log.Fatalf("run postgres migrations: %v", err)
 	}
 
 	redisOptions, err := redis.ParseURL(cfg.RedisURL)
@@ -63,10 +67,15 @@ func main() {
 		log.Printf("PYTHON_WEB_BASE_URL not set, go-api will use local defaults for runtime settings")
 	}
 
-	legacyRouter := httpapi.NewRouterWithOptions(
-		store,
-		buildLegacyRouterOptions(cfg, downloadQueue, v2Store, v2Queue),
-	)
+	legacyRouterOptions := buildLegacyRouterOptions(cfg, downloadQueue, v2Store, v2Queue)
+	legacyRouterOptions.ReadyzChecker = func(ctx context.Context) (bool, error) {
+		pending, err := pgmigrations.PendingCount(ctx, pool)
+		if err != nil {
+			return false, err
+		}
+		return pending == 0, nil
+	}
+	legacyRouter := httpapi.NewRouterWithOptions(store, legacyRouterOptions)
 	rootRouter := chi.NewRouter()
 	httpui.RegisterRoutesWithConfig(rootRouter, buildUIConfig(cfg, v2Store))
 	httpv2.RegisterRoutes(rootRouter, httpv2.NewTasksHandler(v2Store, v2Queue))
