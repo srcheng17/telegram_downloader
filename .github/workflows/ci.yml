@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - feat/**
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go-backend/go.mod
+          cache-dependency-path: go-backend/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Go tests
+        working-directory: go-backend
+        run: go test ./...
+
+      - name: Go race tests
+        working-directory: go-backend
+        run: go test -race ./...
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npm run e2e:install
+
+      - name: Lint + E2E
+        env:
+          INTERNAL_ENQUEUE_TOKEN: ci-internal-token
+          APP_PORT: "5002"
+          E2E_ARTIFACTS_DIR: tests/e2e/.artifacts
+        run: |
+          npm run lint
+          npm run e2e:test
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          if-no-files-found: ignore
+          path: |
+            playwright-report
+            test-results
+            tests/e2e/.artifacts

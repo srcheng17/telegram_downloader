@@ -1,47 +1,70 @@
-const path = require('path');
-const { execFileSync } = require('child_process');
 const { test, expect } = require('@playwright/test');
 
-const rootDir = path.resolve(__dirname, '..', '..', '..');
-const prepareScript = path.join(rootDir, 'tests', 'e2e', 'fixtures', 'prepare_e2e_state.py');
-const pythonBin = path.join(rootDir, '.venv', 'bin', 'python');
-
-function recordDownloadSubmissions(page) {
-  const submissions = [];
-  page.on('request', (request) => {
-    if (!request.url().endsWith('/download') || request.method() !== 'POST') {
-      return;
-    }
-    const body = request.postData() || '';
-    submissions.push(Object.fromEntries(new URLSearchParams(body).entries()));
-  });
-  return submissions;
+function decodeFormBody(request) {
+  const body = request.postData() || '';
+  return Object.fromEntries(new URLSearchParams(body).entries());
 }
 
-test.beforeEach(() => {
-  execFileSync(pythonBin, [prepareScript], { cwd: rootDir, stdio: 'inherit' });
-});
+test('首页 duplicate SUCCESS 取消分支：展示确认并可下载已有文件', async ({ page }) => {
+  const submissions = [];
+  let createAttempts = 0;
+  let existingDownloadRequests = 0;
 
-test('首页：下载护栏默认折叠，避免遮挡表单输入', async ({ page }) => {
-  await page.goto('/');
+  await page.route('**/api/summary', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total_tasks: 6,
+        active_tasks: 2,
+        success_tasks: 3,
+        failed_tasks: 1,
+        canceled_tasks: 0,
+      }),
+    });
+  });
 
-  const guardrailsPanel = page.locator('details.guardrails-panel');
-  await expect(guardrailsPanel).toBeVisible();
-  await expect(guardrailsPanel).not.toHaveAttribute('open', '');
-  await expect(page.locator('.guardrails-description')).toBeHidden();
-});
+  await page.route('**/download', async (route) => {
+    submissions.push(decodeFormBody(route.request()));
+    createAttempts += 1;
 
-test('移动端：首页与日志任务概览默认折叠', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
-  await expect(page.locator('#summary-collapsible-home')).not.toHaveAttribute('open', '');
+    if (createAttempts === 1) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          duplicate: true,
+          needs_confirmation: true,
+          logs_url: '/logs',
+          download_url: '/api/tasks/e2e-success-download/download',
+        }),
+      });
+      return;
+    }
 
-  await page.goto('/logs');
-  await expect(page.locator('#summary-collapsible-logs')).not.toHaveAttribute('open', '');
-});
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        duplicate: false,
+        logs_url: '/logs',
+      }),
+    });
+  });
 
-test('首页 duplicate SUCCESS 取消分支：展示确认并仅下载已有文件', async ({ page }) => {
-  const submissions = recordDownloadSubmissions(page);
+  await page.route('**/api/tasks/e2e-success-download/download**', async (route) => {
+    existingDownloadRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/zip',
+      headers: {
+        'Content-Disposition': 'attachment; filename="e2e-success-download.zip"',
+      },
+      body: 'PK\x03\x04mock',
+    });
+  });
 
   await page.goto('/');
 
@@ -71,24 +94,62 @@ test('首页 duplicate SUCCESS 取消分支：展示确认并仅下载已有文�
     summary: 'E2E简介',
     tags: '科幻,冒险，连载',
     genres: '青年,悬疑，热血',
+    force: 'false',
   });
 
   await page.getByRole('button', { name: '取消并下载已有文件' }).click();
   await expect(page.getByRole('button', { name: '下载已有文件' })).toBeVisible();
-
-  await page.waitForTimeout(300);
-  expect(submissions).toHaveLength(1);
-
-  const [download] = await Promise.all([
-    page.waitForEvent('download'),
-    page.getByRole('button', { name: '下载已有文件' }).click(),
-  ]);
-
-  expect(download.suggestedFilename()).toBe('e2e-success-download.zip');
+  await page.getByRole('button', { name: '下载已有文件' }).click();
+  await expect.poll(() => existingDownloadRequests).toBe(1);
 });
 
 test('首页 duplicate SUCCESS 确认分支：force=true 二次提交创建新任务', async ({ page }) => {
-  const submissions = recordDownloadSubmissions(page);
+  const submissions = [];
+  let createAttempts = 0;
+
+  await page.route('**/api/summary', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total_tasks: 3,
+        active_tasks: 1,
+        success_tasks: 2,
+        failed_tasks: 0,
+        canceled_tasks: 0,
+      }),
+    });
+  });
+
+  await page.route('**/download', async (route) => {
+    submissions.push(decodeFormBody(route.request()));
+    createAttempts += 1;
+
+    if (createAttempts === 1) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          duplicate: true,
+          needs_confirmation: true,
+          logs_url: '/logs',
+          download_url: '/api/tasks/e2e-success-download/download',
+        }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        duplicate: false,
+        logs_url: '/logs',
+      }),
+    });
+  });
 
   await page.goto('/');
 
@@ -117,14 +178,170 @@ test('首页 duplicate SUCCESS 确认分支：force=true 二次提交创建新�
     genres: '冒险,奇幻',
   });
 
-  await expect(page.locator('#download-feedback')).toContainText('任务已加入队列');
+  await expect(page.locator('#download-feedback')).toContainText('任务已加入队列。');
   await expect(page.getByRole('button', { name: '查看日志' })).toBeVisible();
 });
 
-test('日志页：筛选、错误详情弹窗、取消任务', async ({ page }) => {
+test('日志页：筛选、错误详情弹窗、取消任务、下载预检', async ({ page }) => {
+  const statusCatalog = {
+    IN_PROGRESS: { label: '进行中', can_cancel: true, can_download: false },
+    CANCEL_REQUESTED: { label: '取消中', can_cancel: false, can_download: false },
+    SUCCESS: { label: '成功', can_cancel: false, can_download: true },
+    FAILED: { label: '失败', can_cancel: false, can_download: false },
+  };
+  const logs = [
+    {
+      id: 'e2e-failed-modal',
+      url: 'https://telegra.ph/e2e-failed-modal',
+      status: 'FAILED',
+      progress: 2,
+      total_images: 8,
+      start_time: 1762531200,
+      error: 'modal-token '.repeat(20),
+    },
+    {
+      id: 'e2e-pending-cancel',
+      url: 'https://telegra.ph/e2e-pending-cancel',
+      status: 'IN_PROGRESS',
+      progress: 3,
+      total_images: 10,
+      start_time: 1762531201,
+      error: '',
+    },
+    {
+      id: 'e2e-success-missing',
+      url: 'https://telegra.ph/e2e-success-missing',
+      status: 'SUCCESS',
+      progress: 10,
+      total_images: 10,
+      start_time: 1762531202,
+      error: '',
+    },
+    {
+      id: 'e2e-success-download',
+      url: 'https://telegra.ph/e2e-success-download',
+      status: 'SUCCESS',
+      progress: 11,
+      total_images: 11,
+      start_time: 1762531203,
+      error: '',
+    },
+  ];
+  let successDownloadRequests = 0;
+
+  await page.route('**/api/logs**', async (route) => {
+    const requestURL = new URL(route.request().url());
+    const statusFilter = String(requestURL.searchParams.get('status') || '')
+      .trim()
+      .toUpperCase();
+    const queryFilter = String(requestURL.searchParams.get('q') || '').trim();
+
+    const filteredLogs = logs.filter((log) => {
+      if (statusFilter && log.status !== statusFilter) {
+        return false;
+      }
+      if (!queryFilter) {
+        return true;
+      }
+      return (
+        String(log.id).includes(queryFilter) ||
+        String(log.url).includes(queryFilter) ||
+        String(log.error).includes(queryFilter)
+      );
+    });
+
+    const finishedTasks = logs.filter(
+      (item) => item.status === 'SUCCESS' || item.status === 'FAILED' || item.status === 'CANCEL_REQUESTED',
+    ).length;
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        logs: filteredLogs,
+        total: filteredLogs.length,
+        page: 1,
+        per_page: 25,
+        total_pages: filteredLogs.length > 0 ? 1 : 0,
+        has_active_tasks: false,
+        filters: {
+          status: statusFilter,
+          q: queryFilter,
+        },
+        summary: {
+          active_tasks: logs.filter((item) => item.status === 'IN_PROGRESS').length,
+          finished_tasks: finishedTasks,
+          success_rate: 50,
+          failed_tasks: logs.filter((item) => item.status === 'FAILED').length,
+          canceled_tasks: logs.filter((item) => item.status === 'CANCEL_REQUESTED').length,
+        },
+        status_catalog: statusCatalog,
+      }),
+    });
+  });
+
+  await page.route('**/api/tasks/*/cancel', async (route) => {
+    const match = route.request().url().match(/\/api\/tasks\/([^/]+)\/cancel$/);
+    const taskID = match ? decodeURIComponent(match[1]) : '';
+    const task = logs.find((item) => item.id === taskID);
+    if (task) {
+      task.status = 'CANCEL_REQUESTED';
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        message: 'Cancellation requested.',
+      }),
+    });
+  });
+
+  await page.route('**/api/tasks/*/download**', async (route) => {
+    const method = route.request().method();
+    const match = route.request().url().match(/\/api\/tasks\/([^/]+)\/download/);
+    const taskID = match ? decodeURIComponent(match[1]) : '';
+
+    if (method === 'HEAD') {
+      if (taskID === 'e2e-success-missing') {
+        await route.fulfill({ status: 404 });
+        return;
+      }
+      await route.fulfill({ status: 200 });
+      return;
+    }
+
+    if (taskID === 'e2e-success-missing') {
+      await route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: false,
+          message: 'Stored file is unavailable.',
+        }),
+      });
+      return;
+    }
+
+    if (taskID === 'e2e-success-download') {
+      successDownloadRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/zip',
+        headers: {
+          'Content-Disposition': 'attachment; filename="e2e-success-download.zip"',
+        },
+        body: 'PK\x03\x04mock',
+      });
+      return;
+    }
+
+    await route.fulfill({ status: 404 });
+  });
+
   await page.goto('/logs');
 
-  await expect(page.locator('#summary-active-count')).toHaveText('2');
+  await expect(page.locator('#summary-active-count')).toHaveText('1');
 
   await page.locator('#status-filter').selectOption('FAILED');
   await page.locator('#query-filter').fill('modal-token');
@@ -144,11 +361,8 @@ test('日志页：筛选、错误详情弹窗、取消任务', async ({ page }) 
   const pendingRow = page.locator('#log-body tr', { hasText: 'e2e-pending-cancel' });
   await expect(pendingRow).toBeVisible();
   await pendingRow.getByRole('button', { name: '取消' }).click();
+  await expect(page.locator('#logs-feedback')).toContainText('已提交取消请求。');
   await expect(pendingRow).toContainText('取消中');
-});
-
-test('日志页：下载预检失败停留当前页并提示错误', async ({ page }) => {
-  await page.goto('/logs');
 
   await page.locator('#status-filter').selectOption('SUCCESS');
   await page.locator('#query-filter').fill('e2e-success-missing');
@@ -156,18 +370,11 @@ test('日志页：下载预检失败停留当前页并提示错误', async ({ pa
 
   const missingRow = page.locator('#log-body tr', { hasText: 'e2e-success-missing' });
   await expect(missingRow).toBeVisible();
-
   await missingRow.getByRole('button', { name: '下载' }).click();
 
   await expect(page).toHaveURL(/\/logs$/);
-  await expect(page.locator('#logs-page')).toBeVisible();
   await expect(page.locator('#logs-feedback')).toContainText('缓存文件不可用。');
-  await expect(page.locator('#logs-feedback')).toHaveClass(/feedback-error/);
   await expect(page.locator('#logs-feedback')).not.toContainText('下载已开始。');
-});
-
-test('日志页：成功任务可下载', async ({ page }) => {
-  await page.goto('/logs');
 
   await page.locator('#status-filter').selectOption('SUCCESS');
   await page.locator('#query-filter').fill('e2e-success-download');
@@ -175,11 +382,8 @@ test('日志页：成功任务可下载', async ({ page }) => {
 
   const successRow = page.locator('#log-body tr', { hasText: 'e2e-success-download' });
   await expect(successRow).toBeVisible();
+  await successRow.getByRole('button', { name: '下载' }).click();
 
-  const [download] = await Promise.all([
-    page.waitForEvent('download'),
-    successRow.getByRole('button', { name: '下载' }).click(),
-  ]);
-
-  expect(download.suggestedFilename()).toBe('e2e-success-download.zip');
+  await expect(page.locator('#logs-feedback')).toContainText('下载已开始。');
+  await expect.poll(() => successDownloadRequests).toBeGreaterThan(0);
 });

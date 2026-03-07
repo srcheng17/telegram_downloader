@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: telegraph-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-telegraph}
       POSTGRES_USER: ${POSTGRES_USER:-telegraph}
@@ -16,7 +15,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: telegraph-redis
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - ./data/redis:/data
@@ -29,7 +27,6 @@ services:
   go-api:
     build:
       context: ./go-backend
-    container_name: telegraph-go-api
     environment:
       PORT: "5000"
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
@@ -58,7 +55,6 @@ services:
   go-worker:
     build:
       context: ./go-backend
-    container_name: telegraph-go-worker
     entrypoint: ["/app/go-worker"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
@@ -83,7 +79,6 @@ services:
 
   gateway:
     image: nginx:1.27-alpine
-    container_name: telegraph-gateway
     ports:
       - "${APP_PORT:-5002}:80"
     volumes:

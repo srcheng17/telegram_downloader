@@ -59,11 +59,14 @@ docker compose restart gateway go-api go-worker
 
 ```bash
 curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/healthz
+curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/readyz
 curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/v2/dashboard/summary
 curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/v2/tasks
 ```
 
 - [ ] `/healthz` 恢复 200
+- [ ] `/readyz` 恢复 200（无 pending migration）
+- [ ] `/`、`/logs`、`/settings` 页面可访问
 - [ ] v2 summary/list 接口恢复可用
 - [ ] 创建任务、取消任务、下载 artifact 至少走通 1 次
 - [ ] 错误率与消费积压回落到阈值内
@@ -85,4 +88,3 @@ curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/v2/tasks
 - 若回滚涉及 schema 版本差异，必须先做兼容评估，必要时使用只读/降级模式。
 - 对迁移工具写入的 `MIGRATED` 事件保持幂等校验，禁止手工批量改写事件链。
 - 回滚期间保留下载产物目录挂载，避免用户可下载文件丢失。
-
