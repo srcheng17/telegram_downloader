@@ -31,10 +31,18 @@ const (
 )
 
 type V2TaskSnapshot struct {
-	ID           string
-	URL          string
-	Status       string
-	EnqueueToken string
+	ID               string
+	URL              string
+	Status           string
+	EnqueueToken     string
+	Author           *string
+	SeriesName       *string
+	ComicName        *string
+	Summary          *string
+	TagsRaw          *string
+	TagsNormalized   *string
+	GenresRaw        *string
+	GenresNormalized *string
 }
 
 type V2ExecutionRepo interface {
@@ -44,7 +52,7 @@ type V2ExecutionRepo interface {
 }
 
 type V2TaskDownloader interface {
-	DownloadAndPackage(ctx context.Context, taskID, pageURL string) (string, error)
+	DownloadAndPackage(ctx context.Context, taskID, pageURL string, metadata downloader.TaskMetadata) (string, error)
 }
 
 type V2ExecutorConfig struct {
@@ -176,7 +184,12 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 			downloadCtx, stopMonitor = e.startExecutionMonitor(ctx, taskID, cancelRequested)
 		}
 
-		artifactPath, runErr := e.downloader.DownloadAndPackage(downloadCtx, taskID, snapshot.URL)
+		artifactPath, runErr := e.downloader.DownloadAndPackage(
+			downloadCtx,
+			taskID,
+			snapshot.URL,
+			taskMetadataFromV2Snapshot(snapshot),
+		)
 		stopMonitor()
 
 		if cancelRequested.Load() {
@@ -545,6 +558,40 @@ func stringPtrV2Executor(value string) *string {
 	return &copied
 }
 
+func taskMetadataFromV2Snapshot(snapshot V2TaskSnapshot) downloader.TaskMetadata {
+	return downloader.TaskMetadata{
+		Writer:  valueOrEmptyV2Executor(snapshot.Author),
+		Series:  valueOrEmptyV2Executor(snapshot.SeriesName),
+		Title:   valueOrEmptyV2Executor(snapshot.ComicName),
+		Summary: valueOrEmptyV2Executor(snapshot.Summary),
+		Tags: firstNonEmptyV2Executor(
+			valueOrEmptyV2Executor(snapshot.TagsNormalized),
+			valueOrEmptyV2Executor(snapshot.TagsRaw),
+		),
+		Genre: firstNonEmptyV2Executor(
+			valueOrEmptyV2Executor(snapshot.GenresNormalized),
+			valueOrEmptyV2Executor(snapshot.GenresRaw),
+		),
+	}
+}
+
+func valueOrEmptyV2Executor(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func firstNonEmptyV2Executor(values ...string) string {
+	for _, value := range values {
+		normalized := strings.TrimSpace(value)
+		if normalized != "" {
+			return normalized
+		}
+	}
+	return ""
+}
+
 type V2QueueConsumer interface {
 	ReadGroup(ctx context.Context, count int64, block time.Duration) ([]queuev2.TaskMessage, error)
 	ClaimPending(ctx context.Context, minIdle time.Duration, count int64) ([]queuev2.TaskMessage, error)
@@ -580,12 +627,33 @@ func (r *V2PostgresExecutionRepo) GetTaskForExecution(ctx context.Context, taskI
 			id,
 			url,
 			status,
-			enqueue_token
+			enqueue_token,
+			author,
+			series_name,
+			comic_name,
+			summary,
+			tags_raw,
+			tags_normalized,
+			genres_raw,
+			genres_normalized
 		FROM v2_tasks
 		WHERE id = $1
 		`,
 		strings.TrimSpace(taskID),
-	).Scan(&snapshot.ID, &snapshot.URL, &snapshot.Status, &snapshot.EnqueueToken)
+	).Scan(
+		&snapshot.ID,
+		&snapshot.URL,
+		&snapshot.Status,
+		&snapshot.EnqueueToken,
+		&snapshot.Author,
+		&snapshot.SeriesName,
+		&snapshot.ComicName,
+		&snapshot.Summary,
+		&snapshot.TagsRaw,
+		&snapshot.TagsNormalized,
+		&snapshot.GenresRaw,
+		&snapshot.GenresNormalized,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return V2TaskSnapshot{}, fmt.Errorf("v2 task %s not found", strings.TrimSpace(taskID))
@@ -614,7 +682,12 @@ type V2ServiceDownloader struct {
 	DownloadRoot string
 }
 
-func (d *V2ServiceDownloader) DownloadAndPackage(ctx context.Context, taskID, pageURL string) (string, error) {
+func (d *V2ServiceDownloader) DownloadAndPackage(
+	ctx context.Context,
+	taskID,
+	pageURL string,
+	metadata downloader.TaskMetadata,
+) (string, error) {
 	if d == nil {
 		return "", errors.New("v2 service downloader is required")
 	}
@@ -644,8 +717,8 @@ func (d *V2ServiceDownloader) DownloadAndPackage(ctx context.Context, taskID, pa
 		return "", fmt.Errorf("create v2 download output root: %w", err)
 	}
 
-	outputPath := filepath.Join(downloadRoot, taskID+".cbz")
-	if err := d.Service.PackageCBZ(result.Images, downloader.TaskMetadata{}, outputPath); err != nil {
+	outputPath := filepath.Join(downloadRoot, buildDownloadFilename(metadata, time.Now().Unix()))
+	if err := d.Service.PackageCBZ(result.Images, metadata, outputPath); err != nil {
 		return "", err
 	}
 	return outputPath, nil

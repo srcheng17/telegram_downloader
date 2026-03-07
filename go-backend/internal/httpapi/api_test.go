@@ -510,7 +510,7 @@ func TestLegacyDownloadEndpointCreatesV2Task(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/download",
-		strings.NewReader("url=https%3A%2F%2Ftelegra.ph%2Flegacy-download"),
+		strings.NewReader("url=https%3A%2F%2Ftelegra.ph%2Flegacy-download&author=%E4%BD%9C%E8%80%85A&series_name=%E7%B3%BB%E5%88%97B&comic_name=%E6%BC%AB%E7%94%BBC"),
 	)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -522,6 +522,15 @@ func TestLegacyDownloadEndpointCreatesV2Task(t *testing.T) {
 	}
 	if len(v2Store.createCalls) != 1 {
 		t.Fatalf("expected one v2 create call, got %d", len(v2Store.createCalls))
+	}
+	if v2Store.createCalls[0].Author == nil || *v2Store.createCalls[0].Author != "作者A" {
+		t.Fatalf("expected author forwarded into v2 create call, got %#v", v2Store.createCalls[0].Author)
+	}
+	if v2Store.createCalls[0].SeriesName == nil || *v2Store.createCalls[0].SeriesName != "系列B" {
+		t.Fatalf("expected series_name forwarded into v2 create call, got %#v", v2Store.createCalls[0].SeriesName)
+	}
+	if v2Store.createCalls[0].ComicName == nil || *v2Store.createCalls[0].ComicName != "漫画C" {
+		t.Fatalf("expected comic_name forwarded into v2 create call, got %#v", v2Store.createCalls[0].ComicName)
 	}
 	if len(v2Queue.calls) != 1 {
 		t.Fatalf("expected one v2 queue call, got %d", len(v2Queue.calls))

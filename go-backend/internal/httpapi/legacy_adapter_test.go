@@ -120,6 +120,16 @@ func TestLegacyAdapterCreateOrReuseDownloadTaskPrefersAtomicClaimPath(t *testing
 		RawURL:       "https://telegra.ph/atomic-claim",
 		CanonicalURL: "https://telegra.ph/atomic-claim",
 		Force:        false,
+		Author:       stringPtr("作者A"),
+		SeriesName:   stringPtr("系列B"),
+		ComicName:    stringPtr("漫画C"),
+		Summary:      stringPtr("简介D"),
+		TagsRaw:      stringPtr("标签1，标签2"),
+		TagsNormalized: stringPtr(
+			"标签1,标签2",
+		),
+		GenresRaw:        stringPtr("类型1，类型2"),
+		GenresNormalized: stringPtr("类型1,类型2"),
 	})
 	if err != nil {
 		t.Fatalf("create or reuse with atomic claim: %v", err)
@@ -129,6 +139,30 @@ func TestLegacyAdapterCreateOrReuseDownloadTaskPrefersAtomicClaimPath(t *testing
 	}
 	if len(store.claimCalls) != 1 {
 		t.Fatalf("expected one atomic claim call, got %d", len(store.claimCalls))
+	}
+	if store.claimCalls[0].Author == nil || *store.claimCalls[0].Author != "作者A" {
+		t.Fatalf("expected author forwarded to atomic claim, got %#v", store.claimCalls[0].Author)
+	}
+	if store.claimCalls[0].SeriesName == nil || *store.claimCalls[0].SeriesName != "系列B" {
+		t.Fatalf("expected series_name forwarded to atomic claim, got %#v", store.claimCalls[0].SeriesName)
+	}
+	if store.claimCalls[0].ComicName == nil || *store.claimCalls[0].ComicName != "漫画C" {
+		t.Fatalf("expected comic_name forwarded to atomic claim, got %#v", store.claimCalls[0].ComicName)
+	}
+	if store.claimCalls[0].Summary == nil || *store.claimCalls[0].Summary != "简介D" {
+		t.Fatalf("expected summary forwarded to atomic claim, got %#v", store.claimCalls[0].Summary)
+	}
+	if store.claimCalls[0].TagsRaw == nil || *store.claimCalls[0].TagsRaw != "标签1，标签2" {
+		t.Fatalf("expected tags_raw forwarded to atomic claim, got %#v", store.claimCalls[0].TagsRaw)
+	}
+	if store.claimCalls[0].TagsNormalized == nil || *store.claimCalls[0].TagsNormalized != "标签1,标签2" {
+		t.Fatalf("expected tags_normalized forwarded to atomic claim, got %#v", store.claimCalls[0].TagsNormalized)
+	}
+	if store.claimCalls[0].GenresRaw == nil || *store.claimCalls[0].GenresRaw != "类型1，类型2" {
+		t.Fatalf("expected genres_raw forwarded to atomic claim, got %#v", store.claimCalls[0].GenresRaw)
+	}
+	if store.claimCalls[0].GenresNormalized == nil || *store.claimCalls[0].GenresNormalized != "类型1,类型2" {
+		t.Fatalf("expected genres_normalized forwarded to atomic claim, got %#v", store.claimCalls[0].GenresNormalized)
 	}
 	if len(store.createCalls) != 0 {
 		t.Fatalf("expected fallback create path not called, got %d", len(store.createCalls))

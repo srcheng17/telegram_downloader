@@ -22,6 +22,16 @@ func TestCreateTaskPersistsQueuedTask(t *testing.T) {
 		URL:          canonicalURL,
 		CanonicalURL: stringPtr(canonicalURL),
 		EnqueueToken: "enqueue-token-v2",
+		Author:       stringPtr("作者A"),
+		SeriesName:   stringPtr("系列B"),
+		ComicName:    stringPtr("漫画C"),
+		Summary:      stringPtr("简介D"),
+		TagsRaw:      stringPtr("标签1，标签2"),
+		TagsNormalized: stringPtr(
+			"标签1,标签2",
+		),
+		GenresRaw:        stringPtr("类型1，类型2"),
+		GenresNormalized: stringPtr("类型1,类型2"),
 	})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
@@ -39,6 +49,30 @@ func TestCreateTaskPersistsQueuedTask(t *testing.T) {
 	}
 	if persisted.enqueueToken != "enqueue-token-v2" {
 		t.Fatalf("expected enqueue token to be persisted, got %q", persisted.enqueueToken)
+	}
+	if persisted.author == nil || *persisted.author != "作者A" {
+		t.Fatalf("expected author persisted, got %#v", persisted.author)
+	}
+	if persisted.seriesName == nil || *persisted.seriesName != "系列B" {
+		t.Fatalf("expected series_name persisted, got %#v", persisted.seriesName)
+	}
+	if persisted.comicName == nil || *persisted.comicName != "漫画C" {
+		t.Fatalf("expected comic_name persisted, got %#v", persisted.comicName)
+	}
+	if persisted.summary == nil || *persisted.summary != "简介D" {
+		t.Fatalf("expected summary persisted, got %#v", persisted.summary)
+	}
+	if persisted.tagsRaw == nil || *persisted.tagsRaw != "标签1，标签2" {
+		t.Fatalf("expected tags_raw persisted, got %#v", persisted.tagsRaw)
+	}
+	if persisted.tagsNormalized == nil || *persisted.tagsNormalized != "标签1,标签2" {
+		t.Fatalf("expected tags_normalized persisted, got %#v", persisted.tagsNormalized)
+	}
+	if persisted.genresRaw == nil || *persisted.genresRaw != "类型1，类型2" {
+		t.Fatalf("expected genres_raw persisted, got %#v", persisted.genresRaw)
+	}
+	if persisted.genresNormalized == nil || *persisted.genresNormalized != "类型1,类型2" {
+		t.Fatalf("expected genres_normalized persisted, got %#v", persisted.genresNormalized)
 	}
 }
 
@@ -231,6 +265,14 @@ type fakeV2Task struct {
 	canonicalURL      string
 	status            string
 	enqueueToken      string
+	author            *string
+	seriesName        *string
+	comicName         *string
+	summary           *string
+	tagsRaw           *string
+	tagsNormalized    *string
+	genresRaw         *string
+	genresNormalized  *string
 	error             *string
 	resultZipPath     *string
 	claimedBy         *string
@@ -259,17 +301,25 @@ func newFakeV2RepoDB() *fakeV2RepoDB {
 func (f *fakeV2RepoDB) Exec(_ context.Context, query string, args ...any) (pgconn.CommandTag, error) {
 	switch {
 	case strings.Contains(query, "INSERT INTO v2_tasks"):
-		if len(args) != 7 {
-			return pgconn.CommandTag{}, fmt.Errorf("expected 7 create task args, got %d", len(args))
+		if len(args) != 15 {
+			return pgconn.CommandTag{}, fmt.Errorf("expected 15 create task args, got %d", len(args))
 		}
 		f.tasks[args[0].(string)] = fakeV2Task{
-			id:           args[0].(string),
-			url:          args[1].(string),
-			canonicalURL: args[2].(string),
-			status:       args[3].(string),
-			enqueueToken: args[4].(string),
-			createdAt:    args[5].(time.Time),
-			updatedAt:    args[6].(time.Time),
+			id:               args[0].(string),
+			url:              args[1].(string),
+			canonicalURL:     args[2].(string),
+			status:           args[3].(string),
+			enqueueToken:     args[4].(string),
+			author:           cloneV2String(args[5].(*string)),
+			seriesName:       cloneV2String(args[6].(*string)),
+			comicName:        cloneV2String(args[7].(*string)),
+			summary:          cloneV2String(args[8].(*string)),
+			tagsRaw:          cloneV2String(args[9].(*string)),
+			tagsNormalized:   cloneV2String(args[10].(*string)),
+			genresRaw:        cloneV2String(args[11].(*string)),
+			genresNormalized: cloneV2String(args[12].(*string)),
+			createdAt:        args[13].(time.Time),
+			updatedAt:        args[14].(time.Time),
 		}
 		return pgconn.NewCommandTag("INSERT 0 1"), nil
 	case strings.Contains(query, "INSERT INTO v2_task_events"):

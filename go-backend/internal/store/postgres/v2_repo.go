@@ -16,20 +16,36 @@ const statusQueued = "QUEUED"
 var ErrV2TaskStatusMismatchOrNotFound = errors.New("v2 task status mismatch or not found")
 
 type CreateTaskInput struct {
-	ID           string
-	URL          string
-	CanonicalURL *string
-	EnqueueToken string
+	ID               string
+	URL              string
+	CanonicalURL     *string
+	EnqueueToken     string
+	Author           *string
+	SeriesName       *string
+	ComicName        *string
+	Summary          *string
+	TagsRaw          *string
+	TagsNormalized   *string
+	GenresRaw        *string
+	GenresNormalized *string
 }
 
 type TaskRecord struct {
-	ID           string
-	URL          string
-	CanonicalURL *string
-	Status       string
-	EnqueueToken string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID               string
+	URL              string
+	CanonicalURL     *string
+	Status           string
+	EnqueueToken     string
+	Author           *string
+	SeriesName       *string
+	ComicName        *string
+	Summary          *string
+	TagsRaw          *string
+	TagsNormalized   *string
+	GenresRaw        *string
+	GenresNormalized *string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type StatusPatch struct {
@@ -88,8 +104,18 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 		CanonicalURL: stringPtr(canonicalURL),
 		Status:       statusQueued,
 		EnqueueToken: strings.TrimSpace(in.EnqueueToken),
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		Author:       copyOptionalText(in.Author),
+		SeriesName:   copyOptionalText(in.SeriesName),
+		ComicName:    copyOptionalText(in.ComicName),
+		Summary:      copyOptionalText(in.Summary),
+		TagsRaw:      copyOptionalText(in.TagsRaw),
+		TagsNormalized: copyOptionalText(
+			in.TagsNormalized,
+		),
+		GenresRaw:        copyOptionalText(in.GenresRaw),
+		GenresNormalized: copyOptionalText(in.GenresNormalized),
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 
 	_, err := r.db.Exec(
@@ -101,10 +127,18 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 			canonical_url,
 			status,
 			enqueue_token,
+			author,
+			series_name,
+			comic_name,
+			summary,
+			tags_raw,
+			tags_normalized,
+			genres_raw,
+			genres_normalized,
 			created_at,
 			updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)
 		`,
 		record.ID,
@@ -112,6 +146,14 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 		canonicalURL,
 		record.Status,
 		record.EnqueueToken,
+		record.Author,
+		record.SeriesName,
+		record.ComicName,
+		record.Summary,
+		record.TagsRaw,
+		record.TagsNormalized,
+		record.GenresRaw,
+		record.GenresNormalized,
 		record.CreatedAt,
 		record.UpdatedAt,
 	)
@@ -195,6 +237,18 @@ func (r *PostgresV2TaskRepo) TransitionTaskWithEvent(ctx context.Context, in Tra
 	}
 	committed = true
 	return nil
+}
+
+func copyOptionalText(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	normalized := strings.TrimSpace(*value)
+	if normalized == "" {
+		return nil
+	}
+	copied := normalized
+	return &copied
 }
 
 type v2TaskExec interface {

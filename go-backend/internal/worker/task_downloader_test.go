@@ -3,6 +3,8 @@ package worker
 import (
 	"context"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
@@ -41,15 +43,21 @@ func TestTaskDownloaderExecuteDownloadsAndPackagesTask(t *testing.T) {
 		t.Fatalf("execute task downloader: %v", err)
 	}
 
-	expectedPath := filepath.Join(outputDir, "task-1.cbz")
-	if outputPath != expectedPath {
-		t.Fatalf("expected output path %q, got %q", expectedPath, outputPath)
+	if filepath.Dir(outputPath) != outputDir {
+		t.Fatalf("expected output directory %q, got %q", outputDir, filepath.Dir(outputPath))
+	}
+	fileName := filepath.Base(outputPath)
+	if matched := regexp.MustCompile(`^author_series_comic_[0-9]+\.cbz$`).MatchString(fileName); !matched {
+		t.Fatalf("expected metadata based filename, got %q", fileName)
+	}
+	if strings.EqualFold(fileName, "task-1.cbz") {
+		t.Fatalf("expected filename not to fallback to task id, got %q", fileName)
 	}
 	if service.downloadURL != "https://telegra.ph/demo" {
 		t.Fatalf("expected download URL https://telegra.ph/demo, got %q", service.downloadURL)
 	}
-	if service.packagePath != expectedPath {
-		t.Fatalf("expected package output path %q, got %q", expectedPath, service.packagePath)
+	if service.packagePath != outputPath {
+		t.Fatalf("expected package output path %q, got %q", outputPath, service.packagePath)
 	}
 	if service.packageMetadata.Writer != "author" {
 		t.Fatalf("expected writer author, got %q", service.packageMetadata.Writer)
@@ -81,6 +89,37 @@ func TestTaskDownloaderExecuteReturnsErrorWhenTaskMissing(t *testing.T) {
 	_, err := runner.Execute(context.Background(), "missing-task")
 	if err == nil {
 		t.Fatalf("expected missing task error")
+	}
+}
+
+func TestTaskDownloaderExecuteUsesPlaceholdersForMissingMetadata(t *testing.T) {
+	store := &fakeTaskDownloadStore{
+		task: &domain.TaskLog{
+			ID:  "task-2",
+			URL: "https://telegra.ph/demo-2",
+		},
+	}
+	service := &fakeTaskDownloadService{
+		result: domain.DownloadResult{
+			Images: []domain.DownloadedImage{
+				{URL: "https://cdn.example/2.jpg", Data: []byte("img")},
+			},
+		},
+	}
+	runner := NewTaskDownloader(TaskDownloaderConfig{
+		Store:        store,
+		DownloadRoot: t.TempDir(),
+		Service:      service,
+	})
+
+	outputPath, err := runner.Execute(context.Background(), "task-2")
+	if err != nil {
+		t.Fatalf("execute task downloader: %v", err)
+	}
+
+	fileName := filepath.Base(outputPath)
+	if matched := regexp.MustCompile(`^未知作者_未命名漫画_[0-9]+\.cbz$`).MatchString(fileName); !matched {
+		t.Fatalf("expected placeholder based filename, got %q", fileName)
 	}
 }
 

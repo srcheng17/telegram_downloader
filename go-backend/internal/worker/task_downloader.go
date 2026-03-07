@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
 	godownloader "github.com/ryancheng/telegram-downloader/go-backend/internal/downloader"
@@ -84,8 +85,9 @@ func (d *TaskDownloader) Execute(ctx context.Context, taskID string) (string, er
 		return "", fmt.Errorf("create download output root: %w", err)
 	}
 
-	outputPath := filepath.Join(downloadRoot, taskID+".cbz")
-	if err := d.service.PackageCBZ(result.Images, godownloader.TaskMetadataFromTask(*task), outputPath); err != nil {
+	metadata := godownloader.TaskMetadataFromTask(*task)
+	outputPath := filepath.Join(downloadRoot, buildDownloadFilename(metadata, time.Now().Unix()))
+	if err := d.service.PackageCBZ(result.Images, metadata, outputPath); err != nil {
 		return "", err
 	}
 	return outputPath, nil

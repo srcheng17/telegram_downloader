@@ -120,6 +120,16 @@ func TestClaimTaskForLegacyCreatesTaskWhenNoReusableTask(t *testing.T) {
 		URL:          " https://telegra.ph/created ",
 		EnqueueToken: "enqueue-token-3",
 		ReuseSuccess: false,
+		Author:       stringPtr("作者A"),
+		SeriesName:   stringPtr("系列B"),
+		ComicName:    stringPtr("漫画C"),
+		Summary:      stringPtr("简介D"),
+		TagsRaw:      stringPtr("标签1，标签2"),
+		TagsNormalized: stringPtr(
+			"标签1,标签2",
+		),
+		GenresRaw:        stringPtr("类型1，类型2"),
+		GenresNormalized: stringPtr("类型1,类型2"),
 	})
 	if err != nil {
 		t.Fatalf("claim task for legacy: %v", err)
@@ -170,6 +180,30 @@ func TestClaimTaskForLegacyCreatesTaskWhenNoReusableTask(t *testing.T) {
 	}
 	if inserted.enqueueToken != "enqueue-token-3" {
 		t.Fatalf("expected inserted enqueue token enqueue-token-3, got %q", inserted.enqueueToken)
+	}
+	if inserted.author == nil || *inserted.author != "作者A" {
+		t.Fatalf("expected inserted author 作者A, got %#v", inserted.author)
+	}
+	if inserted.seriesName == nil || *inserted.seriesName != "系列B" {
+		t.Fatalf("expected inserted series_name 系列B, got %#v", inserted.seriesName)
+	}
+	if inserted.comicName == nil || *inserted.comicName != "漫画C" {
+		t.Fatalf("expected inserted comic_name 漫画C, got %#v", inserted.comicName)
+	}
+	if inserted.summary == nil || *inserted.summary != "简介D" {
+		t.Fatalf("expected inserted summary 简介D, got %#v", inserted.summary)
+	}
+	if inserted.tagsRaw == nil || *inserted.tagsRaw != "标签1，标签2" {
+		t.Fatalf("expected inserted tags_raw 标签1，标签2, got %#v", inserted.tagsRaw)
+	}
+	if inserted.tagsNormalized == nil || *inserted.tagsNormalized != "标签1,标签2" {
+		t.Fatalf("expected inserted tags_normalized 标签1,标签2, got %#v", inserted.tagsNormalized)
+	}
+	if inserted.genresRaw == nil || *inserted.genresRaw != "类型1，类型2" {
+		t.Fatalf("expected inserted genres_raw 类型1，类型2, got %#v", inserted.genresRaw)
+	}
+	if inserted.genresNormalized == nil || *inserted.genresNormalized != "类型1,类型2" {
+		t.Fatalf("expected inserted genres_normalized 类型1,类型2, got %#v", inserted.genresNormalized)
 	}
 	if inserted.createdAt.IsZero() || inserted.updatedAt.IsZero() {
 		t.Fatalf("expected non-zero inserted timestamps")
@@ -228,13 +262,21 @@ func (f *fakeLegacyClaimDB) Begin(context.Context) (pgx.Tx, error) {
 }
 
 type fakeLegacyClaimInsertRow struct {
-	taskID       string
-	url          string
-	canonicalURL string
-	status       string
-	enqueueToken string
-	createdAt    time.Time
-	updatedAt    time.Time
+	taskID           string
+	url              string
+	canonicalURL     string
+	status           string
+	enqueueToken     string
+	author           *string
+	seriesName       *string
+	comicName        *string
+	summary          *string
+	tagsRaw          *string
+	tagsNormalized   *string
+	genresRaw        *string
+	genresNormalized *string
+	createdAt        time.Time
+	updatedAt        time.Time
 }
 
 type fakeLegacyClaimTx struct {
@@ -299,27 +341,35 @@ func (f *fakeLegacyClaimTx) Exec(_ context.Context, query string, args ...any) (
 		f.lockCanonicalURL = canonicalURL
 		return pgconn.NewCommandTag("SELECT 1"), nil
 	case strings.Contains(query, "INSERT INTO v2_tasks"):
-		if len(args) != 7 {
-			return pgconn.CommandTag{}, fmt.Errorf("expected seven insert args, got %d", len(args))
+		if len(args) != 15 {
+			return pgconn.CommandTag{}, fmt.Errorf("expected fifteen insert args, got %d", len(args))
 		}
 
-		createdAt, ok := args[5].(time.Time)
+		createdAt, ok := args[13].(time.Time)
 		if !ok {
-			return pgconn.CommandTag{}, fmt.Errorf("expected created_at type time.Time, got %T", args[5])
+			return pgconn.CommandTag{}, fmt.Errorf("expected created_at type time.Time, got %T", args[13])
 		}
-		updatedAt, ok := args[6].(time.Time)
+		updatedAt, ok := args[14].(time.Time)
 		if !ok {
-			return pgconn.CommandTag{}, fmt.Errorf("expected updated_at type time.Time, got %T", args[6])
+			return pgconn.CommandTag{}, fmt.Errorf("expected updated_at type time.Time, got %T", args[14])
 		}
 
 		f.insertedRows = append(f.insertedRows, fakeLegacyClaimInsertRow{
-			taskID:       args[0].(string),
-			url:          args[1].(string),
-			canonicalURL: args[2].(string),
-			status:       args[3].(string),
-			enqueueToken: args[4].(string),
-			createdAt:    createdAt,
-			updatedAt:    updatedAt,
+			taskID:           args[0].(string),
+			url:              args[1].(string),
+			canonicalURL:     args[2].(string),
+			status:           args[3].(string),
+			enqueueToken:     args[4].(string),
+			author:           cloneLegacyClaimString(args[5].(*string)),
+			seriesName:       cloneLegacyClaimString(args[6].(*string)),
+			comicName:        cloneLegacyClaimString(args[7].(*string)),
+			summary:          cloneLegacyClaimString(args[8].(*string)),
+			tagsRaw:          cloneLegacyClaimString(args[9].(*string)),
+			tagsNormalized:   cloneLegacyClaimString(args[10].(*string)),
+			genresRaw:        cloneLegacyClaimString(args[11].(*string)),
+			genresNormalized: cloneLegacyClaimString(args[12].(*string)),
+			createdAt:        createdAt,
+			updatedAt:        updatedAt,
 		})
 		return pgconn.NewCommandTag("INSERT 0 1"), nil
 	default:

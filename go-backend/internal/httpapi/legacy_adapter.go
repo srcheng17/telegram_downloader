@@ -57,9 +57,17 @@ const (
 )
 
 type LegacyDownloadInput struct {
-	RawURL       string
-	CanonicalURL string
-	Force        bool
+	RawURL           string
+	CanonicalURL     string
+	Force            bool
+	Author           *string
+	SeriesName       *string
+	ComicName        *string
+	Summary          *string
+	TagsRaw          *string
+	TagsNormalized   *string
+	GenresRaw        *string
+	GenresNormalized *string
 }
 
 type LegacyDownloadResult struct {
@@ -129,10 +137,18 @@ func (a *LegacyAdapter) CreateOrReuseDownloadTask(ctx context.Context, input Leg
 	rawURL := strings.TrimSpace(input.RawURL)
 	canonicalURL := canonicalizeURL(input.CanonicalURL, rawURL)
 	createInput := httpv2.CreateTaskInput{
-		ID:           uuid.NewString(),
-		URL:          rawURL,
-		CanonicalURL: stringPtr(canonicalURL),
-		EnqueueToken: uuid.NewString(),
+		ID:               uuid.NewString(),
+		URL:              rawURL,
+		CanonicalURL:     stringPtr(canonicalURL),
+		EnqueueToken:     uuid.NewString(),
+		Author:           input.Author,
+		SeriesName:       input.SeriesName,
+		ComicName:        input.ComicName,
+		Summary:          input.Summary,
+		TagsRaw:          input.TagsRaw,
+		TagsNormalized:   input.TagsNormalized,
+		GenresRaw:        input.GenresRaw,
+		GenresNormalized: input.GenresNormalized,
 	}
 	if claimStore, ok := any(a.store).(legacyAtomicClaimStore); ok {
 		reuseSuccess := !input.Force
@@ -140,11 +156,19 @@ func (a *LegacyAdapter) CreateOrReuseDownloadTask(ctx context.Context, input Leg
 
 		for {
 			claim, err := claimStore.ClaimTaskForLegacy(ctx, httpv2.LegacyClaimTaskInput{
-				ID:           createInput.ID,
-				URL:          createInput.URL,
-				CanonicalURL: createInput.CanonicalURL,
-				EnqueueToken: createInput.EnqueueToken,
-				ReuseSuccess: reuseSuccess,
+				ID:               createInput.ID,
+				URL:              createInput.URL,
+				CanonicalURL:     createInput.CanonicalURL,
+				EnqueueToken:     createInput.EnqueueToken,
+				ReuseSuccess:     reuseSuccess,
+				Author:           createInput.Author,
+				SeriesName:       createInput.SeriesName,
+				ComicName:        createInput.ComicName,
+				Summary:          createInput.Summary,
+				TagsRaw:          createInput.TagsRaw,
+				TagsNormalized:   createInput.TagsNormalized,
+				GenresRaw:        createInput.GenresRaw,
+				GenresNormalized: createInput.GenresNormalized,
 			})
 			if err != nil {
 				return LegacyDownloadResult{}, err

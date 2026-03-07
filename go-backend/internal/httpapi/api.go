@@ -503,9 +503,17 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 	if a.legacyAdapter != nil && a.legacyAdapter.SupportsDownload() {
 		result, err := a.legacyAdapter.CreateOrReuseDownloadTask(r.Context(), LegacyDownloadInput{
-			RawURL:       rawURL,
-			CanonicalURL: canonicalURL,
-			Force:        forceDownload,
+			RawURL:           rawURL,
+			CanonicalURL:     canonicalURL,
+			Force:            forceDownload,
+			Author:           metadata.author,
+			SeriesName:       metadata.seriesName,
+			ComicName:        metadata.comicName,
+			Summary:          metadata.summary,
+			TagsRaw:          metadata.tagsRaw,
+			TagsNormalized:   metadata.tagsNormalized,
+			GenresRaw:        metadata.genresRaw,
+			GenresNormalized: metadata.genresNormalized,
 		})
 		if err != nil {
 			if errors.Is(err, ErrLegacyAdapterEnqueueFailed) {

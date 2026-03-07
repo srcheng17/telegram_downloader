@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/downloader"
 	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
 )
@@ -77,6 +78,51 @@ func TestExecutorMarksSuccessAndStoresArtifact(t *testing.T) {
 	}
 	if persisted.resultZipPath == nil || *persisted.resultZipPath != "/tmp/task-success.cbz" {
 		t.Fatalf("expected persisted artifact path, got %#v", persisted.resultZipPath)
+	}
+}
+
+func TestExecutorPassesSnapshotMetadataToDownloader(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-meta"] = v2ExecutorTaskRecord{
+		id:               "task-meta",
+		url:              "https://telegra.ph/demo-meta",
+		status:           "QUEUED",
+		enqueueToken:     "token-meta",
+		author:           stringPtr("作者A"),
+		seriesName:       stringPtr("系列B"),
+		comicName:        stringPtr("漫画C"),
+		summary:          stringPtr("简介D"),
+		tagsNormalized:   stringPtr("tag1,tag2"),
+		genresNormalized: stringPtr("genre1"),
+	}
+	downloader := &fakeV2ExecutorDownloader{artifactPath: "/tmp/task-meta.cbz"}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-meta",
+		Download: downloader,
+	})
+
+	if err := executor.Execute(context.Background(), "task-meta", "token-meta"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if downloader.lastMetadata.Writer != "作者A" {
+		t.Fatalf("expected writer 作者A, got %q", downloader.lastMetadata.Writer)
+	}
+	if downloader.lastMetadata.Series != "系列B" {
+		t.Fatalf("expected series 系列B, got %q", downloader.lastMetadata.Series)
+	}
+	if downloader.lastMetadata.Title != "漫画C" {
+		t.Fatalf("expected title 漫画C, got %q", downloader.lastMetadata.Title)
+	}
+	if downloader.lastMetadata.Summary != "简介D" {
+		t.Fatalf("expected summary 简介D, got %q", downloader.lastMetadata.Summary)
+	}
+	if downloader.lastMetadata.Tags != "tag1,tag2" {
+		t.Fatalf("expected tags tag1,tag2, got %q", downloader.lastMetadata.Tags)
+	}
+	if downloader.lastMetadata.Genre != "genre1" {
+		t.Fatalf("expected genre genre1, got %q", downloader.lastMetadata.Genre)
 	}
 }
 
@@ -178,7 +224,7 @@ func TestExecutorUsesIndependentTerminalContextWhenRunContextCanceled(t *testing
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	downloader := &fakeV2ExecutorDownloader{
-		executeFn: func(context.Context, string, string) (string, error) {
+		executeFn: func(context.Context, string, string, downloader.TaskMetadata) (string, error) {
 			cancel()
 			return "", errors.New("download interrupted")
 		},
@@ -510,7 +556,7 @@ func TestExecutorStopsRunningTaskWhenCancelRequested(t *testing.T) {
 	}
 
 	downloader := &fakeV2ExecutorDownloader{
-		executeFn: func(_ context.Context, taskID, _ string) (string, error) {
+		executeFn: func(_ context.Context, taskID, _ string, _ downloader.TaskMetadata) (string, error) {
 			task := repo.tasks[taskID]
 			task.status = "CANCEL_REQUESTED"
 			repo.tasks[taskID] = task
@@ -551,7 +597,7 @@ func TestExecutorMonitorStopsDownloadWhenCancelRequested(t *testing.T) {
 	repo.cancelRequestedAfterHeartbeat = 1
 
 	downloader := &fakeV2ExecutorDownloader{
-		executeFn: func(ctx context.Context, _ string, _ string) (string, error) {
+		executeFn: func(ctx context.Context, _ string, _ string, _ downloader.TaskMetadata) (string, error) {
 			<-ctx.Done()
 			return "", ctx.Err()
 		},
@@ -585,17 +631,24 @@ func TestExecutorMonitorStopsDownloadWhenCancelRequested(t *testing.T) {
 type fakeV2ExecutorDownloader struct {
 	artifactPath string
 	err          error
-	executeFn    func(ctx context.Context, taskID, pageURL string) (string, error)
+	executeFn    func(ctx context.Context, taskID, pageURL string, metadata downloader.TaskMetadata) (string, error)
 
-	calls   int
-	lastURL string
+	calls        int
+	lastURL      string
+	lastMetadata downloader.TaskMetadata
 }
 
-func (f *fakeV2ExecutorDownloader) DownloadAndPackage(ctx context.Context, taskID, pageURL string) (string, error) {
+func (f *fakeV2ExecutorDownloader) DownloadAndPackage(
+	ctx context.Context,
+	taskID,
+	pageURL string,
+	metadata downloader.TaskMetadata,
+) (string, error) {
 	f.calls++
 	f.lastURL = pageURL
+	f.lastMetadata = metadata
 	if f.executeFn != nil {
-		return f.executeFn(ctx, taskID, pageURL)
+		return f.executeFn(ctx, taskID, pageURL, metadata)
 	}
 	if f.err != nil {
 		return "", f.err
@@ -622,13 +675,21 @@ type fakeV2ExecutorRepo struct {
 }
 
 type v2ExecutorTaskRecord struct {
-	id            string
-	url           string
-	status        string
-	enqueueToken  string
-	error         *string
-	resultZipPath *string
-	claimedBy     *string
+	id               string
+	url              string
+	status           string
+	enqueueToken     string
+	error            *string
+	resultZipPath    *string
+	claimedBy        *string
+	author           *string
+	seriesName       *string
+	comicName        *string
+	summary          *string
+	tagsRaw          *string
+	tagsNormalized   *string
+	genresRaw        *string
+	genresNormalized *string
 }
 
 type v2ExecutorStatusUpdate struct {
@@ -673,10 +734,18 @@ func (f *fakeV2ExecutorRepo) GetTaskForExecution(_ context.Context, taskID strin
 		f.getTaskStatusSequence = f.getTaskStatusSequence[1:]
 	}
 	return V2TaskSnapshot{
-		ID:           task.id,
-		URL:          task.url,
-		Status:       status,
-		EnqueueToken: task.enqueueToken,
+		ID:               task.id,
+		URL:              task.url,
+		Status:           status,
+		EnqueueToken:     task.enqueueToken,
+		Author:           task.author,
+		SeriesName:       task.seriesName,
+		ComicName:        task.comicName,
+		Summary:          task.summary,
+		TagsRaw:          task.tagsRaw,
+		TagsNormalized:   task.tagsNormalized,
+		GenresRaw:        task.genresRaw,
+		GenresNormalized: task.genresNormalized,
 	}, nil
 }
 

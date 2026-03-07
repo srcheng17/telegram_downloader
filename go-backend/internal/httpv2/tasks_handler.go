@@ -51,10 +51,18 @@ func IsActiveTaskStatus(status string) bool {
 }
 
 type CreateTaskInput struct {
-	ID           string
-	URL          string
-	CanonicalURL *string
-	EnqueueToken string
+	ID               string
+	URL              string
+	CanonicalURL     *string
+	EnqueueToken     string
+	Author           *string
+	SeriesName       *string
+	ComicName        *string
+	Summary          *string
+	TagsRaw          *string
+	TagsNormalized   *string
+	GenresRaw        *string
+	GenresNormalized *string
 }
 
 type Task struct {
@@ -84,11 +92,19 @@ const (
 )
 
 type LegacyClaimTaskInput struct {
-	ID           string
-	URL          string
-	CanonicalURL *string
-	EnqueueToken string
-	ReuseSuccess bool
+	ID               string
+	URL              string
+	CanonicalURL     *string
+	EnqueueToken     string
+	ReuseSuccess     bool
+	Author           *string
+	SeriesName       *string
+	ComicName        *string
+	Summary          *string
+	TagsRaw          *string
+	TagsNormalized   *string
+	GenresRaw        *string
+	GenresNormalized *string
 }
 
 type LegacyClaimTaskResult struct {
@@ -462,10 +478,18 @@ func (s *PostgresTaskStore) CreateTask(ctx context.Context, in CreateTaskInput) 
 	}
 
 	record, err := s.writer.CreateTask(ctx, postgres.CreateTaskInput{
-		ID:           strings.TrimSpace(in.ID),
-		URL:          strings.TrimSpace(in.URL),
-		CanonicalURL: in.CanonicalURL,
-		EnqueueToken: strings.TrimSpace(in.EnqueueToken),
+		ID:               strings.TrimSpace(in.ID),
+		URL:              strings.TrimSpace(in.URL),
+		CanonicalURL:     in.CanonicalURL,
+		EnqueueToken:     strings.TrimSpace(in.EnqueueToken),
+		Author:           in.Author,
+		SeriesName:       in.SeriesName,
+		ComicName:        in.ComicName,
+		Summary:          in.Summary,
+		TagsRaw:          in.TagsRaw,
+		TagsNormalized:   in.TagsNormalized,
+		GenresRaw:        in.GenresRaw,
+		GenresNormalized: in.GenresNormalized,
 	})
 	if err != nil {
 		return Task{}, err
@@ -604,10 +628,18 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 			canonical_url,
 			status,
 			enqueue_token,
+			author,
+			series_name,
+			comic_name,
+			summary,
+			tags_raw,
+			tags_normalized,
+			genres_raw,
+			genres_normalized,
 			created_at,
 			updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)
 		`,
 		taskID,
@@ -615,6 +647,14 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 		canonicalURL,
 		TaskStatusQueued,
 		enqueueToken,
+		in.Author,
+		in.SeriesName,
+		in.ComicName,
+		in.Summary,
+		in.TagsRaw,
+		in.TagsNormalized,
+		in.GenresRaw,
+		in.GenresNormalized,
 		now,
 		now,
 	); err != nil {
