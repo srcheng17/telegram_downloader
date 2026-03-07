@@ -1,4 +1,6 @@
 (function () {
+    'use strict';
+
     const state = window.__telegraphLogsState || {
         mountedRoot: null,
         currentPage: 1,

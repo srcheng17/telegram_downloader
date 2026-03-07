@@ -28,6 +28,7 @@ data/*.db-wal
 
 # Node / Playwright
 node_modules/
+static/dist/
 playwright-report/
 test-results/
 tests/e2e/.artifacts/
