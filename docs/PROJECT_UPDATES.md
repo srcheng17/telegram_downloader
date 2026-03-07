@@ -4,6 +4,41 @@
 
 ---
 
+## 增补（2026-03-07）：Task 11/12 收口（CI + 可复现 E2E + 切流证据）
+
+### A. CI 与 E2E 可复现落地
+
+- 新增 GitHub Actions：`.github/workflows/ci.yml`，统一执行：
+  - `go test ./...`
+  - `go test -race ./...`
+  - `npm ci`
+  - `npm run lint`
+  - `npm run e2e:test`
+- 新增 Playwright 项目配置：`tests/e2e/playwright.config.ts`。
+- E2E 执行脚本统一为：`tests/e2e/run-e2e.sh`（自动拉起/回收 Compose，等待 `/readyz`，并处理无交互 Docker 凭据场景）。
+- CI 增加 E2E 产物归档：`playwright-report`、`test-results`、`tests/e2e/.artifacts`。
+- 更新 E2E 用例以匹配当前 Go 单主线路由与页面行为：
+  - `tests/e2e/specs/logs-flow.spec.js`
+  - `tests/e2e/specs/settings.spec.js`
+  - `tests/e2e/specs/backend-smoke.spec.js`
+  - `tests/e2e/v2/tasks-flow.spec.ts`
+
+### B. 发布与回滚文档更新
+
+- 更新 `README.md`：补充 Go 主线测试命令、可复现 E2E 说明、`/readyz` 健康探测。
+- 更新切流清单：`docs/runbooks/v2-cutover-checklist.md`（加入 `lint`、`/readyz`、UI 页面可达性验收项）。
+- 更新回滚清单：`docs/runbooks/v2-rollback-checklist.md`（加入 `/readyz` 与 UI 页面验收）。
+
+### C. 最终演练证据
+
+- 新增 `docs/runbooks/go-mainline-cutover-evidence.md`，记录 2026-03-07 的完整演练证据：
+  - 自动化门禁（Go test / race / lint / e2e）
+  - Compose 启停与 `docker compose ps`
+  - `/healthz`、`/readyz`、`/`、`/logs`、`/settings`、`/v2`、`/v2/tasks` smoke
+  - 回滚 dry-run（`docker compose down --remove-orphans`）
+
+---
+
 ## 增补（2026-03-06）：Go 单主线切换完成态（Task 12 总验收）
 
 ### A. 架构完成态
