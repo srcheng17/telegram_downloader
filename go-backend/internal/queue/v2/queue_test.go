@@ -104,6 +104,7 @@ func TestConsumerParsesTaskMessage(t *testing.T) {
 
 	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
+	mustCreateConsumerGroup(t, ctx, client, "v2-tasks", "go-workers")
 
 	_, err = client.XAdd(ctx, &redis.XAddArgs{
 		Stream: "v2-tasks",
@@ -116,8 +117,8 @@ func TestConsumerParsesTaskMessage(t *testing.T) {
 		t.Fatalf("seed stream: %v", err)
 	}
 
-	consumer := NewConsumer(client, "v2-tasks")
-	messages, err := consumer.Read(ctx, 1, time.Millisecond)
+	consumer := NewConsumer(client, "v2-tasks", "go-workers", "worker-a")
+	messages, err := consumer.ReadGroup(ctx, 1, time.Millisecond)
 	if err != nil {
 		t.Fatalf("consume: %v", err)
 	}
@@ -145,6 +146,7 @@ func TestConsumerReadAdvancesCursorWithoutDuplicates(t *testing.T) {
 
 	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
+	mustCreateConsumerGroup(t, ctx, client, "v2-tasks", "go-workers")
 
 	for i := 1; i <= 2; i++ {
 		_, err = client.XAdd(ctx, &redis.XAddArgs{
@@ -159,9 +161,9 @@ func TestConsumerReadAdvancesCursorWithoutDuplicates(t *testing.T) {
 		}
 	}
 
-	consumer := NewConsumer(client, "v2-tasks")
+	consumer := NewConsumer(client, "v2-tasks", "go-workers", "worker-a")
 
-	firstBatch, err := consumer.Read(ctx, 1, time.Millisecond)
+	firstBatch, err := consumer.ReadGroup(ctx, 1, time.Millisecond)
 	if err != nil {
 		t.Fatalf("first read: %v", err)
 	}
@@ -172,7 +174,7 @@ func TestConsumerReadAdvancesCursorWithoutDuplicates(t *testing.T) {
 		t.Fatalf("expected first task task-v2-1, got %q", firstBatch[0].TaskID)
 	}
 
-	secondBatch, err := consumer.Read(ctx, 1, time.Millisecond)
+	secondBatch, err := consumer.ReadGroup(ctx, 1, time.Millisecond)
 	if err != nil {
 		t.Fatalf("second read: %v", err)
 	}
@@ -195,6 +197,7 @@ func TestConsumerReadConcurrentCallsDoNotDuplicateOrRollback(t *testing.T) {
 
 	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
+	mustCreateConsumerGroup(t, ctx, client, "v2-tasks", "go-workers")
 
 	for i := 1; i <= 2; i++ {
 		_, err = client.XAdd(ctx, &redis.XAddArgs{
@@ -209,12 +212,12 @@ func TestConsumerReadConcurrentCallsDoNotDuplicateOrRollback(t *testing.T) {
 		}
 	}
 
-	gatedClient := &gatedXReadCmdable{
+	gatedClient := &gatedXReadGroupCmdable{
 		Cmdable:           client,
 		waitForSecondRead: 200 * time.Millisecond,
 	}
 
-	consumer := NewConsumer(gatedClient, "v2-tasks")
+	consumer := NewConsumer(gatedClient, "v2-tasks", "go-workers", "worker-a")
 
 	type readResult struct {
 		messages []TaskMessage
@@ -230,7 +233,7 @@ func TestConsumerReadConcurrentCallsDoNotDuplicateOrRollback(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			messages, err := consumer.Read(ctx, 1, 5*time.Millisecond)
+			messages, err := consumer.ReadGroup(ctx, 1, 5*time.Millisecond)
 			results <- readResult{messages: messages, err: err}
 		}()
 	}
@@ -274,9 +277,10 @@ func TestConsumerReadReturnsEmptySliceWhenNoMessage(t *testing.T) {
 
 	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
+	mustCreateConsumerGroup(t, ctx, client, "v2-empty-tasks", "go-workers")
 
-	consumer := NewConsumer(client, "v2-empty-tasks")
-	messages, err := consumer.Read(ctx, 1, time.Millisecond)
+	consumer := NewConsumer(client, "v2-empty-tasks", "go-workers", "worker-a")
+	messages, err := consumer.ReadGroup(ctx, 1, time.Millisecond)
 	if err != nil {
 		t.Fatalf("expected nil error when no message, got %v", err)
 	}
@@ -285,7 +289,7 @@ func TestConsumerReadReturnsEmptySliceWhenNoMessage(t *testing.T) {
 	}
 }
 
-type gatedXReadCmdable struct {
+type gatedXReadGroupCmdable struct {
 	redis.Cmdable
 	waitForSecondRead time.Duration
 
@@ -296,7 +300,7 @@ type gatedXReadCmdable struct {
 	secondReadSignal  chan struct{}
 }
 
-func (g *gatedXReadCmdable) XRead(ctx context.Context, args *redis.XReadArgs) *redis.XStreamSliceCmd {
+func (g *gatedXReadGroupCmdable) XReadGroup(ctx context.Context, args *redis.XReadGroupArgs) *redis.XStreamSliceCmd {
 	g.mu.Lock()
 	g.xReadCalls++
 	call := g.xReadCalls
@@ -314,10 +318,10 @@ func (g *gatedXReadCmdable) XRead(ctx context.Context, args *redis.XReadArgs) *r
 		g.secondReadReached.Do(func() { close(g.ensureSecondReadSignal()) })
 	}
 
-	return g.Cmdable.XRead(ctx, args)
+	return g.Cmdable.XReadGroup(ctx, args)
 }
 
-func (g *gatedXReadCmdable) ensureSecondReadSignal() chan struct{} {
+func (g *gatedXReadGroupCmdable) ensureSecondReadSignal() chan struct{} {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -326,4 +330,11 @@ func (g *gatedXReadCmdable) ensureSecondReadSignal() chan struct{} {
 	}
 
 	return g.secondReadSignal
+}
+
+func mustCreateConsumerGroup(t *testing.T, ctx context.Context, client *redis.Client, streamName, groupName string) {
+	t.Helper()
+	if err := client.XGroupCreateMkStream(ctx, streamName, groupName, "$").Err(); err != nil {
+		t.Fatalf("create consumer group: %v", err)
+	}
 }

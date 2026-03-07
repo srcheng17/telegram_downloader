@@ -1,0 +1,124 @@
+{{ define "content" }}
+<div id="home-page" class="home-page">
+    <div class="section-header">
+        <h2>发起下载任务</h2>
+        <p class="muted">粘贴 Telegraph 页面链接后，可在“日志”页查看实时进度。</p>
+    </div>
+    <div
+        id="startup-recovery-banner-home"
+        class="startup-recovery-banner is-hidden"
+        role="status"
+        aria-live="polite"
+        aria-hidden="true"
+    >
+        <p id="startup-recovery-text-home" class="startup-recovery-text"></p>
+        <div class="startup-recovery-actions">
+            <a
+                id="startup-recovery-link-home"
+                class="startup-recovery-link"
+                href="/logs"
+                hx-get="/logs"
+                hx-target="#content"
+                hx-push-url="true"
+            >去日志页查看</a>
+            <button type="button" id="startup-recovery-dismiss-home" class="btn-secondary startup-recovery-dismiss">关闭</button>
+        </div>
+    </div>
+    <details id="summary-collapsible-home" class="summary-collapsible" open>
+        <summary class="summary-toggle collapsible-summary">任务概览</summary>
+        <div id="summary-panel" class="summary-grid" aria-live="polite">
+            <article class="summary-card">
+                <p class="summary-label">任务总数</p>
+                <p id="summary-total" class="summary-value">-</p>
+            </article>
+            <article class="summary-card">
+                <p class="summary-label">进行中</p>
+                <p id="summary-active" class="summary-value">-</p>
+            </article>
+            <article class="summary-card">
+                <p class="summary-label">成功</p>
+                <p id="summary-success" class="summary-value">-</p>
+            </article>
+            <article class="summary-card">
+                <p class="summary-label">失败/已取消</p>
+                <p id="summary-failed" class="summary-value">-</p>
+            </article>
+        </div>
+    </details>
+    <details class="guardrails-panel" aria-labelledby="guardrails-title">
+        <summary id="guardrails-title" class="guardrails-summary collapsible-summary">下载护栏说明</summary>
+        <div class="guardrails-content">
+            <p class="guardrails-description">每个任务都会进行校验和资源限制，以保障服务稳定性与下载质量。</p>
+            <dl class="guardrail-list">
+                <div class="guardrail-item">
+                    <dt>允许域名</dt>
+                    <dd>{{ join .Guardrails.AllowedDomains ", " }}</dd>
+                </div>
+                <div class="guardrail-item">
+                    <dt>图片数量上限</dt>
+                    <dd>{{ .Guardrails.MaxImages }}</dd>
+                </div>
+                <div class="guardrail-item">
+                    <dt>单张图片大小上限</dt>
+                    <dd>{{ formatGuardrailBytes .Guardrails.MaxImageBytes }}</dd>
+                </div>
+                <div class="guardrail-item">
+                    <dt>总下载体积上限</dt>
+                    <dd>{{ formatGuardrailBytes .Guardrails.MaxTotalBytes }}</dd>
+                </div>
+            </dl>
+        </div>
+    </details>
+    <form id="download-form" action="/download" method="post" novalidate>
+        <div class="form-group">
+            <label for="url">Telegraph 链接 <span class="required-mark" aria-hidden="true">*</span></label>
+            <input type="text" id="url" name="url" placeholder="https://telegra.ph/..." required>
+        </div>
+
+        <div class="home-metadata-grid">
+            <div class="form-group">
+                <label for="author">作者</label>
+                <input type="text" id="author" name="author" placeholder="例如：张三">
+            </div>
+            <div class="form-group">
+                <label for="series_name">漫画系列名</label>
+                <input type="text" id="series_name" name="series_name" placeholder="例如：银河系列">
+            </div>
+            <div class="form-group">
+                <label for="comic_name">漫画名</label>
+                <input type="text" id="comic_name" name="comic_name" placeholder="例如：银河冒险记">
+            </div>
+            <div class="form-group home-metadata-full">
+                <label for="summary">书籍详情介绍</label>
+                <textarea id="summary" name="summary" rows="3" placeholder="可填写作品简介或补充信息"></textarea>
+            </div>
+            <div class="form-group home-metadata-full">
+                <label for="tags">标签</label>
+                <input type="text" id="tags" name="tags" placeholder="例如：科幻,冒险，连载">
+                <p class="field-help">支持英文逗号 (,) 与中文逗号（，）分隔多个标签。</p>
+            </div>
+            <div class="form-group home-metadata-full">
+                <label for="genres">类型</label>
+                <input type="text" id="genres" name="genres" placeholder="例如：青年,悬疑，热血">
+                <p class="field-help">支持英文逗号 (,) 与中文逗号（，）分隔多个类型。</p>
+            </div>
+        </div>
+
+        <div class="form-group force-redownload-group">
+            <label for="force_redownload" class="force-toggle-label">
+                <input type="checkbox" id="force_redownload" name="force" value="1">
+                <span>强制重新抓取</span>
+            </label>
+            <p class="field-help">启用后将忽略已缓存结果，直接重新抓取并生成新文件。</p>
+        </div>
+        <button type="submit">开始下载</button>
+    </form>
+    <div id="download-feedback" class="inline-feedback" role="status" aria-live="polite"></div>
+    <div id="download-actions" class="download-actions is-hidden" aria-hidden="true">
+        <button type="button" id="download-action-force" class="btn-warning is-hidden">生成新的CBZ</button>
+        <button type="button" id="download-action-use-existing" class="btn-secondary is-hidden">取消并下载已有文件</button>
+        <button type="button" id="download-action-logs" class="btn-secondary is-hidden">查看日志</button>
+        <button type="button" id="download-action-download" class="is-hidden">下载已有文件</button>
+    </div>
+</div>
+{{ end }}

@@ -18,5 +18,8 @@ mkdir -p "$ROOT_DIR/downloaded_images" "$ROOT_DIR/temp_downloads"
 
 export SECRET_KEY="${SECRET_KEY:-local-dev-secret}"
 export FLASK_APP="$ROOT_DIR/app.py"
+export APP_ENV="${APP_ENV:-development}"
+export DATABASE_URL="${DATABASE_URL:-postgresql://telegraph:telegraph@localhost:5432/telegraph?sslmode=disable}"
+export INTERNAL_ENQUEUE_TOKEN="${INTERNAL_ENQUEUE_TOKEN:-local-dev-token}"
 
 exec "$VENV_DIR/bin/python" -m flask run --host "$HOST" --port "$PORT"

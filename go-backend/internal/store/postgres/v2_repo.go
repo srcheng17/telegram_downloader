@@ -58,6 +58,7 @@ type TransitionTaskWithEventInput struct {
 type V2TaskRepo interface {
 	CreateTask(ctx context.Context, in CreateTaskInput) (TaskRecord, error)
 	UpdateTaskStatus(ctx context.Context, id string, from, to string, patch StatusPatch) error
+	UpdateTaskHeartbeat(ctx context.Context, id, worker string) error
 	AppendTaskEvent(ctx context.Context, event TaskEvent) error
 	TransitionTaskWithEvent(ctx context.Context, in TransitionTaskWithEventInput) error
 }
@@ -123,6 +124,25 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 
 func (r *PostgresV2TaskRepo) UpdateTaskStatus(ctx context.Context, id string, from, to string, patch StatusPatch) error {
 	return updateV2TaskStatusWithExecutor(ctx, r.db, id, from, to, patch)
+}
+
+func (r *PostgresV2TaskRepo) UpdateTaskHeartbeat(ctx context.Context, id, worker string) error {
+	_, err := r.db.Exec(
+		ctx,
+		`
+		UPDATE v2_tasks
+		SET
+			heartbeat_at = NOW(),
+			updated_at = NOW()
+		WHERE
+			id = $1
+			AND claimed_by = $2
+			AND status IN ('RUNNING', 'CANCEL_REQUESTED')
+		`,
+		strings.TrimSpace(id),
+		strings.TrimSpace(worker),
+	)
+	return err
 }
 
 func (r *PostgresV2TaskRepo) AppendTaskEvent(ctx context.Context, event TaskEvent) error {
@@ -198,6 +218,18 @@ func updateV2TaskStatusWithExecutor(
 			error = $4,
 			result_zip_path = $5,
 			claimed_by = COALESCE($6, claimed_by),
+			heartbeat_at = CASE
+				WHEN $3 IN ('RUNNING', 'SUCCESS', 'FAILED', 'CANCELED') THEN NOW()
+				ELSE heartbeat_at
+			END,
+			cancel_requested_at = CASE
+				WHEN $3 = 'CANCEL_REQUESTED' THEN NOW()
+				ELSE cancel_requested_at
+			END,
+			retry_count = CASE
+				WHEN $2 = 'RUNNING' AND $3 = 'FAILED' THEN retry_count + 1
+				ELSE retry_count
+			END,
 			updated_at = NOW()
 		WHERE
 			id = $1

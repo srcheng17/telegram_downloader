@@ -3,8 +3,9 @@ package v2
 import "fmt"
 
 var allowed = map[Status]map[Status]struct{}{
-	StatusQueued:  {StatusRunning: {}},
-	StatusRunning: {StatusSuccess: {}, StatusFailed: {}, StatusCanceled: {}},
+	StatusQueued:          {StatusRunning: {}, StatusCancelRequested: {}},
+	StatusRunning:         {StatusSuccess: {}, StatusFailed: {}, StatusCanceled: {}, StatusCancelRequested: {}},
+	StatusCancelRequested: {StatusCanceled: {}},
 }
 
 func CanTransition(from, to Status) bool {

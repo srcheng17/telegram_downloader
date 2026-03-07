@@ -41,7 +41,6 @@ test.describe('v2 tasks flow', () => {
         updated_at: '2026-03-06T10:01:00Z',
       },
     ];
-    let artifactRequestedTaskID = '';
 
     await page.route(/\/v2\/tasks(?:\/[^/?]+(?:\/(?:cancel|artifact))?)?(?:\?.*)?$/, async (route) => {
       const request = route.request();
@@ -121,7 +120,6 @@ test.describe('v2 tasks flow', () => {
       }
 
       if (artifactMatch && (method === 'GET' || method === 'HEAD')) {
-        artifactRequestedTaskID = decodeURIComponent(artifactMatch[1]);
         return route.fulfill({
           status: 200,
           headers: {
@@ -138,8 +136,8 @@ test.describe('v2 tasks flow', () => {
     await test.step('create task', async () => {
       await page.goto('/v2');
       await page.locator('#v2-url').fill('https://telegra.ph/demo-v2');
-      await page.locator('#v2-create-submit').click();
-      await expect(page.locator('#v2-create-result-text')).toContainText('task-created');
+      await page.getByRole('button', { name: '创建任务' }).click();
+      await expect(page.locator('#v2-feedback')).toContainText('task-created');
     });
 
     await test.step('cancel task from list page', async () => {
@@ -147,25 +145,30 @@ test.describe('v2 tasks flow', () => {
       const runningRow = page.locator('#v2-tasks-table-body tr', { hasText: 'task-running' }).first();
       await expect(runningRow).toBeVisible();
       await runningRow.getByRole('button', { name: '取消' }).click();
-      await expect(page.locator('#v2-tasks-feedback')).toContainText('已提交取消');
+      const canceledRow = page.locator('#v2-tasks-table-body tr', { hasText: 'task-running' }).first();
+      await expect(canceledRow).toContainText('CANCELED');
     });
 
     await test.step('filter canceled tasks', async () => {
-      await page.locator('#v2-filter-status').selectOption('CANCELED');
-      await page.locator('#v2-filter-query').fill('task-running');
-      await page.getByRole('button', { name: '筛选' }).click();
+      await page.locator('#status').selectOption('CANCELED');
+      await page.locator('#q').fill('task-running');
+      await page.getByRole('button', { name: '查询' }).click();
       const canceledRow = page.locator('#v2-tasks-table-body tr', { hasText: 'task-running' }).first();
       await expect(canceledRow).toContainText('CANCELED');
     });
 
     await test.step('filter success task and download artifact', async () => {
-      await page.locator('#v2-filter-status').selectOption('SUCCESS');
-      await page.locator('#v2-filter-query').fill('task-success');
-      await page.getByRole('button', { name: '筛选' }).click();
+      await page.locator('#status').selectOption('SUCCESS');
+      await page.locator('#q').fill('task-success');
+      await page.getByRole('button', { name: '查询' }).click();
       const successRow = page.locator('#v2-tasks-table-body tr', { hasText: 'task-success' }).first();
       await expect(successRow).toContainText('SUCCESS');
-      await successRow.getByRole('button', { name: '下载' }).click();
-      await expect.poll(() => artifactRequestedTaskID).toBe('task-success');
+
+      const [download] = await Promise.all([
+        page.waitForEvent('download'),
+        successRow.getByRole('button', { name: '下载' }).click(),
+      ]);
+      expect(download.suggestedFilename()).toBe('task-success.zip');
     });
   });
 });

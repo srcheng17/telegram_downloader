@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,6 +24,7 @@ const (
 	defaultV2DownloadRoot    = "downloaded_images"
 	defaultV2QueueReadBlock  = 2 * time.Second
 	defaultV2TerminalWrite   = 2 * time.Second
+	defaultV2Heartbeat       = 2 * time.Second
 	defaultV2RunRetryCount   = 2
 	defaultV2RunRetryBackoff = 100 * time.Millisecond
 	v2StatusTransitionEvent  = "STATUS_TRANSITION"
@@ -37,6 +39,7 @@ type V2TaskSnapshot struct {
 
 type V2ExecutionRepo interface {
 	GetTaskForExecution(ctx context.Context, taskID string) (V2TaskSnapshot, error)
+	UpdateTaskHeartbeat(ctx context.Context, taskID, worker string) error
 	TransitionTaskWithEvent(ctx context.Context, in postgres.TransitionTaskWithEventInput) error
 }
 
@@ -51,6 +54,7 @@ type V2ExecutorConfig struct {
 	TransientRetry       int
 	ReadBlock            time.Duration
 	TerminalWriteTimeout time.Duration
+	HeartbeatInterval    time.Duration
 	RunRetryCount        int
 	RunRetryBackoff      time.Duration
 }
@@ -62,6 +66,7 @@ type V2Executor struct {
 	transientRetry       int
 	readBlock            time.Duration
 	terminalWriteTimeout time.Duration
+	heartbeatInterval    time.Duration
 	runRetryCount        int
 	runRetryBackoff      time.Duration
 }
@@ -74,6 +79,7 @@ func NewV2Executor(cfg V2ExecutorConfig) *V2Executor {
 		transientRetry:       cfg.TransientRetry,
 		readBlock:            cfg.ReadBlock,
 		terminalWriteTimeout: cfg.TerminalWriteTimeout,
+		heartbeatInterval:    cfg.HeartbeatInterval,
 		runRetryCount:        cfg.RunRetryCount,
 		runRetryBackoff:      cfg.RunRetryBackoff,
 	}
@@ -115,17 +121,17 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 	}
 
 	status := strings.TrimSpace(snapshot.Status)
-	needsExecution := false
 	switch status {
 	case string(domainv2.StatusQueued):
-		needsExecution = true
+		// continue below
 	case string(domainv2.StatusRunning):
-		needsExecution = allowRunning
+		if !allowRunning {
+			return nil
+		}
+	case string(domainv2.StatusCancelRequested):
+		return e.transitionCancelRequested(taskID, map[string]any{"stage": "preflight"})
 	default:
 		// Terminal/non-recoverable statuses are ignored by this executor path.
-		return nil
-	}
-	if !needsExecution {
 		return nil
 	}
 	if strings.TrimSpace(snapshot.URL) == "" {
@@ -144,6 +150,13 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 			map[string]any{"worker": e.worker},
 		); err != nil {
 			if errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
+				cancelRequested, checkErr := e.isTaskCancelRequested(ctx, taskID)
+				if checkErr != nil {
+					return checkErr
+				}
+				if cancelRequested {
+					return e.transitionCancelRequested(taskID, map[string]any{"stage": "queued_to_running_mismatch"})
+				}
 				return nil
 			}
 			return err
@@ -156,7 +169,24 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 
 	attempts := e.maxAttempts()
 	for attempt := 1; attempt <= attempts; attempt++ {
-		artifactPath, runErr := e.downloader.DownloadAndPackage(ctx, taskID, snapshot.URL)
+		downloadCtx := ctx
+		cancelRequested := &atomic.Bool{}
+		stopMonitor := func() {}
+		if enteredRunning {
+			downloadCtx, stopMonitor = e.startExecutionMonitor(ctx, taskID, cancelRequested)
+		}
+
+		artifactPath, runErr := e.downloader.DownloadAndPackage(downloadCtx, taskID, snapshot.URL)
+		stopMonitor()
+
+		if cancelRequested.Load() {
+			return e.transitionCancelRequested(taskID, map[string]any{"attempt": attempt, "stage": "monitor"})
+		}
+
+		if runErr != nil && errors.Is(runErr, context.Canceled) && ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		if runErr == nil {
 			terminalErr := e.transitionTerminal(
 				taskID,
@@ -172,6 +202,16 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 				return markRunningPhaseExecutionError(terminalErr)
 			}
 			return terminalErr
+		}
+
+		if errors.Is(runErr, context.Canceled) {
+			cancelRequestedByStatus, checkErr := e.isTaskCancelRequested(ctx, taskID)
+			if checkErr != nil {
+				return checkErr
+			}
+			if cancelRequestedByStatus {
+				return e.transitionCancelRequested(taskID, map[string]any{"attempt": attempt, "stage": "error"})
+			}
 		}
 
 		if shouldRetryTaskExecutionError(runErr) && attempt < attempts {
@@ -211,17 +251,35 @@ func (e *V2Executor) Run(ctx context.Context, consumer V2QueueConsumer) error {
 			return nil
 		}
 
-		messages, err := consumer.Read(ctx, 1, e.readBlockDuration())
+		messages, err := consumer.ClaimPending(ctx, e.readBlockDuration(), 1)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("read v2 queue messages: %w", err)
+			return fmt.Errorf("claim pending v2 queue messages: %w", err)
 		}
+		if len(messages) == 0 {
+			messages, err = consumer.ReadGroup(ctx, 1, e.readBlockDuration())
+			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+					return nil
+				}
+				return fmt.Errorf("read v2 queue messages: %w", err)
+			}
+		}
+
 		for _, msg := range messages {
 			err := e.executeWithRetry(ctx, msg)
 			if err != nil {
 				log.Printf("v2 worker execute failed task_id=%s: %v", strings.TrimSpace(msg.TaskID), err)
+				continue
+			}
+			if strings.TrimSpace(msg.MessageID) == "" {
+				continue
+			}
+
+			if err := consumer.Ack(ctx, msg.MessageID); err != nil {
+				return fmt.Errorf("ack v2 queue message task_id=%s message_id=%s: %w", strings.TrimSpace(msg.TaskID), strings.TrimSpace(msg.MessageID), err)
 			}
 		}
 	}
@@ -273,6 +331,13 @@ func (e *V2Executor) terminalWriteDuration() time.Duration {
 		return e.terminalWriteTimeout
 	}
 	return defaultV2TerminalWrite
+}
+
+func (e *V2Executor) heartbeatDuration() time.Duration {
+	if e.heartbeatInterval > 0 {
+		return e.heartbeatInterval
+	}
+	return defaultV2Heartbeat
 }
 
 func (e *V2Executor) runRetryAttempts() int {
@@ -368,6 +433,98 @@ func shouldRetryTaskExecutionError(err error) bool {
 	return downloader.ShouldRetryTaskError(err)
 }
 
+func (e *V2Executor) startExecutionMonitor(
+	parent context.Context,
+	taskID string,
+	cancelRequested *atomic.Bool,
+) (context.Context, func()) {
+	monitorCtx, monitorCancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	heartbeatInterval := e.heartbeatDuration()
+
+	observe := func(ctx context.Context) bool {
+		heartbeatCtx, heartbeatCancel := context.WithTimeout(context.Background(), heartbeatInterval)
+		heartbeatErr := e.repo.UpdateTaskHeartbeat(heartbeatCtx, taskID, e.worker)
+		heartbeatCancel()
+		if heartbeatErr != nil {
+			log.Printf("v2 worker heartbeat update failed task_id=%s worker=%s: %v", strings.TrimSpace(taskID), strings.TrimSpace(e.worker), heartbeatErr)
+		}
+
+		requested, err := e.isTaskCancelRequested(ctx, taskID)
+		if err != nil {
+			log.Printf("v2 worker cancel check failed task_id=%s: %v", strings.TrimSpace(taskID), err)
+			return false
+		}
+		if requested {
+			cancelRequested.Store(true)
+			monitorCancel()
+			return true
+		}
+		return false
+	}
+
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-monitorCtx.Done():
+				return
+			case <-ticker.C:
+				if observe(monitorCtx) {
+					return
+				}
+			}
+		}
+	}()
+
+	return monitorCtx, func() {
+		monitorCancel()
+		<-done
+	}
+}
+
+func (e *V2Executor) isTaskCancelRequested(ctx context.Context, taskID string) (bool, error) {
+	snapshot, err := e.repo.GetTaskForExecution(ctx, taskID)
+	if err != nil {
+		return false, fmt.Errorf("load v2 task snapshot: %w", err)
+	}
+	return strings.TrimSpace(snapshot.Status) == string(domainv2.StatusCancelRequested), nil
+}
+
+func (e *V2Executor) transitionCancelRequested(taskID string, payload map[string]any) error {
+	reason := "Cancellation requested by user."
+	err := e.transitionTerminal(
+		taskID,
+		string(domainv2.StatusCancelRequested),
+		string(domainv2.StatusCanceled),
+		postgres.StatusPatch{Error: &reason},
+		payload,
+	)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
+		return err
+	}
+
+	statusCtx, statusCancel := context.WithTimeout(context.Background(), e.terminalWriteDuration())
+	defer statusCancel()
+	snapshot, statusErr := e.repo.GetTaskForExecution(statusCtx, taskID)
+	if statusErr != nil {
+		return fmt.Errorf("load v2 task snapshot: %w", statusErr)
+	}
+	switch strings.TrimSpace(snapshot.Status) {
+	case string(domainv2.StatusCanceled):
+		return nil
+	case string(domainv2.StatusCancelRequested):
+		return err
+	default:
+		return nil
+	}
+}
+
 func marshalPayload(payload map[string]any) string {
 	if len(payload) == 0 {
 		return "{}"
@@ -389,7 +546,9 @@ func stringPtrV2Executor(value string) *string {
 }
 
 type V2QueueConsumer interface {
-	Read(ctx context.Context, count int64, block time.Duration) ([]queuev2.TaskMessage, error)
+	ReadGroup(ctx context.Context, count int64, block time.Duration) ([]queuev2.TaskMessage, error)
+	ClaimPending(ctx context.Context, minIdle time.Duration, count int64) ([]queuev2.TaskMessage, error)
+	Ack(ctx context.Context, messageIDs ...string) error
 }
 
 type V2DBTaskReader interface {
@@ -441,6 +600,13 @@ func (r *V2PostgresExecutionRepo) TransitionTaskWithEvent(ctx context.Context, i
 		return errors.New("v2 execution repo writer is not configured")
 	}
 	return r.Writer.TransitionTaskWithEvent(ctx, in)
+}
+
+func (r *V2PostgresExecutionRepo) UpdateTaskHeartbeat(ctx context.Context, taskID, worker string) error {
+	if r == nil || r.Writer == nil {
+		return errors.New("v2 execution repo writer is not configured")
+	}
+	return r.Writer.UpdateTaskHeartbeat(ctx, strings.TrimSpace(taskID), strings.TrimSpace(worker))
 }
 
 type V2ServiceDownloader struct {

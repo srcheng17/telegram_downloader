@@ -1,0 +1,128 @@
+{{ define "content" }}
+<div id="logs-page">
+    <div class="section-header">
+        <h2>下载日志</h2>
+        <p class="muted">查看任务状态、进度及文件下载操作。</p>
+    </div>
+    <div
+        id="startup-recovery-banner-logs"
+        class="startup-recovery-banner is-hidden"
+        role="status"
+        aria-live="polite"
+        aria-hidden="true"
+    >
+        <p id="startup-recovery-text-logs" class="startup-recovery-text"></p>
+        <button type="button" id="startup-recovery-dismiss-logs" class="btn-secondary startup-recovery-dismiss">关闭</button>
+    </div>
+
+    <details id="summary-collapsible-logs" class="summary-collapsible" open>
+        <summary class="summary-toggle collapsible-summary">任务概览</summary>
+        <div id="logs-summary" class="summary-grid" aria-live="polite">
+            <article class="summary-card">
+                <p class="summary-label">进行中</p>
+                <p id="summary-active-count" class="summary-value">-</p>
+            </article>
+            <article class="summary-card">
+                <p class="summary-label">已完成</p>
+                <p id="summary-finished-count" class="summary-value">-</p>
+            </article>
+            <article class="summary-card">
+                <p class="summary-label">成功率</p>
+                <p id="summary-success-rate" class="summary-value">-</p>
+            </article>
+            <article class="summary-card">
+                <p class="summary-label">失败数</p>
+                <p id="summary-failure-count" class="summary-value">-</p>
+            </article>
+        </div>
+    </details>
+
+    <form id="logs-filter-form" class="logs-filters" autocomplete="off">
+        <div class="filter-field">
+            <label for="status-filter">状态</label>
+            <select id="status-filter" name="status">
+                <option value="">全部</option>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label for="query-filter">关键词</label>
+            <input id="query-filter" name="q" type="text" maxlength="120" placeholder="任务 ID / URL / 错误信息">
+        </div>
+        <button type="submit">筛选</button>
+        <button type="button" id="clear-filters" class="btn-secondary">重置</button>
+    </form>
+    <div id="logs-feedback" class="inline-feedback" role="status" aria-live="polite"></div>
+
+    <div class="logs-table-meta">
+        <p id="task-id-column-help" class="table-help-text">
+            任务 ID 会完整展示，便于复制；小屏幕可横向滚动查看完整内容。
+        </p>
+        <p class="table-help-text cancel-help-text">
+            取消为异步操作：点击“取消”后请以“状态”列最终结果为准（可能短暂显示“取消中”）。
+        </p>
+    </div>
+
+    <div class="table-container" aria-describedby="task-id-column-help">
+        <table class="logs-table">
+            <caption class="sr-only">下载任务日志表，包含链接、状态、进度、开始时间、错误及操作。</caption>
+            <thead>
+                <tr>
+                    <th scope="col" aria-describedby="task-id-column-help">任务 ID</th>
+                    <th scope="col">URL</th>
+                    <th scope="col">状态</th>
+                    <th scope="col">进度</th>
+                    <th scope="col">开始时间</th>
+                    <th scope="col">错误</th>
+                    <th scope="col">操作</th>
+                </tr>
+            </thead>
+            <tbody id="log-body">
+                <tr class="table-state-row table-state-loading">
+                    <td colspan="7">
+                        <div class="table-state-message" id="logs-state-loading-desc">
+                            <p class="table-state-title">日志加载中...</p>
+                            <p class="table-state-detail">稍后将在此展示最近任务状态和下载操作。</p>
+                        </div>
+                    </td>
+                </tr>
+                <tr class="table-state-row table-state-empty is-hidden" aria-hidden="true">
+                    <td colspan="7">
+                        <div class="table-state-message">
+                            <p class="table-state-title">暂无日志</p>
+                            <p class="table-state-detail">运行任务后，这里会显示状态历史。</p>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="pagination">
+        <button id="prev-page" disabled>上一页</button>
+        <span id="page-info">第 1 / 1 页</span>
+        <button id="next-page" disabled>下一页</button>
+    </div>
+    <div
+        id="error-modal"
+        class="error-modal hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="error-modal-title"
+        aria-describedby="error-modal-description error-modal-content"
+    >
+        <div class="error-modal-backdrop" id="error-modal-backdrop"></div>
+        <div class="error-modal-panel">
+            <div class="error-modal-header">
+                <h3 id="error-modal-title">错误详情</h3>
+                <button type="button" id="error-modal-close" class="error-modal-close" aria-label="关闭错误详情对话框">
+                    <span aria-hidden="true">×</span>
+                    <span class="error-modal-close-text">关闭</span>
+                </button>
+            </div>
+            <p id="error-modal-description" class="error-modal-description">
+                展示所选任务的完整错误输出。可按 Esc 或点击关闭按钮返回日志表格。
+            </p>
+            <pre id="error-modal-content" class="error-modal-content"></pre>
+        </div>
+    </div>
+</div>
+{{ end }}

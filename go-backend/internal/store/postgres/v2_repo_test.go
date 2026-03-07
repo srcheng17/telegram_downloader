@@ -135,22 +135,110 @@ func TestUpdateTaskStatusReturnsErrorWhenFromMismatched(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskStatusSetsCancelRequestedTimestamp(t *testing.T) {
+	db := newFakeV2RepoDB()
+	db.tasks["task-v2-cancel-request"] = fakeV2Task{
+		id:        "task-v2-cancel-request",
+		url:       "https://telegra.ph/demo",
+		status:    "RUNNING",
+		createdAt: time.Now().UTC(),
+		updatedAt: time.Now().UTC(),
+	}
+	repo := &PostgresV2TaskRepo{db: db}
+
+	reason := "Cancellation requested by user."
+	if err := repo.UpdateTaskStatus(
+		context.Background(),
+		"task-v2-cancel-request",
+		"RUNNING",
+		"CANCEL_REQUESTED",
+		StatusPatch{Error: &reason},
+	); err != nil {
+		t.Fatalf("update task status: %v", err)
+	}
+
+	persisted := db.tasks["task-v2-cancel-request"]
+	if persisted.status != "CANCEL_REQUESTED" {
+		t.Fatalf("expected status CANCEL_REQUESTED, got %q", persisted.status)
+	}
+	if persisted.cancelRequestedAt == nil || persisted.cancelRequestedAt.IsZero() {
+		t.Fatalf("expected cancel_requested_at to be set")
+	}
+}
+
+func TestUpdateTaskHeartbeatTouchesRunningTask(t *testing.T) {
+	db := newFakeV2RepoDB()
+	db.tasks["task-v2-heartbeat"] = fakeV2Task{
+		id:        "task-v2-heartbeat",
+		url:       "https://telegra.ph/demo",
+		status:    "RUNNING",
+		claimedBy: stringPtr("worker-v2-a"),
+		createdAt: time.Now().UTC(),
+		updatedAt: time.Now().UTC(),
+	}
+	repo := &PostgresV2TaskRepo{db: db}
+
+	if err := repo.UpdateTaskHeartbeat(context.Background(), "task-v2-heartbeat", "worker-v2-a"); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
+
+	persisted := db.tasks["task-v2-heartbeat"]
+	if persisted.heartbeatAt == nil || persisted.heartbeatAt.IsZero() {
+		t.Fatalf("expected heartbeat_at to be set")
+	}
+}
+
+func TestUpdateTaskStatusIncrementsRetryCountOnRunningFailure(t *testing.T) {
+	db := newFakeV2RepoDB()
+	db.tasks["task-v2-retry"] = fakeV2Task{
+		id:         "task-v2-retry",
+		url:        "https://telegra.ph/demo",
+		status:     "RUNNING",
+		retryCount: 2,
+		createdAt:  time.Now().UTC(),
+		updatedAt:  time.Now().UTC(),
+	}
+	repo := &PostgresV2TaskRepo{db: db}
+
+	reason := "download failed"
+	if err := repo.UpdateTaskStatus(
+		context.Background(),
+		"task-v2-retry",
+		"RUNNING",
+		"FAILED",
+		StatusPatch{Error: &reason},
+	); err != nil {
+		t.Fatalf("update task status: %v", err)
+	}
+
+	persisted := db.tasks["task-v2-retry"]
+	if persisted.status != "FAILED" {
+		t.Fatalf("expected status FAILED, got %q", persisted.status)
+	}
+	if persisted.retryCount != 3 {
+		t.Fatalf("expected retry_count=3, got %d", persisted.retryCount)
+	}
+}
+
 type fakeV2RepoDB struct {
 	tasks  map[string]fakeV2Task
 	events []fakeV2Event
 }
 
 type fakeV2Task struct {
-	id            string
-	url           string
-	canonicalURL  string
-	status        string
-	enqueueToken  string
-	error         *string
-	resultZipPath *string
-	claimedBy     *string
-	createdAt     time.Time
-	updatedAt     time.Time
+	id                string
+	url               string
+	canonicalURL      string
+	status            string
+	enqueueToken      string
+	error             *string
+	resultZipPath     *string
+	claimedBy         *string
+	heartbeatAt       *time.Time
+	cancelRequestedAt *time.Time
+	retryCount        int
+	createdAt         time.Time
+	updatedAt         time.Time
 }
 
 type fakeV2Event struct {
@@ -197,6 +285,26 @@ func (f *fakeV2RepoDB) Exec(_ context.Context, query string, args ...any) (pgcon
 		})
 		return pgconn.NewCommandTag("INSERT 0 1"), nil
 	case strings.Contains(query, "UPDATE v2_tasks"):
+		if strings.Contains(query, "status IN ('RUNNING', 'CANCEL_REQUESTED')") {
+			if len(args) != 2 {
+				return pgconn.CommandTag{}, fmt.Errorf("expected 2 heartbeat args, got %d", len(args))
+			}
+			taskID := args[0].(string)
+			worker := args[1].(string)
+			task, ok := f.tasks[taskID]
+			if !ok || task.claimedBy == nil || *task.claimedBy != worker {
+				return pgconn.NewCommandTag("UPDATE 0"), nil
+			}
+			if task.status != "RUNNING" && task.status != "CANCEL_REQUESTED" {
+				return pgconn.NewCommandTag("UPDATE 0"), nil
+			}
+			now := time.Now().UTC()
+			task.heartbeatAt = &now
+			task.updatedAt = now
+			f.tasks[taskID] = task
+			return pgconn.NewCommandTag("UPDATE 1"), nil
+		}
+
 		if len(args) != 6 {
 			return pgconn.CommandTag{}, fmt.Errorf("expected 6 update args, got %d", len(args))
 		}
@@ -215,7 +323,17 @@ func (f *fakeV2RepoDB) Exec(_ context.Context, query string, args ...any) (pgcon
 		if args[5].(*string) != nil {
 			task.claimedBy = cloneV2String(args[5].(*string))
 		}
-		task.updatedAt = time.Now().UTC()
+		now := time.Now().UTC()
+		task.updatedAt = now
+		if toStatus == "RUNNING" || toStatus == "SUCCESS" || toStatus == "FAILED" || toStatus == "CANCELED" {
+			task.heartbeatAt = &now
+		}
+		if toStatus == "CANCEL_REQUESTED" {
+			task.cancelRequestedAt = &now
+		}
+		if fromStatus == "RUNNING" && toStatus == "FAILED" {
+			task.retryCount++
+		}
 		f.tasks[taskID] = task
 
 		return pgconn.NewCommandTag("UPDATE 1"), nil

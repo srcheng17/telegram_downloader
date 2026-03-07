@@ -3,11 +3,12 @@ package v2
 type Status string
 
 const (
-	StatusQueued   Status = "QUEUED"
-	StatusRunning  Status = "RUNNING"
-	StatusSuccess  Status = "SUCCESS"
-	StatusFailed   Status = "FAILED"
-	StatusCanceled Status = "CANCELED"
+	StatusQueued          Status = "QUEUED"
+	StatusRunning         Status = "RUNNING"
+	StatusCancelRequested Status = "CANCEL_REQUESTED"
+	StatusSuccess         Status = "SUCCESS"
+	StatusFailed          Status = "FAILED"
+	StatusCanceled        Status = "CANCELED"
 )
 
 type Task struct {

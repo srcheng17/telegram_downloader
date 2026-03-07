@@ -31,49 +31,41 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 
 ## 技术栈
 
-*   **后端（当前主线）**: Go（HTTP API + Worker）
-*   **后端（历史兼容）**: Python, Flask, Celery
-*   **前端**: HTML, CSS, htmx
-*   **部署**: Docker, Docker Compose, Redis, PostgreSQL
+*   **后端主线**: Go（`go-api` + `go-worker`）
+*   **历史兼容代码**: Python/Flask（仅保留参考，不是默认发布链路）
+*   **前端**: HTML + CSS + htmx + 原生 JS（Vite 最小工程化）
+*   **部署**: Docker Compose, Nginx, Redis Streams, PostgreSQL
+*   **测试**: Go test, Playwright, GitHub Actions CI
 
 ## 后端架构（重构后）
 
-> 说明：Compose 默认运行 Go 单主线（`go-api + go-worker`）。下述 Python 目录结构保留用于 legacy/历史兼容与迁移参考。
+默认生产拓扑：
 
-项目已按分层结构拆分，核心目录如下：
+`gateway -> go-api -> postgres/redis`
+
+`go-worker` 独立消费 Redis Streams（consumer group + ack + pending reclaim），并按 v2 状态机推进任务生命周期。
+
+核心目录：
 
 ```text
-telegram_downloader/
-  __init__.py              # Flask app factory + 依赖装配
-  constants.py             # 全局常量
-  settings.py              # 配置归一化与参数校验
-  url_validation.py        # URL 安全校验
-  runtime.py               # 运行时状态容器
-  repositories/
-    task_store.py          # 任务持久化层（SQLite / PostgreSQL）
-  services/
-    task_orchestrator.py   # 任务调度（线程池 / Celery）
-    download_worker.py     # 下载执行器（线程与 Celery 复用）
-    image_downloader.py    # 图片抓取与打包业务逻辑
-    log_cleanup.py         # 日志定期清理后台服务
-  celery_app.py            # Celery 配置入口
-  celery_tasks.py          # Celery 任务定义
-  web/
-    routes.py              # HTTP 路由层
-    template_helpers.py    # 模板辅助函数
+go-backend/
+  cmd/server/              # go-api 入口
+  cmd/worker/              # go-worker 入口
+  internal/httpui/         # 首页/日志/设置 UI（保持现有界面）
+  internal/httpapi/        # /download + /api/* legacy-facing 适配层
+  internal/httpv2/         # /v2/* API
+  internal/queue/v2/       # Redis Streams v2 队列抽象
+  internal/store/postgres/ # v2 任务仓储 + migrations runner
 ```
 
-同时保留了 `app.py`、`task_store.py`、`downloader_logic.py` 的兼容入口，避免影响既有脚本与测试。
+根目录 Python 代码保留为历史兼容与迁移参考，不参与当前 Compose 主链路。
 
 ## 测试分层（重构后）
 
 ```text
-tests/
-  integration/   # 跨层流程测试（路由 + 运行时协作）
-  web/           # 路由/API 行为测试
-  services/      # 业务服务单元测试
-  repositories/  # 持久化层测试
-  e2e/           # Playwright 端到端测试
+go-backend/...   # Go 单元/集成/竞态测试
+tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose）
+.github/workflows/ci.yml  # CI 门禁（go test + race + lint + e2e）
 ```
 
 ## 项目修改文档
@@ -82,21 +74,31 @@ tests/
 
 ## 运行测试
 
-### Python 单元/集成测试
+### Go 单元与竞态测试
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -q
+cd go-backend
+go test ./...
+go test -race ./...
 ```
 
-### Playwright 端到端测试
+### 前端检查与构建
 
 ```bash
-npm install
+npm ci
+npm run lint
+npm run build
+```
+
+### Playwright 端到端测试（可复现）
+
+```bash
+npm ci
 npm run e2e:install
 npm run e2e:test
 ```
 
-> E2E 会自动启动本地 Flask 服务，并通过 `tests/e2e/fixtures/prepare_e2e_state.py` 生成可重复的测试数据。
+> `npm run e2e:test` 会自动执行 `docker compose up -d --build`，等待 `/readyz`，执行 Playwright，然后自动 `docker compose down` 清理容器。
 
 ## 关键接口说明（新增）
 
@@ -112,28 +114,19 @@ npm run e2e:test
 
 ## 如何运行
 
-### 1. 构建 Docker 镜像
+### 1. 准备环境变量
 
 ```bash
-docker build -t telegraph-downloader:latest .
+cp .env.example .env
+# 至少设置 INTERNAL_ENQUEUE_TOKEN
 ```
 
-### 2. 运行 Docker 容器
+### 2. 启动 Compose 单主线（Go）
 
 ```bash
-docker run -d -p 5002:5000 \
-  -v "/path/to/your/manga/folder:/app/downloaded_images" \
-  -v "/path/to/your/temp/folder:/app/temp_downloads" \
-  -e SECRET_KEY='a_super_secret_key_that_you_should_change' \
-  --name telegram-downloader \
-  telegraph-downloader:latest
+docker compose up -d --build
+docker compose ps
 ```
-
-**参数说明:**
-*   `-p 5002:5000`: 将主机的 `5002` 端口映射到容器的 `5000` 端口。
-*   `-v "/path/to/your/manga/folder:/app/downloaded_images"`: **（必需）** 将您希望存放最终 CBZ/ZIP 文件的本地目录挂载到容器中。
-*   `-v "/path/to/your/temp/folder:/app/temp_downloads"`: **（必需）** 将您希望存放临时下载文件的本地目录挂载到容器中。
-*   `-e SECRET_KEY='...'`: **（推荐）** 设置一个安全的 `SECRET_KEY` 用于 Flask session 加密。
 
 ### 3. 访问应用
 
@@ -156,6 +149,7 @@ docker compose ps
 
 ```bash
 curl -sS http://localhost:5002/healthz
+curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/readyz
 ```
 
 返回体中 `service` 为 `go-backend` 表示网关已命中 Go 主线。
@@ -163,17 +157,19 @@ curl -sS http://localhost:5002/healthz
 ## SQLite 迁移到 Postgres（停机迁移）
 
 1. 停止旧服务（冻结写入）。
-2. 启动 `postgres` 容器。
-3. 执行迁移脚本：
+2. 准备一个**可从迁移脚本所在主机直连**的 Postgres 实例（可为外部实例，或临时对 Compose 的 `postgres` 暴露端口）。
+3. 执行迁移脚本（将 `<host>:<port>` 替换为实际可达地址）：
 
 ```bash
 .venv/bin/python scripts/migrate_sqlite_to_postgres.py \
   --source-sqlite data/tasks.db \
-  --target-postgres "postgresql://telegraph:telegraph@localhost:5432/telegraph" \
+  --target-postgres "postgresql://telegraph:telegraph@<host>:<port>/telegraph" \
   --truncate-target
 ```
 
-4. 使用 compose 启动新架构：
+> 注意：当前 `docker-compose.yml` 默认**不**对外发布 `postgres:5432`。
+
+4. 迁移完成后使用 compose 启动新架构：
 
 ```bash
 docker compose up -d --build
@@ -181,15 +177,9 @@ docker compose up -d --build
 
 ## 更新后重建（镜像与容器）
 
-当代码或前端资源有变更时，建议重新构建并替换容器：
+当代码或前端资源有变更时，建议重新构建并替换 Compose 服务：
 
 ```bash
-docker rm -f telegram-downloader 2>/dev/null || true
-docker build -t telegraph-downloader:latest .
-docker run -d -p 5002:5000 \
-  -v "/path/to/your/manga/folder:/app/downloaded_images" \
-  -v "/path/to/your/temp/folder:/app/temp_downloads" \
-  -e SECRET_KEY='a_super_secret_key_that_you_should_change' \
-  --name telegram-downloader \
-  telegraph-downloader:latest
+docker compose down --remove-orphans
+docker compose up -d --build
 ```

@@ -1,4 +1,6 @@
 (function () {
+    'use strict';
+
     const state = window.__telegraphHomeState || {
         form: null,
         submitHandler: null,

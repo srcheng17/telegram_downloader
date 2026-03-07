@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestComposeTopologyMatchesGoBackendWithPythonFrontend(t *testing.T) {
+func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	composePath := findComposePath(t)
 	content, err := os.ReadFile(composePath)
 	if err != nil {
@@ -17,8 +17,8 @@ func TestComposeTopologyMatchesGoBackendWithPythonFrontend(t *testing.T) {
 	}
 
 	services := extractComposeServices(t, string(content))
+	composeText := string(content)
 	expectedServices := map[string]struct{}{
-		"web":       {},
 		"go-api":    {},
 		"go-worker": {},
 		"postgres":  {},
@@ -33,18 +33,36 @@ func TestComposeTopologyMatchesGoBackendWithPythonFrontend(t *testing.T) {
 		)
 	}
 
+	goAPIBlock := extractComposeServiceBlock(t, composeText, "go-api")
+	if !strings.Contains(goAPIBlock, "    healthcheck:\n") {
+		t.Fatalf("go-api must define healthcheck in %q", composePath)
+	}
+	if !strings.Contains(goAPIBlock, "/healthz") {
+		t.Fatalf("go-api must define a healthcheck probing /healthz in %q", composePath)
+	}
+	goAPIStaticMountReadonly := regexp.MustCompile(`(?m)^\s*-\s*\./static:/app/static:ro\s*$`)
+	if !goAPIStaticMountReadonly.MatchString(goAPIBlock) {
+		t.Fatalf("go-api must mount static assets as read-only volume ./static:/app/static:ro in %q", composePath)
+	}
+
+	gatewayBlock := extractComposeServiceBlock(t, composeText, "gateway")
+	gatewayDependsOnHealthyGoAPI := regexp.MustCompile(`(?ms)go-api:\n\s+condition:\s*service_healthy`)
+	if !gatewayDependsOnHealthyGoAPI.MatchString(gatewayBlock) {
+		t.Fatalf("gateway must depend on go-api with service_healthy condition in %q", composePath)
+	}
+
 	nginxPath := findNginxConfigPath(t)
 	nginxContent, err := os.ReadFile(nginxPath)
 	if err != nil {
 		t.Fatalf("read nginx config %q: %v", nginxPath, err)
 	}
 	nginxText := string(nginxContent)
-	if !strings.Contains(nginxText, "telegraph_python_web") {
-		t.Fatalf("nginx config must reference python frontend upstream: %q", nginxPath)
+	if strings.Contains(nginxText, "telegraph_python_web") {
+		t.Fatalf("nginx config must not reference python frontend upstream: %q", nginxPath)
 	}
-	locationRootToPython := regexp.MustCompile(`location\s*/\s*\{\s*proxy_pass\s+http://telegraph_python_web;`)
-	if !locationRootToPython.MatchString(nginxText) {
-		t.Fatalf("nginx config must route location / to telegraph_python_web: %q", nginxPath)
+	locationRootToGo := regexp.MustCompile(`location\s*/\s*\{\s*proxy_pass\s+http://telegraph_go_api;`)
+	if !locationRootToGo.MatchString(nginxText) {
+		t.Fatalf("nginx config must route location / to telegraph_go_api: %q", nginxPath)
 	}
 	locationDownloadToGo := regexp.MustCompile(`location\s*=\s*/download\s*\{\s*proxy_pass\s+http://telegraph_go_api;`)
 	if !locationDownloadToGo.MatchString(nginxText) {
@@ -130,6 +148,46 @@ func extractComposeServices(t *testing.T, composeContent string) map[string]stru
 		t.Fatalf("no services parsed from docker-compose.yml")
 	}
 	return services
+}
+
+func extractComposeServiceBlock(t *testing.T, composeContent, serviceName string) string {
+	t.Helper()
+
+	lines := strings.Split(composeContent, "\n")
+	target := "  " + serviceName + ":"
+
+	inServices := false
+	inTarget := false
+	block := make([]string, 0, 16)
+	for _, raw := range lines {
+		line := strings.TrimRight(raw, "\r")
+		trimmed := strings.TrimSpace(line)
+
+		if !inServices {
+			if trimmed == "services:" {
+				inServices = true
+			}
+			continue
+		}
+
+		if !inTarget {
+			if line == target {
+				inTarget = true
+				block = append(block, line)
+			}
+			continue
+		}
+
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") {
+			break
+		}
+		block = append(block, line)
+	}
+
+	if len(block) == 0 {
+		t.Fatalf("service %q not found in docker-compose.yml", serviceName)
+	}
+	return strings.Join(block, "\n") + "\n"
 }
 
 func sortedServiceNames(services map[string]struct{}) []string {

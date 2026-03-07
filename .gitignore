@@ -5,6 +5,7 @@ __pycache__/
 env/
 .env
 .env.*
+!.env.example
 
 # Downloads
 downloaded_images/
@@ -15,6 +16,8 @@ temp_downloads/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/postgres/
+data/redis/
 
 # macOS
 .DS_Store
@@ -28,6 +31,7 @@ data/*.db-wal
 
 # Node / Playwright
 node_modules/
+static/dist/
 playwright-report/
 test-results/
 tests/e2e/.artifacts/

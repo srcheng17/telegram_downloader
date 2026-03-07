@@ -15,6 +15,9 @@
         if (window.TelegraphDownloaderLogs && typeof window.TelegraphDownloaderLogs.mount === 'function') {
             window.TelegraphDownloaderLogs.mount();
         }
+        if (window.TelegraphDownloaderSettings && typeof window.TelegraphDownloaderSettings.mount === 'function') {
+            window.TelegraphDownloaderSettings.mount();
+        }
     }
 
     function unmountPageModules() {
@@ -23,6 +26,9 @@
         }
         if (window.TelegraphDownloaderLogs && typeof window.TelegraphDownloaderLogs.unmount === 'function') {
             window.TelegraphDownloaderLogs.unmount();
+        }
+        if (window.TelegraphDownloaderSettings && typeof window.TelegraphDownloaderSettings.unmount === 'function') {
+            window.TelegraphDownloaderSettings.unmount();
         }
     }
 

@@ -23,16 +23,19 @@
 
 ```bash
 go test ./...
-go vet ./...
 go test -race ./...
 ```
 
 在仓库根目录：
 
 ```bash
+npm ci
+npm run lint
 npm run e2e:test
 docker compose config
 ```
+
+CI 参考：`.github/workflows/ci.yml`
 
 ---
 
@@ -42,8 +45,8 @@ docker compose config
 
 - [ ] 启动 `postgres` 与 `redis`
 - [ ] 执行 schema migration
-  - 空库最小集合：`002_v2_schema.sql`、`003_app_settings.sql`
-  - 如库中存在 legacy `tasks` 表，再执行 `001_go_full_rewrite.sql`
+  - 默认由 `go-api` 启动阶段自动执行 migration runner（`001`~`004`）。
+  - 若需手动处理（故障恢复场景），按编号顺序执行：`001_go_full_rewrite.sql` → `002_v2_schema.sql` → `003_app_settings.sql` → `004_v2_reliability.sql`。
 - [ ]（如有）执行 legacy -> v2 迁移工具并记录 checksum
 - [ ] 复核任务总量与关键状态分布
 
@@ -63,6 +66,7 @@ docker compose ps
 
 ```bash
 curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/healthz
+curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/readyz
 curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/v2/dashboard/summary
 curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/v2/tasks
 ```
@@ -72,6 +76,8 @@ curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/v2/tasks
 ## 4) 验收项（Acceptance）
 
 - [ ] `/healthz` 返回 `200` 且 `service=go-backend`
+- [ ] `/readyz` 返回 `200`（无 pending migration）
+- [ ] `/`、`/logs`、`/settings` 页面可访问（保持当前 UI）
 - [ ] `/v2` 页面可打开，创建任务可成功返回 `202`
 - [ ] `/v2/tasks-ui` 可加载任务列表（至少 1 页）
 - [ ] `/v2/tasks/{id}/cancel` 可用（202/409 语义正确）
@@ -95,16 +101,19 @@ curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/v2/tasks
 
 ---
 
-## 6) 本次执行记录（2026-03-06）
+## 6) 本次执行记录（2026-03-07）
 
 ### 6.1 通过项
 
 - `go test ./...`（go-backend）✅
-- `go vet ./...`（go-backend）✅
 - `go test -race ./...`（go-backend）✅
-- `npm run e2e:test` ✅（8/8）
+- `npm run lint` ✅
+- `npm run e2e:test` ✅（6/6）
 - `docker compose config` ✅
 - `docker compose up -d --build` ✅
+- `curl /healthz` ✅（HTTP 200）
+- `curl /readyz` ✅（HTTP 200）
+- `curl /v2` ✅（HTTP 200）
 - `curl /v2/dashboard/summary` ✅（HTTP 200）
 - `curl /v2/tasks` ✅（HTTP 200）
 
@@ -114,4 +123,4 @@ curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/v2/tasks
   处理：先解锁 keychain，或临时移除 `~/.docker/config.json` 中 `credsStore` 后重试（完成后恢复）。
 
 - 现象：fresh Postgres 下 `/v2/dashboard/summary`、`/v2/tasks` 初次请求返回 500。  
-  处理：补执行 `002_v2_schema.sql`、`003_app_settings.sql` 后恢复为 HTTP 200。
+ 处理：确认 `go-api` migration runner 已执行到 `004_v2_reliability.sql`；若未执行，按 `001`~`004` 顺序补齐后恢复为 HTTP 200。

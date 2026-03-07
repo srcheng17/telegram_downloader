@@ -320,7 +320,7 @@ func TestCreateTaskCompensationUsesIndependentTimeoutContext(t *testing.T) {
 	}
 }
 
-func TestCancelTaskReturnsAccepted(t *testing.T) {
+func TestCancelTaskTransitionsToCancelRequested(t *testing.T) {
 	repo := &fakeTaskStore{
 		getTask: &Task{
 			ID:     "task-v2-cancel",
@@ -345,6 +345,14 @@ func TestCancelTaskReturnsAccepted(t *testing.T) {
 	}
 	if repo.cancelCalls[0].fromStatus != "RUNNING" {
 		t.Fatalf("expected cancel from status RUNNING, got %q", repo.cancelCalls[0].fromStatus)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["status"] != TaskStatusCancelRequested {
+		t.Fatalf("expected cancel response status %q, got %#v", TaskStatusCancelRequested, payload["status"])
 	}
 }
 
@@ -431,6 +439,39 @@ func TestCancelTaskReturnsAcceptedWhenConflictResolvedAsCanceled(t *testing.T) {
 	}
 	if len(repo.getCalls) != 2 {
 		t.Fatalf("expected 2 get calls (initial + conflict reload), got %d", len(repo.getCalls))
+	}
+}
+
+func TestCancelTaskReturnsAcceptedWhenConflictResolvedAsCancelRequested(t *testing.T) {
+	repo := &fakeTaskStore{
+		getTasks: []*Task{
+			{
+				ID:     "task-v2-cancel-requested-race",
+				Status: "RUNNING",
+			},
+			{
+				ID:     "task-v2-cancel-requested-race",
+				Status: TaskStatusCancelRequested,
+			},
+		},
+		cancelErr: postgres.ErrV2TaskStatusMismatchOrNotFound,
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/tasks/task-v2-cancel-requested-race/cancel", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["status"] != TaskStatusCancelRequested {
+		t.Fatalf("expected status %q, got %#v", TaskStatusCancelRequested, payload["status"])
 	}
 }
 

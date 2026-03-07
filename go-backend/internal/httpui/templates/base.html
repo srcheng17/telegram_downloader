@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .Title }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
+    <script src="/static/index.js" defer></script>
+    <script src="/static/logs.js" defer></script>
+    <script src="/static/app.js" defer></script>
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-inner">
+            <h1>Telegraph Downloader</h1>
+            <p class="app-subtitle">批量下载 Telegraph 图片并导出 ZIP/CBZ 文件。</p>
+        </div>
+    </header>
+    <div class="container">
+        <nav class="main-nav">
+            <a class="nav-link{{ if eq .CurrentPath "/" }} active{{ end }}" href="/" hx-get="/" hx-target="#content" hx-push-url="true">首页</a>
+            <a class="nav-link{{ if eq .CurrentPath "/logs" }} active{{ end }}" href="/logs" hx-get="/logs" hx-target="#content" hx-push-url="true">日志</a>
+            <a class="nav-link{{ if eq .CurrentPath "/settings" }} active{{ end }}" href="/settings" hx-get="/settings" hx-target="#content" hx-push-url="true">设置</a>
+        </nav>
+        <main id="content">
+            <div class="card">
+                {{ template "content" . }}
+            </div>
+        </main>
+    </div>
+</body>
+</html>

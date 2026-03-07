@@ -80,3 +80,35 @@ func TestDefaultSettingsSnapshot(t *testing.T) {
 		t.Fatalf("expected default image_concurrency 2, got %d", defaults.ImageConcurrency)
 	}
 }
+
+func TestLoadFromEnvFailsWhenDatabaseURLMissingInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("TASKS_DB_PATH", "postgresql://telegraph:telegraph@postgres:5432/telegraph?sslmode=disable")
+	t.Setenv("INTERNAL_ENQUEUE_TOKEN", "token-prod")
+
+	_, err := LoadFromEnv()
+	if err == nil {
+		t.Fatalf("expected missing DATABASE_URL in production to fail")
+	}
+	if err.Error() != "DATABASE_URL is required in production" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFromEnvFailsWhenInternalTokenMissingInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv(
+		"DATABASE_URL",
+		"postgresql://telegraph:telegraph@postgres:5432/telegraph?sslmode=disable",
+	)
+	t.Setenv("INTERNAL_ENQUEUE_TOKEN", "")
+
+	_, err := LoadFromEnv()
+	if err == nil {
+		t.Fatalf("expected missing INTERNAL_ENQUEUE_TOKEN in production to fail")
+	}
+	if err.Error() != "INTERNAL_ENQUEUE_TOKEN is required in production" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
