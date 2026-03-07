@@ -29,11 +29,12 @@ const (
 	maxListPerPage      = 100
 	compensationTimeout = 3 * time.Second
 
-	TaskStatusQueued   = string(domainv2.StatusQueued)
-	TaskStatusRunning  = string(domainv2.StatusRunning)
-	TaskStatusSuccess  = string(domainv2.StatusSuccess)
-	TaskStatusFailed   = string(domainv2.StatusFailed)
-	TaskStatusCanceled = string(domainv2.StatusCanceled)
+	TaskStatusQueued          = string(domainv2.StatusQueued)
+	TaskStatusRunning         = string(domainv2.StatusRunning)
+	TaskStatusCancelRequested = string(domainv2.StatusCancelRequested)
+	TaskStatusSuccess         = string(domainv2.StatusSuccess)
+	TaskStatusFailed          = string(domainv2.StatusFailed)
+	TaskStatusCanceled        = string(domainv2.StatusCanceled)
 )
 
 func NormalizeTaskStatus(status string) string {
@@ -42,7 +43,7 @@ func NormalizeTaskStatus(status string) string {
 
 func IsActiveTaskStatus(status string) bool {
 	switch NormalizeTaskStatus(status) {
-	case TaskStatusQueued, TaskStatusRunning:
+	case TaskStatusQueued, TaskStatusRunning, TaskStatusCancelRequested:
 		return true
 	default:
 		return false
@@ -338,6 +339,12 @@ func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
 			"status":  TaskStatusCanceled,
 		})
 		return
+	case TaskStatusCancelRequested:
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"task_id": taskID,
+			"status":  TaskStatusCancelRequested,
+		})
+		return
 	case TaskStatusSuccess, TaskStatusFailed:
 		writeError(w, http.StatusConflict, "task already completed")
 		return
@@ -357,6 +364,13 @@ func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
+			if latestTask != nil && NormalizeTaskStatus(latestTask.Status) == TaskStatusCancelRequested {
+				writeJSON(w, http.StatusAccepted, map[string]any{
+					"task_id": taskID,
+					"status":  TaskStatusCancelRequested,
+				})
+				return
+			}
 			writeError(w, http.StatusConflict, "task status conflict")
 			return
 		}
@@ -366,7 +380,7 @@ func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"task_id": taskID,
-		"status":  TaskStatusCanceled,
+		"status":  TaskStatusCancelRequested,
 	})
 }
 
@@ -563,7 +577,7 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 		ORDER BY created_at DESC
 		LIMIT 1
 		`,
-		[]string{TaskStatusQueued, TaskStatusRunning},
+		[]string{TaskStatusQueued, TaskStatusRunning, TaskStatusCancelRequested},
 		canonicalURL,
 	)
 	if err != nil {
@@ -830,16 +844,16 @@ func (s *PostgresTaskStore) CancelTask(ctx context.Context, taskID, fromStatus s
 		return fmt.Errorf("task cannot be canceled from status %s", status)
 	}
 
-	reason := "Cancelled by user."
+	reason := "Cancellation requested by user."
 	return s.writer.TransitionTaskWithEvent(ctx, postgres.TransitionTaskWithEventInput{
 		TaskID:     strings.TrimSpace(taskID),
 		FromStatus: status,
-		ToStatus:   TaskStatusCanceled,
+		ToStatus:   TaskStatusCancelRequested,
 		Patch: postgres.StatusPatch{
 			Error: stringPtr(reason),
 		},
-		EventType:   "STATUS_TRANSITION",
-		PayloadJSON: `{"action":"cancel"}`,
+		EventType:   "CANCEL_REQUESTED",
+		PayloadJSON: `{"action":"cancel_requested"}`,
 	})
 }
 
@@ -936,12 +950,13 @@ func buildDashboardSummary(statusCounts map[string]int) DashboardSummary {
 
 	queued := safeCount(TaskStatusQueued)
 	running := safeCount(TaskStatusRunning)
+	cancelRequested := safeCount(TaskStatusCancelRequested)
 	success := safeCount(TaskStatusSuccess)
 	failed := safeCount(TaskStatusFailed)
 	canceled := safeCount(TaskStatusCanceled)
 
-	total := queued + running + success + failed + canceled
-	active := queued + running
+	total := queued + running + cancelRequested + success + failed + canceled
+	active := queued + running + cancelRequested
 	finished := success + failed + canceled
 	successRate := 0.0
 	if finished > 0 {

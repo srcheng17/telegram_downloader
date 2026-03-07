@@ -305,6 +305,7 @@ func (a *LegacyAdapter) BuildSummary(ctx context.Context) (domain.Summary, error
 
 	pending := safeCount(counts[httpv2.TaskStatusQueued])
 	inProgress := safeCount(counts[httpv2.TaskStatusRunning])
+	cancelRequested := safeCount(counts[httpv2.TaskStatusCancelRequested])
 	success := safeCount(counts[httpv2.TaskStatusSuccess])
 	failed := safeCount(counts[httpv2.TaskStatusFailed])
 	canceled := safeCount(counts[httpv2.TaskStatusCanceled])
@@ -312,14 +313,14 @@ func (a *LegacyAdapter) BuildSummary(ctx context.Context) (domain.Summary, error
 	summary := domain.Summary{
 		PendingTasks:         pending,
 		InProgressTasks:      inProgress,
-		CancelRequestedTasks: 0,
+		CancelRequestedTasks: cancelRequested,
 		CanceledTasks:        canceled,
 		SuccessTasks:         success,
 		FailedTasks:          failed,
 		StartupRecovery:      domain.DefaultStartupRecovery(),
 	}
-	summary.TotalTasks = pending + inProgress + success + failed + canceled
-	summary.ActiveTasks = pending + inProgress
+	summary.TotalTasks = pending + inProgress + cancelRequested + success + failed + canceled
+	summary.ActiveTasks = pending + inProgress + cancelRequested
 	summary.FinishedTasks = success + failed + canceled
 	if summary.FinishedTasks > 0 {
 		rate := float64(summary.SuccessTasks) / float64(summary.FinishedTasks) * 100
@@ -363,6 +364,11 @@ func (a *LegacyAdapter) CancelTask(ctx context.Context, taskID string) (LegacyCa
 			Decision: LegacyCancelDecisionAlreadyRequested,
 			Status:   domain.StatusCanceled,
 		}, nil
+	case httpv2.TaskStatusCancelRequested:
+		return LegacyCancelResult{
+			Decision: LegacyCancelDecisionAlreadyRequested,
+			Status:   domain.StatusCancelRequested,
+		}, nil
 	case httpv2.TaskStatusSuccess, httpv2.TaskStatusFailed:
 		return LegacyCancelResult{
 			Decision: LegacyCancelDecisionAlreadyFinished,
@@ -389,7 +395,7 @@ func (a *LegacyAdapter) CancelTask(ctx context.Context, taskID string) (LegacyCa
 
 	return LegacyCancelResult{
 		Decision: LegacyCancelDecisionRequested,
-		Status:   domain.StatusCanceled,
+		Status:   domain.StatusCancelRequested,
 	}, nil
 }
 
@@ -409,6 +415,11 @@ func (a *LegacyAdapter) resolveCancelMismatchByLatestStatus(
 			Decision: LegacyCancelDecisionAlreadyRequested,
 			Status:   domain.StatusCanceled,
 		}, nil
+	case httpv2.TaskStatusCancelRequested:
+		return LegacyCancelResult{
+			Decision: LegacyCancelDecisionAlreadyRequested,
+			Status:   domain.StatusCancelRequested,
+		}, nil
 	case httpv2.TaskStatusSuccess, httpv2.TaskStatusFailed:
 		return LegacyCancelResult{
 			Decision: LegacyCancelDecisionAlreadyFinished,
@@ -419,7 +430,7 @@ func (a *LegacyAdapter) resolveCancelMismatchByLatestStatus(
 		if retryErr == nil {
 			return LegacyCancelResult{
 				Decision: LegacyCancelDecisionRequested,
-				Status:   domain.StatusCanceled,
+				Status:   domain.StatusCancelRequested,
 			}, nil
 		}
 		if !errors.Is(retryErr, postgres.ErrV2TaskStatusMismatchOrNotFound) {
@@ -440,6 +451,11 @@ func (a *LegacyAdapter) resolveCancelMismatchByLatestStatus(
 			return LegacyCancelResult{
 				Decision: LegacyCancelDecisionAlreadyRequested,
 				Status:   domain.StatusCanceled,
+			}, nil
+		case httpv2.TaskStatusCancelRequested:
+			return LegacyCancelResult{
+				Decision: LegacyCancelDecisionAlreadyRequested,
+				Status:   domain.StatusCancelRequested,
 			}, nil
 		case httpv2.TaskStatusSuccess, httpv2.TaskStatusFailed:
 			return LegacyCancelResult{
@@ -501,15 +517,17 @@ func (a *LegacyAdapter) getStatusCounts(ctx context.Context) (map[string]int, er
 	}
 
 	counts := map[string]int{
-		httpv2.TaskStatusQueued:   0,
-		httpv2.TaskStatusRunning:  0,
-		httpv2.TaskStatusSuccess:  0,
-		httpv2.TaskStatusFailed:   0,
-		httpv2.TaskStatusCanceled: 0,
+		httpv2.TaskStatusQueued:          0,
+		httpv2.TaskStatusRunning:         0,
+		httpv2.TaskStatusCancelRequested: 0,
+		httpv2.TaskStatusSuccess:         0,
+		httpv2.TaskStatusFailed:          0,
+		httpv2.TaskStatusCanceled:        0,
 	}
 	statuses := []string{
 		httpv2.TaskStatusQueued,
 		httpv2.TaskStatusRunning,
+		httpv2.TaskStatusCancelRequested,
 		httpv2.TaskStatusSuccess,
 		httpv2.TaskStatusFailed,
 		httpv2.TaskStatusCanceled,
@@ -554,6 +572,10 @@ func (a *LegacyAdapter) findActiveTask(ctx context.Context, canonicalURL string)
 	if err != nil {
 		return nil, err
 	}
+	cancelRequestedTasks, err := a.listMatchingTasks(ctx, httpv2.TaskStatusCancelRequested, canonicalURL)
+	if err != nil {
+		return nil, err
+	}
 	var selected *httpv2.Task
 	selectTask := func(candidate *httpv2.Task) {
 		if candidate == nil {
@@ -568,6 +590,9 @@ func (a *LegacyAdapter) findActiveTask(ctx context.Context, canonicalURL string)
 	}
 	if len(runningTasks) > 0 {
 		selectTask(&runningTasks[0])
+	}
+	if len(cancelRequestedTasks) > 0 {
+		selectTask(&cancelRequestedTasks[0])
 	}
 	return selected, nil
 }
@@ -598,8 +623,10 @@ func mapLegacyStatusToV2(status string) string {
 	switch strings.TrimSpace(status) {
 	case domain.StatusPending:
 		return httpv2.TaskStatusQueued
-	case domain.StatusInProgress, domain.StatusCancelRequested:
+	case domain.StatusInProgress:
 		return httpv2.TaskStatusRunning
+	case domain.StatusCancelRequested:
+		return httpv2.TaskStatusCancelRequested
 	case domain.StatusSuccess:
 		return httpv2.TaskStatusSuccess
 	case domain.StatusFailed:
@@ -617,6 +644,8 @@ func mapV2StatusToLegacy(status string) string {
 		return domain.StatusPending
 	case httpv2.TaskStatusRunning:
 		return domain.StatusInProgress
+	case httpv2.TaskStatusCancelRequested:
+		return domain.StatusCancelRequested
 	case httpv2.TaskStatusSuccess:
 		return domain.StatusSuccess
 	case httpv2.TaskStatusFailed:

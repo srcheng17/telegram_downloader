@@ -320,7 +320,7 @@ func TestCreateTaskCompensationUsesIndependentTimeoutContext(t *testing.T) {
 	}
 }
 
-func TestCancelTaskReturnsAccepted(t *testing.T) {
+func TestCancelTaskTransitionsToCancelRequested(t *testing.T) {
 	repo := &fakeTaskStore{
 		getTask: &Task{
 			ID:     "task-v2-cancel",
@@ -345,6 +345,14 @@ func TestCancelTaskReturnsAccepted(t *testing.T) {
 	}
 	if repo.cancelCalls[0].fromStatus != "RUNNING" {
 		t.Fatalf("expected cancel from status RUNNING, got %q", repo.cancelCalls[0].fromStatus)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["status"] != TaskStatusCancelRequested {
+		t.Fatalf("expected cancel response status %q, got %#v", TaskStatusCancelRequested, payload["status"])
 	}
 }
 

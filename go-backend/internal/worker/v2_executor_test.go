@@ -500,6 +500,46 @@ func TestRunRetryKeepsRunningRecoveryStickyAcrossPreflightFailure(t *testing.T) 
 	}
 }
 
+func TestExecutorStopsRunningTaskWhenCancelRequested(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-cancel-requested"] = v2ExecutorTaskRecord{
+		id:           "task-cancel-requested",
+		url:          "https://telegra.ph/demo-cancel-requested",
+		status:       "QUEUED",
+		enqueueToken: "token-cancel-requested",
+	}
+
+	downloader := &fakeV2ExecutorDownloader{
+		executeFn: func(_ context.Context, taskID, _ string) (string, error) {
+			task := repo.tasks[taskID]
+			task.status = "CANCEL_REQUESTED"
+			repo.tasks[taskID] = task
+			return "", context.Canceled
+		},
+	}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-cancel",
+		Download: downloader,
+	})
+
+	err := executor.Execute(context.Background(), "task-cancel-requested", "token-cancel-requested")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(repo.statusUpdates) != 2 {
+		t.Fatalf("expected QUEUED->RUNNING then CANCEL_REQUESTED->CANCELED transitions, got %d", len(repo.statusUpdates))
+	}
+	second := repo.statusUpdates[1]
+	if second.from != "CANCEL_REQUESTED" || second.to != "CANCELED" {
+		t.Fatalf("expected CANCEL_REQUESTED->CANCELED transition, got %s->%s", second.from, second.to)
+	}
+	persisted := repo.tasks["task-cancel-requested"]
+	if persisted.status != "CANCELED" {
+		t.Fatalf("expected persisted status CANCELED, got %q", persisted.status)
+	}
+}
+
 type fakeV2ExecutorDownloader struct {
 	artifactPath string
 	err          error
@@ -535,6 +575,7 @@ type fakeV2ExecutorRepo struct {
 	eventErrCountByToStatus     map[string]int
 	failTerminalWhenCtxCanceled bool
 	getTaskCalls                int
+	heartbeatCalls              int
 }
 
 type v2ExecutorTaskRecord struct {
@@ -594,6 +635,21 @@ func (f *fakeV2ExecutorRepo) GetTaskForExecution(_ context.Context, taskID strin
 		Status:       status,
 		EnqueueToken: task.enqueueToken,
 	}, nil
+}
+
+func (f *fakeV2ExecutorRepo) UpdateTaskHeartbeat(_ context.Context, taskID, worker string) error {
+	f.heartbeatCalls++
+	task, ok := f.tasks[taskID]
+	if !ok {
+		return errors.New("task not found")
+	}
+	if task.status != "RUNNING" && task.status != "CANCEL_REQUESTED" {
+		return nil
+	}
+	if task.claimedBy != nil && *task.claimedBy != strings.TrimSpace(worker) {
+		return nil
+	}
+	return nil
 }
 
 func (f *fakeV2ExecutorRepo) TransitionTaskWithEvent(
