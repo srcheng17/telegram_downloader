@@ -116,7 +116,7 @@ func main() {
 		Download:       &worker.V2ServiceDownloader{Service: downloadService, DownloadRoot: downloadRoot},
 		TransientRetry: cfg.DownloadRetries,
 	})
-	if err := redisClient.XGroupCreateMkStream(ctx, cfg.V2StreamName, cfg.ConsumerGroup, "$").Err(); err != nil && !isBusyGroupErr(err) {
+	if err := ensureV2ConsumerGroup(ctx, redisClient, cfg.V2StreamName, cfg.ConsumerGroup); err != nil {
 		log.Fatalf("create v2 stream consumer group: %v", err)
 	}
 	v2Consumer := queuev2.NewConsumer(redisClient, cfg.V2StreamName, cfg.ConsumerGroup, consumerName)
@@ -155,4 +155,12 @@ func isBusyGroupErr(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToUpper(err.Error()), "BUSYGROUP")
+}
+
+func ensureV2ConsumerGroup(ctx context.Context, redisClient redis.Cmdable, streamName, groupName string) error {
+	err := redisClient.XGroupCreateMkStream(ctx, strings.TrimSpace(streamName), strings.TrimSpace(groupName), "0").Err()
+	if err != nil && !isBusyGroupErr(err) {
+		return err
+	}
+	return nil
 }
