@@ -77,6 +77,10 @@ func newFakeMigrationExecutor() *fakeMigrationExecutor {
 
 func (f *fakeMigrationExecutor) Exec(_ context.Context, query string, args ...any) (pgconn.CommandTag, error) {
 	switch {
+	case strings.Contains(query, "SELECT pg_advisory_lock"):
+		return pgconn.NewCommandTag("SELECT 1"), nil
+	case strings.Contains(query, "SELECT pg_advisory_unlock"):
+		return pgconn.NewCommandTag("SELECT 1"), nil
 	case strings.Contains(query, "CREATE TABLE IF NOT EXISTS schema_migrations"):
 		return pgconn.NewCommandTag("CREATE TABLE"), nil
 	case strings.Contains(query, "INSERT INTO schema_migrations"):

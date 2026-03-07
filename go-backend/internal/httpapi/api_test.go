@@ -392,6 +392,44 @@ func TestReadyzReturns503WhenMigrationsPending(t *testing.T) {
 	}
 }
 
+func TestReadyzReturns200WhenReady(t *testing.T) {
+	handler := NewRouterWithOptions(
+		&fakeTaskReader{},
+		RouterOptions{
+			ReadyzChecker: func(context.Context) (bool, error) {
+				return true, nil
+			},
+		},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestReadyzReturns500OnCheckerError(t *testing.T) {
+	handler := NewRouterWithOptions(
+		&fakeTaskReader{},
+		RouterOptions{
+			ReadyzChecker: func(context.Context) (bool, error) {
+				return false, errors.New("database unavailable")
+			},
+		},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestV2PageEntrypoints(t *testing.T) {
 	handler := NewRouter(&fakeTaskReader{})
 

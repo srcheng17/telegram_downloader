@@ -11,10 +11,13 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 //go:embed *.sql
 var migrationFS embed.FS
+
+const migrationRunnerAdvisoryLockKey = "go_backend_schema_migrations_runner"
 
 type Executor interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
@@ -25,6 +28,39 @@ func Run(ctx context.Context, executor Executor) error {
 	if executor == nil {
 		return errors.New("migrations executor is required")
 	}
+
+	if acquirer, ok := executor.(interface {
+		Acquire(ctx context.Context) (*pgxpool.Conn, error)
+	}); ok {
+		conn, err := acquirer.Acquire(ctx)
+		if err != nil {
+			return fmt.Errorf("acquire migration connection: %w", err)
+		}
+		defer conn.Release()
+		return runWithExecutor(ctx, conn)
+	}
+
+	return runWithExecutor(ctx, executor)
+}
+
+func runWithExecutor(ctx context.Context, executor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}) error {
+	if _, err := executor.Exec(
+		ctx,
+		`SELECT pg_advisory_lock(hashtext($1))`,
+		migrationRunnerAdvisoryLockKey,
+	); err != nil {
+		return fmt.Errorf("acquire migration advisory lock: %w", err)
+	}
+	defer func() {
+		_, _ = executor.Exec(
+			context.Background(),
+			`SELECT pg_advisory_unlock(hashtext($1))`,
+			migrationRunnerAdvisoryLockKey,
+		)
+	}()
 
 	if err := ensureVersionTable(ctx, executor); err != nil {
 		return err
@@ -52,7 +88,7 @@ func Run(ctx context.Context, executor Executor) error {
 		}
 		if _, err := executor.Exec(
 			ctx,
-			`INSERT INTO schema_migrations (version) VALUES ($1)`,
+			`INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`,
 			version,
 		); err != nil {
 			return fmt.Errorf("record migration %s: %w", version, err)
