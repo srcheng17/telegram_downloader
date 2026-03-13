@@ -1,6 +1,10 @@
+export function createSettingsModule() {
+    return {
+        mount() {},
+        unmount() {},
+    };
+}
+
 if (!window.TelegraphDownloaderSettings) {
-  window.TelegraphDownloaderSettings = {
-    mount() {},
-    unmount() {},
-  };
+    window.TelegraphDownloaderSettings = createSettingsModule();
 }

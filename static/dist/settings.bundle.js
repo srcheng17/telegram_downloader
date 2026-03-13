@@ -1,1 +1,1 @@
-window.TelegraphDownloaderSettings||(window.TelegraphDownloaderSettings={mount(){},unmount(){}});
+function e(){return{mount(){},unmount(){}}}window.TelegraphDownloaderSettings||(window.TelegraphDownloaderSettings=e());
