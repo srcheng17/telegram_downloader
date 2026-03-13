@@ -3,8 +3,7 @@ import uuid
 import os
 from urllib.parse import quote
 
-import requests
-from flask import jsonify, redirect, render_template, request, send_file, stream_with_context, url_for
+from flask import jsonify, redirect, render_template, request, send_file, url_for
 
 from telegram_downloader.constants import (
     ACTIVE_TASK_STATUSES,
@@ -18,75 +17,12 @@ from telegram_downloader.constants import (
 )
 from telegram_downloader.settings import clamp_int, normalized_settings
 from telegram_downloader.url_validation import is_allowed_telegraph_url, normalize_telegraph_url
+from telegram_downloader.web.go_proxy import proxy_v2_request
 
 
 def register_routes(app, runtime):
     def _proxy_v2_request(path):
-        base_url = (os.environ.get("GO_BACKEND_BASE_URL") or "http://go-api:5000").strip()
-        if not base_url:
-            base_url = "http://go-api:5000"
-        base_url = base_url.rstrip("/")
-
-        upstream_url = f"{base_url}{path}"
-        headers = {}
-        content_type = request.headers.get("Content-Type")
-        accept = request.headers.get("Accept")
-        if content_type:
-            headers["Content-Type"] = content_type
-        if accept:
-            headers["Accept"] = accept
-
-        request_body = None
-        if request.method in {"POST", "PUT", "PATCH"}:
-            request_body = request.get_data()
-
-        try:
-            upstream = requests.request(
-                request.method,
-                upstream_url,
-                params=request.args,
-                headers=headers,
-                data=request_body,
-                timeout=15,
-                allow_redirects=False,
-                stream=True,
-            )
-        except requests.RequestException as exc:
-            app.logger.warning(
-                "v2 proxy request failed method=%s path=%s err=%s",
-                request.method,
-                path,
-                exc,
-            )
-            return jsonify({"error": "upstream unavailable"}), 502
-
-        if request.method == "HEAD":
-            response = app.response_class(status=upstream.status_code)
-        else:
-            @stream_with_context
-            def _stream_body():
-                try:
-                    for chunk in upstream.iter_content(chunk_size=64 * 1024):
-                        if chunk:
-                            yield chunk
-                finally:
-                    upstream.close()
-
-            response = app.response_class(response=_stream_body(), status=upstream.status_code)
-        for header_name in (
-            "Content-Type",
-            "Content-Disposition",
-            "Cache-Control",
-            "ETag",
-            "Last-Modified",
-            "Content-Length",
-        ):
-            header_value = upstream.headers.get(header_name)
-            if header_value:
-                response.headers[header_name] = header_value
-        if request.method == "HEAD":
-            upstream.close()
-        return response
+        return proxy_v2_request(app, path)
 
     def _is_safe_download_path(file_path):
         download_root = os.path.realpath(os.environ.get("DOWNLOAD_PATH", "downloaded_images"))

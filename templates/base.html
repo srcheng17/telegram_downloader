@@ -7,9 +7,10 @@
     <link rel="stylesheet" href="{{ url_for_static_bust_cache('style.css') }}">
     <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
     {% block legacy_scripts %}
-    <script src="{{ url_for_static_bust_cache('index.js') }}" defer></script>
-    <script src="{{ url_for_static_bust_cache('logs.js') }}" defer></script>
-    <script src="{{ url_for_static_bust_cache('app.js') }}" defer></script>
+    <script type="module" src="{{ url_for_static_bust_cache('dist/app.bundle.js') }}"></script>
+    <script type="module" src="{{ url_for_static_bust_cache('dist/index.bundle.js') }}"></script>
+    <script type="module" src="{{ url_for_static_bust_cache('dist/logs.bundle.js') }}"></script>
+    <script type="module" src="{{ url_for_static_bust_cache('dist/settings.bundle.js') }}"></script>
     {% endblock %}
     {% block page_scripts %}{% endblock %}
 </head>

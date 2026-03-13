@@ -57,6 +57,27 @@ func TestUIRoutesRenderMainPages(t *testing.T) {
 	}
 }
 
+func TestBaseTemplateLoadsDistBundles(t *testing.T) {
+	router := NewRouter()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+
+	body := recorder.Body.String()
+	assertContains(t, body, `/static/dist/app.bundle.js`)
+	assertContains(t, body, `/static/dist/index.bundle.js`)
+	assertContains(t, body, `/static/dist/logs.bundle.js`)
+	assertContains(t, body, `/static/dist/settings.bundle.js`)
+	assertNotContains(t, body, `/static/index.js`)
+	assertNotContains(t, body, `/static/logs.js`)
+	assertNotContains(t, body, `/static/app.js`)
+}
+
 func TestSettingsPageUsesDynamicSettingsValues(t *testing.T) {
 	router := NewRouterWithConfig(Config{
 		Settings: Settings{

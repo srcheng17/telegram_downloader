@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
+    "test:frontend": "node --test frontend/src/tests/*.test.mjs",
     "lint": "eslint \"frontend/src/**/*.js\" \"static/**/*.js\"",
     "build": "vite build",
     "e2e:install": "playwright install --with-deps chromium",

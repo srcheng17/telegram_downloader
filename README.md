@@ -59,6 +59,7 @@ go-backend/
 ```
 
 根目录 Python 代码保留为历史兼容与迁移参考，不参与当前 Compose 主链路。
+其中 `telegram_downloader/web/` 现在定位为 compatibility bridge：仅保留 legacy 页面/路由与 Go 主线代理，不再作为默认运行时业务实现扩展。
 
 ## 测试分层（重构后）
 
@@ -71,6 +72,13 @@ tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose
 ## 项目修改文档
 
 本轮改动的分项说明见：`docs/PROJECT_UPDATES.md`（后端、前端、测试、CI 与容器运行命令汇总）。
+
+## 前端源码与静态资源约定
+
+- `frontend/src/` 是首页、日志页、设置页和应用壳层的源码入口；Vite 从这里构建运行时 bundle。
+- 页面模板只直接引用 `static/dist/*.bundle.js`；`static/index.js`、`static/logs.js`、`static/app.js` 不再是模板入口，保留为历史参考。
+- 当前 Docker/Python 运行链路不会在启动时自动执行 `vite build`，因此变更前端源码时，必须同时提交更新后的 `static/dist/*.bundle.js`。
+- Python `telegram_downloader/web/` 当前仅承担 legacy 页面与 Go `/v2/*` compatibility bridge 的角色，不再作为默认主线业务实现扩展点。
 
 ## 运行测试
 
@@ -86,8 +94,15 @@ go test -race ./...
 
 ```bash
 npm ci
+npm run test:frontend
 npm run lint
 npm run build
+```
+
+### Python compatibility bridge 回归
+
+```bash
+PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
 ```
 
 ### Playwright 端到端测试（可复现）
@@ -99,6 +114,12 @@ npm run e2e:test
 ```
 
 > `npm run e2e:test` 会自动执行 `docker compose up -d --build`，等待 `/readyz`，执行 Playwright，然后自动 `docker compose down` 清理容器。
+>
+> 本地运行前会先做一次 Playwright 浏览器 preflight：
+> - macOS 本地默认优先尝试 `chrome`，再回退到 `chromium`
+> - 可用 `E2E_BROWSER_PROJECT=chrome` 或 `E2E_BROWSER_PROJECT=chromium` 强制指定项目
+> - 如需跳过 preflight，使用 `E2E_SKIP_BROWSER_PREFLIGHT=1 npm run e2e:test`
+> - 若 preflight 报 `Permission denied (1100)` / `SIGABRT`，通常表示当前 macOS 会话不允许该 shell 启动浏览器自动化
 
 ## 关键接口说明（新增）
 

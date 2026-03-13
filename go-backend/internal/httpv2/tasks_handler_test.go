@@ -252,6 +252,34 @@ func TestListTasksReturnsPagination(t *testing.T) {
 	}
 }
 
+func TestListTasksTrimsKeyword(t *testing.T) {
+	repo := &fakeTaskStore{
+		listResult: ListTasksResult{
+			Tasks:      []Task{},
+			Total:      0,
+			Page:       1,
+			PerPage:    20,
+			TotalPages: 0,
+		},
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/tasks?q=%20%20demo%20%20", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.listCalls) != 1 {
+		t.Fatalf("expected one list call, got %d", len(repo.listCalls))
+	}
+	if repo.listCalls[0].Query != "demo" {
+		t.Fatalf("expected trimmed query demo, got %q", repo.listCalls[0].Query)
+	}
+}
+
 func TestCreateTaskEnqueueFailureCompensatesToFailed(t *testing.T) {
 	repo := &fakeTaskStore{
 		createdTask: Task{
