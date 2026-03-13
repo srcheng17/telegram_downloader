@@ -63,6 +63,19 @@ class WebRoutesApiLogsTests(unittest.TestCase):
         self.assertEqual(payload["total_pages"], 1)
         self.assertEqual(len(payload["logs"]), 5)
 
+    def test_index_page_uses_dist_bundles(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+
+        self.assertIn("/static/dist/app.bundle.js", body)
+        self.assertIn("/static/dist/index.bundle.js", body)
+        self.assertIn("/static/dist/logs.bundle.js", body)
+        self.assertIn("/static/dist/settings.bundle.js", body)
+        self.assertNotIn("/static/index.js", body)
+        self.assertNotIn("/static/logs.js", body)
+        self.assertNotIn("/static/app.js", body)
+
     def test_api_logs_marks_active_tasks(self):
         self._add_task(task_id="pending-1", start_time=200, status="PENDING")
         self._add_task(task_id="done-1", start_time=100, status="SUCCESS")

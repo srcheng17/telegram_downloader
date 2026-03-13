@@ -6,9 +6,10 @@
     <title>{{ .Title }}</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
-    <script src="/static/index.js" defer></script>
-    <script src="/static/logs.js" defer></script>
-    <script src="/static/app.js" defer></script>
+    <script type="module" src="/static/dist/app.bundle.js"></script>
+    <script type="module" src="/static/dist/index.bundle.js"></script>
+    <script type="module" src="/static/dist/logs.bundle.js"></script>
+    <script type="module" src="/static/dist/settings.bundle.js"></script>
 </head>
 <body>
     <header class="app-header">
