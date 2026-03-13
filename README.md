@@ -59,6 +59,7 @@ go-backend/
 ```
 
 根目录 Python 代码保留为历史兼容与迁移参考，不参与当前 Compose 主链路。
+其中 `telegram_downloader/web/` 现在定位为 compatibility bridge：仅保留 legacy 页面/路由与 Go 主线代理，不再作为默认运行时业务实现扩展。
 
 ## 测试分层（重构后）
 
