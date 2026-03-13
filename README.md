@@ -73,6 +73,13 @@ tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose
 
 本轮改动的分项说明见：`docs/PROJECT_UPDATES.md`（后端、前端、测试、CI 与容器运行命令汇总）。
 
+## 前端源码与静态资源约定
+
+- `frontend/src/` 是首页、日志页、设置页和应用壳层的源码入口；Vite 从这里构建运行时 bundle。
+- 页面模板只直接引用 `static/dist/*.bundle.js`；`static/index.js`、`static/logs.js`、`static/app.js` 不再是模板入口，保留为历史参考。
+- 当前 Docker/Python 运行链路不会在启动时自动执行 `vite build`，因此变更前端源码时，必须同时提交更新后的 `static/dist/*.bundle.js`。
+- Python `telegram_downloader/web/` 当前仅承担 legacy 页面与 Go `/v2/*` compatibility bridge 的角色，不再作为默认主线业务实现扩展点。
+
 ## 运行测试
 
 ### Go 单元与竞态测试
@@ -87,8 +94,15 @@ go test -race ./...
 
 ```bash
 npm ci
+npm run test:frontend
 npm run lint
 npm run build
+```
+
+### Python compatibility bridge 回归
+
+```bash
+PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
 ```
 
 ### Playwright 端到端测试（可复现）

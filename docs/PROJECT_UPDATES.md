@@ -4,6 +4,58 @@
 
 ---
 
+## 增补（2026-03-13）：全仓收敛优化（Go 主线 + 前端源码事实来源）
+
+### A. Go legacy-facing API 拆分与热路径收敛
+
+- `go-backend/internal/httpapi/api.go` 中的日志查询归一化、summary 派生逻辑已提取到独立 helper，并补齐单测：
+  - `internal/httpapi/logs_query.go`
+  - `internal/httpapi/summary_builder.go`
+- 下载请求解析与 decision 响应映射已收敛为单点 helper：
+  - `internal/httpapi/download_request.go`
+  - `internal/httpapi/download_response.go`
+- 目标是减少 `api.go` 巨型分支与重复分支，降低 legacy API 演进成本。
+
+### B. v2 任务查询性能优化
+
+- `internal/httpv2/tasks_handler.go` 现在通过共享 filter builder 生成 `COUNT(*)` 与列表查询条件，避免重复拼接 SQL。
+- 新增 PostgreSQL trigram 搜索索引 migration，覆盖 `tasks` / `v2_tasks` 的 `url` 与 `canonical_url` 模糊查询路径。
+- 结果是日志/任务列表的关键词筛选在大表下更容易走到可用索引，减少热路径全表扫描风险。
+
+### C. 前端源码与模板产物收敛
+
+- `frontend/src/` 不再只是薄包装：
+  - 新增 `frontend/src/home/index.js`
+  - 新增 `frontend/src/logs/index.js`
+  - 新增共享纯逻辑：`shared/polling.js`、`shared/page_modules.js`、`shared/archive_upload.js`
+  - 新增 Node 单测：`frontend/src/tests/*.test.mjs`
+- Vite bundle 现在是模板运行时唯一入口：
+  - Go 模板：`go-backend/internal/httpui/templates/base.html`
+  - Flask 模板：`templates/base.html`
+  - 统一加载 `static/dist/app.bundle.js`、`index.bundle.js`、`logs.bundle.js`、`settings.bundle.js`
+- `static/dist/*.bundle.js` 已随源码一起纳入版本控制，因为当前运行链路不会在容器启动时自动重建前端产物。
+
+### D. Python Web 侧定位调整
+
+- `telegram_downloader/web/go_proxy.py` 抽出了显式的 Go compatibility bridge。
+- `telegram_downloader/web/routes.py` 只保留 legacy 页面绑定与 Go `/v2/*` 代理调用，不再继续承载新的主线业务逻辑。
+
+### E. 本轮推荐验证命令
+
+- Go：
+  - `cd go-backend && go test ./...`
+  - `cd go-backend && go test -race ./...`
+- Frontend：
+  - `npm run test:frontend`
+  - `npm run lint`
+  - `npm run build`
+- Python compatibility：
+  - `PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q`
+- Residual template contract：
+  - `grep -R "/static/index.js\\|/static/logs.js\\|/static/app.js" -n go-backend/internal/httpui/templates templates || true`
+
+---
+
 ## 增补（2026-03-07）：Task 11/12 收口（CI + 可复现 E2E + 切流证据）
 
 ### A. CI 与 E2E 可复现落地
