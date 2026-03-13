@@ -334,24 +334,14 @@ func (a *LegacyAdapter) BuildSummary(ctx context.Context) (domain.Summary, error
 	failed := safeCount(counts[httpv2.TaskStatusFailed])
 	canceled := safeCount(counts[httpv2.TaskStatusCanceled])
 
-	summary := domain.Summary{
-		PendingTasks:         pending,
-		InProgressTasks:      inProgress,
-		CancelRequestedTasks: cancelRequested,
-		CanceledTasks:        canceled,
-		SuccessTasks:         success,
-		FailedTasks:          failed,
-		StartupRecovery:      domain.DefaultStartupRecovery(),
-	}
-	summary.TotalTasks = pending + inProgress + cancelRequested + success + failed + canceled
-	summary.ActiveTasks = pending + inProgress + cancelRequested
-	summary.FinishedTasks = success + failed + canceled
-	if summary.FinishedTasks > 0 {
-		rate := float64(summary.SuccessTasks) / float64(summary.FinishedTasks) * 100
-		rounded := math.Round(rate*10) / 10
-		summary.SuccessRate = &rounded
-	}
-	return summary, nil
+	return buildSummaryFromCounts(map[string]int{
+		domain.StatusPending:         pending,
+		domain.StatusInProgress:      inProgress,
+		domain.StatusCancelRequested: cancelRequested,
+		domain.StatusSuccess:         success,
+		domain.StatusFailed:          failed,
+		domain.StatusCanceled:        canceled,
+	}, domain.DefaultStartupRecovery()), nil
 }
 
 func (a *LegacyAdapter) enqueueCreatedTask(ctx context.Context, taskID string, enqueueToken string) error {

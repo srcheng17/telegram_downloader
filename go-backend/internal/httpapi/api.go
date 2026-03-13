@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -425,7 +424,13 @@ func (a *API) handleSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
-	query := normalizeLogQuery(r)
+	queryValues := r.URL.Query()
+	query := normalizeLogQuery(
+		queryValues.Get("page"),
+		queryValues.Get("per_page"),
+		queryValues.Get("status"),
+		queryValues.Get("q"),
+	)
 
 	if a.legacyAdapter != nil && a.legacyAdapter.SupportsLogs() {
 		payload, err := a.legacyAdapter.ReadLogs(r.Context(), query)
@@ -943,50 +948,7 @@ func (a *API) buildSummary(ctx context.Context) (domain.Summary, error) {
 		return domain.Summary{}, err
 	}
 
-	summary := domain.Summary{
-		PendingTasks:         safeCount(statusCounts[domain.StatusPending]),
-		InProgressTasks:      safeCount(statusCounts[domain.StatusInProgress]),
-		CancelRequestedTasks: safeCount(statusCounts[domain.StatusCancelRequested]),
-		CanceledTasks:        safeCount(statusCounts[domain.StatusCanceled]),
-		SuccessTasks:         safeCount(statusCounts[domain.StatusSuccess]),
-		FailedTasks:          safeCount(statusCounts[domain.StatusFailed]),
-		StartupRecovery:      domain.DefaultStartupRecovery(),
-	}
-
-	summary.TotalTasks = 0
-	for _, count := range statusCounts {
-		summary.TotalTasks += safeCount(count)
-	}
-
-	summary.ActiveTasks = summary.PendingTasks + summary.InProgressTasks + summary.CancelRequestedTasks
-	summary.FinishedTasks = summary.SuccessTasks + summary.FailedTasks + summary.CanceledTasks
-
-	if summary.FinishedTasks > 0 {
-		rate := float64(summary.SuccessTasks) / float64(summary.FinishedTasks) * 100
-		rounded := math.Round(rate*10) / 10
-		summary.SuccessRate = &rounded
-	}
-
-	return summary, nil
-}
-
-func normalizeLogQuery(r *http.Request) domain.LogQuery {
-	query := r.URL.Query()
-
-	page := clampInt(parseInt(query.Get("page"), 1), 1, math.MaxInt)
-	perPage := clampInt(parseInt(query.Get("per_page"), domain.DefaultLogsPerPage), 1, domain.MaxLogsPerPage)
-	status := normalizeStatusFilter(query.Get("status"))
-	keyword := strings.TrimSpace(query.Get("q"))
-	if len(keyword) > 120 {
-		keyword = keyword[:120]
-	}
-
-	return domain.LogQuery{
-		Page:    page,
-		PerPage: perPage,
-		Status:  status,
-		Keyword: keyword,
-	}
+	return buildSummaryFromCounts(statusCounts, domain.DefaultStartupRecovery()), nil
 }
 
 func normalizeStatusFilter(rawStatus string) string {
