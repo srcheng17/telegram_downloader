@@ -63,6 +63,24 @@ func TestPendingCountReflectsUnappliedMigrations(t *testing.T) {
 	}
 }
 
+func TestListMigrationVersionsIncludesTaskSearchIndexesMigration(t *testing.T) {
+	versions, err := listMigrationVersions()
+	if err != nil {
+		t.Fatalf("list migration versions: %v", err)
+	}
+
+	found := false
+	for _, version := range versions {
+		if version == "006_task_search_trgm_indexes.sql" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected task search migration to be listed, got %#v", versions)
+	}
+}
+
 type fakeMigrationExecutor struct {
 	appliedVersions map[string]struct{}
 	appliedBodies   []string

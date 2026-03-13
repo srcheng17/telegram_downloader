@@ -689,30 +689,19 @@ func (s *PostgresTaskStore) ListTasks(ctx context.Context, in ListTasksQuery) (L
 	status := strings.ToUpper(strings.TrimSpace(in.Status))
 	q := strings.TrimSpace(in.Query)
 	offset := (page - 1) * perPage
+	filterSQL, filterArgs := buildTaskListFilter(status, q)
+
+	countQuery := "SELECT COUNT(*) FROM v2_tasks"
+	if filterSQL != "" {
+		countQuery += " WHERE " + filterSQL
+	}
 
 	var total int
-	if err := s.db.QueryRow(
-		ctx,
-		`
-		SELECT COUNT(*)
-		FROM v2_tasks
-		WHERE
-			($1 = '' OR status = $1)
-			AND (
-				$2 = ''
-				OR canonical_url ILIKE '%' || $2 || '%'
-				OR url ILIKE '%' || $2 || '%'
-			)
-		`,
-		status,
-		q,
-	).Scan(&total); err != nil {
+	if err := s.db.QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
 		return ListTasksResult{}, err
 	}
 
-	rows, err := s.db.Query(
-		ctx,
-		`
+	rowsQuery := `
 		SELECT
 			id,
 			url,
@@ -723,21 +712,14 @@ func (s *PostgresTaskStore) ListTasks(ctx context.Context, in ListTasksQuery) (L
 			created_at,
 			updated_at
 		FROM v2_tasks
-		WHERE
-			($1 = '' OR status = $1)
-			AND (
-				$2 = ''
-				OR canonical_url ILIKE '%' || $2 || '%'
-				OR url ILIKE '%' || $2 || '%'
-			)
-		ORDER BY created_at DESC
-		LIMIT $3 OFFSET $4
-		`,
-		status,
-		q,
-		perPage,
-		offset,
-	)
+	`
+	if filterSQL != "" {
+		rowsQuery += " WHERE " + filterSQL
+	}
+	rowsQuery += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", len(filterArgs)+1, len(filterArgs)+2)
+
+	rowsArgs := append(append([]any{}, filterArgs...), perPage, offset)
+	rows, err := s.db.Query(ctx, rowsQuery, rowsArgs...)
 	if err != nil {
 		return ListTasksResult{}, err
 	}
