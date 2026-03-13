@@ -24,6 +24,15 @@ artifacts_dir="${E2E_ARTIFACTS_DIR:-tests/e2e/.artifacts}"
 rm -rf "${artifacts_dir}"
 mkdir -p "${artifacts_dir}"
 
+playwright_project="${PLAYWRIGHT_PROJECT:-}"
+if [[ -z "${playwright_project}" ]]; then
+  if ! playwright_project="$(node tests/e2e/browser_preflight.cjs)"; then
+    echo "Playwright browser preflight failed before Compose startup." >&2
+    exit 1
+  fi
+fi
+export PLAYWRIGHT_PROJECT="${playwright_project}"
+
 temp_docker_config=""
 temp_data_root="$(mktemp -d)"
 temp_compose_override="$(mktemp)"
@@ -116,7 +125,7 @@ for i in $(seq 1 120); do
 done
 
 playwright_exit=0
-npx playwright test --config tests/e2e/playwright.config.ts || playwright_exit=$?
+npx playwright test --config tests/e2e/playwright.config.ts --project "${PLAYWRIGHT_PROJECT}" || playwright_exit=$?
 
 if [[ "${playwright_exit}" -ne 0 || "${E2E_CAPTURE_LOGS_ALWAYS:-0}" == "1" ]]; then
   compose ps > "${artifacts_dir}/compose-ps.on-exit.txt" || true

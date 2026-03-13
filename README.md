@@ -114,6 +114,12 @@ npm run e2e:test
 ```
 
 > `npm run e2e:test` 会自动执行 `docker compose up -d --build`，等待 `/readyz`，执行 Playwright，然后自动 `docker compose down` 清理容器。
+>
+> 本地运行前会先做一次 Playwright 浏览器 preflight：
+> - macOS 本地默认优先尝试 `chrome`，再回退到 `chromium`
+> - 可用 `E2E_BROWSER_PROJECT=chrome` 或 `E2E_BROWSER_PROJECT=chromium` 强制指定项目
+> - 如需跳过 preflight，使用 `E2E_SKIP_BROWSER_PREFLIGHT=1 npm run e2e:test`
+> - 若 preflight 报 `Permission denied (1100)` / `SIGABRT`，通常表示当前 macOS 会话不允许该 shell 启动浏览器自动化
 
 ## 关键接口说明（新增）
 
