@@ -3,6 +3,7 @@ import {
     getStartupRecoveryDismissKey,
     parseStartupRecovery,
 } from '../shared/startup_recovery.js';
+import { localizeServerMessage } from '../shared/server_messages.js';
 
 export function createHomeModule(win, doc) {
     const state = win.__telegraphHomeState || {
@@ -18,24 +19,11 @@ export function createHomeModule(win, doc) {
     win.__telegraphHomeState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
 
-    const SERVER_MESSAGE_TRANSLATIONS = {
-        'Please provide a Telegraph URL.': '请先输入 Telegraph 链接。',
-        'Only telegra.ph or graph.org URLs are supported.': '仅支持 telegra.ph 或 graph.org 链接。',
-    };
-
-    function localizeServerMessage(message) {
-        const normalized = String(message || '').trim();
-        if (!normalized) {
-            return '';
-        }
-        return SERVER_MESSAGE_TRANSLATIONS[normalized] || normalized;
-    }
-
     function extractPayloadMessage(payload) {
         if (!payload || typeof payload !== 'object') {
             return '';
         }
-        return localizeServerMessage(payload.message);
+        return localizeServerMessage(payload.message, 'home');
     }
 
     function isStartupRecoveryDismissed(dismissKey) {

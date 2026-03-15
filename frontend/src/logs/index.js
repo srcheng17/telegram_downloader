@@ -4,6 +4,7 @@ import {
     getStartupRecoveryDismissKey,
     parseStartupRecovery,
 } from '../shared/startup_recovery.js';
+import { localizeServerMessage } from '../shared/server_messages.js';
 
 export function createLogsModule(win, doc) {
     const state = win.__telegraphLogsState || {
@@ -36,26 +37,6 @@ export function createLogsModule(win, doc) {
     };
     win.__telegraphLogsState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
-    const SERVER_MESSAGE_TRANSLATIONS = {
-        'Stored file is unavailable.': '缓存文件不可用。',
-        'Task not found.': '任务不存在。',
-        'Task is not completed yet.': '任务尚未完成。',
-        'Output file not found for this task.': '任务输出文件不存在。',
-        'Cancellation requested.': '已提交取消请求。',
-        'Cancellation already requested.': '已提交取消请求。',
-    };
-
-    function localizeServerMessage(message) {
-        const normalized = String(message || '').trim();
-        if (!normalized) {
-            return '';
-        }
-        if (normalized.startsWith('Task already finished with status ')) {
-            return '任务已结束，无法取消。';
-        }
-        return SERVER_MESSAGE_TRANSLATIONS[normalized] || normalized;
-    }
-
     function showFeedback(message, kind) {
         const feedback = doc.getElementById('logs-feedback');
         if (!feedback) {
@@ -342,7 +323,7 @@ export function createLogsModule(win, doc) {
             return '';
         }
         const message = typeof payload.message === 'string' ? payload.message.trim() : '';
-        return localizeServerMessage(message);
+        return localizeServerMessage(message, 'logs');
     }
 
     async function requestCancel(taskId, button) {
