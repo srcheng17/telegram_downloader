@@ -114,12 +114,14 @@ INTERNAL_ENQUEUE_TOKEN=evidence-token APP_PORT=5012 docker compose down --remove
 
 ---
 
-## 5) 结论
+## 5) 历史结论（截至 2026-03-07）
 
 - Go 单主线发布门禁通过（单元、竞态、Lint、E2E）。
 - Compose 启停与健康检查通过（含 `/readyz`）。
 - 保留现有前端页面（`/`、`/logs`、`/settings`）并通过端到端回归。
 - 可按 `docs/runbooks/v2-cutover-checklist.md` 执行正式切流。
+
+> 注：本节仅代表 `2026-03-07` 当日验证结论。当前发布门禁以 **6.4 Release Gate 决策** 为唯一权威状态；截至 `2026-03-16`，gate 为 `BLOCKED`。
 
 ---
 
@@ -202,6 +204,13 @@ ok  	github.com/ryancheng/telegram-downloader/go-backend/internal/worker	5.373s
 ### 6.3 Caveats / Blockers 与清理状态
 
 - Compose 冒烟未完成：当前会话无法解锁 macOS keychain，Docker 拉取基础镜像凭据失败（非代码问题）。
+- Docker keychain 阻塞错误摘录（traceability）：
+
+```bash
+$ INTERNAL_ENQUEUE_TOKEN=verification-token APP_PORT=5002 docker compose up -d --build
+...
+error getting credentials ... keychain cannot be accessed because the current session does not allow user interaction
+```
 - Compose 命令已改为显式要求 `INTERNAL_ENQUEUE_TOKEN` 和 `APP_PORT=5002`，并通过 `trap` 保证异常退出也会执行 `docker compose down --remove-orphans`。
 - Python 兼容测试在 worktree 里应使用 `../.venv/bin/pytest`；路径修正后测试通过。
 
