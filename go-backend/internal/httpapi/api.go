@@ -488,7 +488,7 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isAllowedTelegraphURL(rawURL) {
-		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Only telegra.ph or graph.org URLs are supported.", map[string]any{"field": "url"})
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Only telegra.ph or graph.org URLs are supported.", nil)
 		return
 	}
 

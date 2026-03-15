@@ -150,6 +150,7 @@ func TestContract_DownloadResponsesMatchFrozenSchema(t *testing.T) {
 			t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
 		}
 		payload := decodeJSONResponse(t, rec.Body.Bytes())
+		assertErrorPayloadKeys(t, payload)
 		errorText := assertPayloadNonEmptyString(t, payload, "error")
 		if errorText != "Please provide a Telegraph URL." {
 			t.Fatalf("expected legacy invalid-json message, got %#v", errorText)
@@ -179,6 +180,7 @@ func TestContractErrorPayloadContainsCode(t *testing.T) {
 	}
 
 	payload := decodeJSONResponse(t, rec.Body.Bytes())
+	assertErrorPayloadKeys(t, payload)
 	errorText := assertPayloadNonEmptyString(t, payload, "error")
 	if errorText != "Only telegra.ph or graph.org URLs are supported." {
 		t.Fatalf("expected legacy error text, got %q", errorText)
@@ -467,6 +469,7 @@ func TestContract_CancelAndDownloadStatusCodes(t *testing.T) {
 			t.Fatalf("expected %d for %s %s, got %d body=%s", expectedStatus, method, target, rec.Code, rec.Body.String())
 		}
 		payload := decodeJSONResponse(t, rec.Body.Bytes())
+		assertErrorPayloadKeys(t, payload)
 		if gotCode := assertPayloadNonEmptyString(t, payload, "code"); gotCode != expectedCode {
 			t.Fatalf("expected code %q for %s %s, got %q", expectedCode, method, target, gotCode)
 		}
@@ -609,4 +612,14 @@ func assertPayloadOptionalNumber(t *testing.T, payload map[string]any, key strin
 	if _, ok := value.(float64); !ok {
 		t.Fatalf("expected payload[%q] nil or number, got %#v", key, value)
 	}
+}
+
+func assertErrorPayloadKeys(t *testing.T, payload map[string]any) {
+	t.Helper()
+
+	if _, hasMessage := payload["message"]; hasMessage {
+		assertExactJSONKeys(t, payload, "error", "code", "message")
+		return
+	}
+	assertExactJSONKeys(t, payload, "error", "code")
 }
