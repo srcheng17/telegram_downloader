@@ -108,7 +108,7 @@ func TestRunnerApplies007V2TasksStatusUpdatedIndex(t *testing.T) {
 		t.Fatalf("expected version %q to be recorded as applied, got %#v", version007, executor.appliedVersions)
 	}
 
-	const expectedSQL = "CREATE INDEX IF NOT EXISTS idx_v2_tasks_status_updated_at ON v2_tasks (status, updated_at DESC);"
+	const expectedSQL = "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_v2_tasks_status_updated_at ON v2_tasks (status, updated_at DESC);"
 	applied := false
 	for _, body := range executor.appliedBodies {
 		normalizedBody := strings.Join(strings.Fields(body), " ")
