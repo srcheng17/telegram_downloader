@@ -50,7 +50,14 @@ class GoProxyTests(unittest.TestCase):
                 )
 
         self.assertEqual(status_code, 502)
-        self.assertEqual(response.get_json(), {"error": "upstream unavailable"})
+        self.assertEqual(
+            response.get_json(),
+            {
+                "error": "upstream unavailable",
+                "message": "upstream unavailable",
+                "code": "upstream_unavailable",
+            },
+        )
 
 
 class _RaisingRequestsModule:

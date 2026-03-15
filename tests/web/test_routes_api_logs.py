@@ -175,10 +175,18 @@ class WebRoutesApiLogsTests(unittest.TestCase):
     def test_cancel_task_endpoint_handles_missing_or_finished(self):
         response = self.client.post("/api/tasks/not-exist/cancel")
         self.assertEqual(response.status_code, 404)
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["message"], "Task not found.")
+        self.assertEqual(payload["code"], "task_not_found")
 
         self._add_task(task_id="done-task", start_time=100, status="SUCCESS")
         response = self.client.post("/api/tasks/done-task/cancel")
         self.assertEqual(response.status_code, 409)
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["message"], "Task already finished with status SUCCESS.")
+        self.assertEqual(payload["code"], "task_already_finished")
 
     def test_settings_post_updates_runtime_only(self):
         new_settings = {
@@ -266,6 +274,26 @@ class WebRoutesApiLogsTests(unittest.TestCase):
         self._add_task(task_id="running-task", start_time=100, status="IN_PROGRESS")
         response = self.client.get("/api/tasks/running-task/download")
         self.assertEqual(response.status_code, 409)
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["message"], "Task is not completed yet.")
+        self.assertEqual(payload["code"], "task_not_ready")
+
+    def test_download_task_file_endpoint_handles_missing_task_or_artifact(self):
+        response = self.client.get("/api/tasks/not-found/download")
+        self.assertEqual(response.status_code, 404)
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["message"], "Task not found.")
+        self.assertEqual(payload["code"], "task_not_found")
+
+        self._add_task(task_id="done-no-artifact", start_time=100, status="SUCCESS")
+        response = self.client.get("/api/tasks/done-no-artifact/download")
+        self.assertEqual(response.status_code, 404)
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["message"], "Output file not found for this task.")
+        self.assertEqual(payload["code"], "artifact_not_found")
 
     def test_download_supports_json_submission(self):
         url = "https://telegra.ph/Json-Route-01-01"
@@ -318,6 +346,10 @@ class WebRoutesApiLogsTests(unittest.TestCase):
         )
         response = self.client.get("/api/tasks/done-missing/download")
         self.assertEqual(response.status_code, 404)
+        payload = response.get_json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["message"], "Stored file is unavailable.")
+        self.assertEqual(payload["code"], "artifact_unavailable")
 
     def test_internal_enqueue_download_requires_token_when_configured(self):
         self._add_task(task_id="pending-internal-auth", start_time=100, status="PENDING")

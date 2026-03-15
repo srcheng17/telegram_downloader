@@ -148,6 +148,9 @@ def register_routes(app, runtime):
             return jsonify({"ok": False, "message": message}), status_code
         return redirect(url_for("index"))
 
+    def _compat_error_response(message, status_code, code):
+        return jsonify({"ok": False, "message": message, "code": code}), status_code
+
     def _redirect_after_download_submission():
         return redirect(url_for("index"), code=303)
 
@@ -361,11 +364,15 @@ def register_routes(app, runtime):
     def cancel_task(task_id):
         task = runtime.task_store.get_task(task_id)
         if task is None:
-            return jsonify({"ok": False, "message": "Task not found."}), 404
+            return _compat_error_response("Task not found.", 404, "task_not_found")
 
         status = task.get("status")
         if status in TERMINAL_TASK_STATUSES:
-            return jsonify({"ok": False, "message": f"Task already finished with status {status}."}), 409
+            return _compat_error_response(
+                f"Task already finished with status {status}.",
+                409,
+                "task_already_finished",
+            )
 
         if status == "CANCEL_REQUESTED":
             return jsonify({"ok": True, "message": "Cancellation already requested."}), 200
@@ -452,17 +459,21 @@ def register_routes(app, runtime):
     def download_task_file(task_id):
         task = runtime.task_store.get_task(task_id)
         if task is None:
-            return jsonify({"ok": False, "message": "Task not found."}), 404
+            return _compat_error_response("Task not found.", 404, "task_not_found")
 
         if task.get("status") != "SUCCESS":
-            return jsonify({"ok": False, "message": "Task is not completed yet."}), 409
+            return _compat_error_response("Task is not completed yet.", 409, "task_not_ready")
 
         zip_path = task.get("result_zip_path")
         if not zip_path:
-            return jsonify({"ok": False, "message": "Output file not found for this task."}), 404
+            return _compat_error_response(
+                "Output file not found for this task.",
+                404,
+                "artifact_not_found",
+            )
 
         if not _is_safe_download_path(zip_path) or not os.path.isfile(zip_path):
-            return jsonify({"ok": False, "message": "Stored file is unavailable."}), 404
+            return _compat_error_response("Stored file is unavailable.", 404, "artifact_unavailable")
 
         if request.method == "HEAD":
             return "", 200

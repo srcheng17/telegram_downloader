@@ -318,6 +318,7 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
         body: JSON.stringify({
           ok: false,
           message: 'Stored file is unavailable.',
+          code: 'artifact_unavailable',
         }),
       });
       return;
@@ -336,7 +337,15 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
       return;
     }
 
-    await route.fulfill({ status: 404 });
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: false,
+        message: 'Task not found.',
+        code: 'task_not_found',
+      }),
+    });
   });
 
   await page.goto('/logs');

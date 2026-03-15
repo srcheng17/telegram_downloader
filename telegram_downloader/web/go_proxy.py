@@ -78,6 +78,15 @@ def proxy_v2_request(app, path, requests_module=requests, env=None):
             path,
             exc,
         )
-        return jsonify({"error": "upstream unavailable"}), 502
+        return (
+            jsonify(
+                {
+                    "error": "upstream unavailable",
+                    "message": "upstream unavailable",
+                    "code": "upstream_unavailable",
+                }
+            ),
+            502,
+        )
 
     return build_proxy_response(app, request.method, upstream)
