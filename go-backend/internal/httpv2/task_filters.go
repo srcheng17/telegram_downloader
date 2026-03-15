@@ -1,33 +1,19 @@
 package httpv2
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 func buildTaskListFilter(status, q string) (string, []any) {
-	clauses := make([]string, 0, 2)
-	args := make([]any, 0, 2)
-
 	normalizedStatus := strings.ToUpper(strings.TrimSpace(status))
-	if normalizedStatus != "" {
-		args = append(args, normalizedStatus)
-		clauses = append(clauses, fmt.Sprintf("status = $%d", len(args)))
-	}
-
 	normalizedQuery := strings.TrimSpace(q)
-	if normalizedQuery != "" {
-		args = append(args, normalizedQuery)
-		placeholder := len(args)
-		clauses = append(
-			clauses,
-			fmt.Sprintf(
-				"(canonical_url ILIKE '%%' || $%d || '%%' OR url ILIKE '%%' || $%d || '%%')",
-				placeholder,
-				placeholder,
-			),
-		)
-	}
 
-	return strings.Join(clauses, " AND "), args
+	switch {
+	case normalizedStatus == "" && normalizedQuery == "":
+		return "", nil
+	case normalizedStatus != "" && normalizedQuery == "":
+		return "status = $1", []any{normalizedStatus}
+	case normalizedStatus == "" && normalizedQuery != "":
+		return "(canonical_url ILIKE '%' || $1 || '%' OR url ILIKE '%' || $1 || '%')", []any{normalizedQuery}
+	default:
+		return "status = $1 AND (canonical_url ILIKE '%' || $2 || '%' OR url ILIKE '%' || $2 || '%')", []any{normalizedStatus, normalizedQuery}
+	}
 }

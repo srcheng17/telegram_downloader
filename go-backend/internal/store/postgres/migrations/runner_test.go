@@ -81,6 +81,40 @@ func TestListMigrationVersionsIncludesTaskSearchIndexesMigration(t *testing.T) {
 	}
 }
 
+func TestRunnerApplies007V2TasksStatusUpdatedIndex(t *testing.T) {
+	versions, err := listMigrationVersions()
+	if err != nil {
+		t.Fatalf("list migration versions: %v", err)
+	}
+
+	hasMigration := false
+	for _, version := range versions {
+		if version == "007_v2_tasks_status_updated_index.sql" {
+			hasMigration = true
+			break
+		}
+	}
+	if !hasMigration {
+		t.Fatalf("expected 007 migration to be listed, got %#v", versions)
+	}
+
+	executor := newFakeMigrationExecutor()
+	if err := Run(context.Background(), executor); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+
+	applied := false
+	for _, body := range executor.appliedBodies {
+		if strings.Contains(body, "idx_v2_tasks_status_updated_at") {
+			applied = true
+			break
+		}
+	}
+	if !applied {
+		t.Fatalf("expected 007 index migration SQL to be applied, bodies=%#v", executor.appliedBodies)
+	}
+}
+
 type fakeMigrationExecutor struct {
 	appliedVersions map[string]struct{}
 	appliedBodies   []string

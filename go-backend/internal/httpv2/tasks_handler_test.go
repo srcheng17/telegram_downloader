@@ -759,6 +759,17 @@ func TestDashboardSummarySuccessRateZeroWhenFinishedZero(t *testing.T) {
 	}
 }
 
+func TestBuildTaskListFilterSupportsStatusOnlyFastPath(t *testing.T) {
+	clause, args := buildTaskListFilter("SUCCESS", "")
+
+	if strings.Contains(clause, "ILIKE") {
+		t.Fatalf("expected status-only clause without ilike, got %q", clause)
+	}
+	if len(args) != 1 || args[0] != "SUCCESS" {
+		t.Fatalf("unexpected args: %#v", args)
+	}
+}
+
 func assertErrorResponseShape(t *testing.T, body []byte) {
 	t.Helper()
 
