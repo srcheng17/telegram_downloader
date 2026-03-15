@@ -2,15 +2,22 @@
 
 ## 发布级验收（Task 6）
 
-在 worktree `/.worktrees/fullstack-refactor-stability` 的实跑命令如下（按顺序）：
+在 worktree `.worktrees/fullstack-refactor-stability` 实跑时，仓库根目录等价验收命令如下（按顺序）：
 
 ```bash
 cd go-backend && go test ./... && go test -race ./...
 cd .. && npm run test:frontend && npm run lint && npm run build
-PYTHONPATH=. ../.venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
+PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
 npm run e2e:test
-docker compose up -d --build && curl -fsS http://localhost:5002/healthz && curl -fsS http://localhost:5002/readyz && docker compose down
+docker compose up -d --build
+trap 'docker compose down' EXIT
+curl -fsS http://localhost:5002/healthz
+curl -fsS http://localhost:5002/readyz
+docker compose down
+trap - EXIT
 ```
+
+> 若在 sibling worktree 中直接执行且复用仓库根虚拟环境，可将 pytest 命令替换为 `PYTHONPATH=. ../.venv/bin/pytest ...`。
 
 实跑结果：
 
@@ -66,9 +73,18 @@ docker compose up -d --build && curl -fsS http://localhost:5002/healthz && curl 
 
 - `cd go-backend && go test ./... && go test -race ./...`：退出码 0。
 - `cd .. && npm run test:frontend && npm run lint && npm run build`：退出码 0，Vite build 成功。
-- `PYTHONPATH=. ../.venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q`：`27 passed`。
+- `PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q`：`27 passed`。
 - `npm run e2e:test`：`6 passed`。
-- `docker compose up -d --build && curl -fsS .../healthz && curl -fsS .../readyz && docker compose down`：预期 `healthz/readyz` 均返回 HTTP 200 + JSON。
+- Compose smoke（teardown-safe）：
+  ```bash
+  docker compose up -d --build
+  trap 'docker compose down' EXIT
+  curl -fsS http://localhost:5002/healthz
+  curl -fsS http://localhost:5002/readyz
+  docker compose down
+  trap - EXIT
+  ```
+  预期 `healthz/readyz` 均返回 HTTP 200 + JSON，且失败场景也会执行 `docker compose down`。
 
 ## Known Issues（Task 6 实跑）
 

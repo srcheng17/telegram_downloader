@@ -126,12 +126,17 @@ npm run e2e:test
 ```bash
 cd go-backend && go test ./... && go test -race ./...
 cd .. && npm run test:frontend && npm run lint && npm run build
-PYTHONPATH=. ../.venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
+PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
 npm run e2e:test
-docker compose up -d --build && curl -fsS http://localhost:5002/healthz && curl -fsS http://localhost:5002/readyz && docker compose down
+docker compose up -d --build
+trap 'docker compose down' EXIT
+curl -fsS http://localhost:5002/healthz
+curl -fsS http://localhost:5002/readyz
+docker compose down
+trap - EXIT
 ```
 
-> 上述命令为 `/.worktrees/fullstack-refactor-stability` 的实跑门禁；因此 Python 命令使用 `../.venv/bin/pytest`。
+> 上述命令以仓库根目录为基准；若在 sibling worktree（例如 `.worktrees/fullstack-refactor-stability`）复用仓库根虚拟环境，可改用 `../.venv/bin/pytest`。
 >
 > Compose smoke 依赖 `INTERNAL_ENQUEUE_TOKEN` 与可用 Docker 凭据会话（macOS 非交互 shell 可能遇到 keychain 访问失败）。
 >

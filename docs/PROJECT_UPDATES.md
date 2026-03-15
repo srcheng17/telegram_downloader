@@ -11,9 +11,14 @@
 ```bash
 cd go-backend && go test ./... && go test -race ./...
 cd .. && npm run test:frontend && npm run lint && npm run build
-PYTHONPATH=. ../.venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
+PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
 npm run e2e:test
-docker compose up -d --build && curl -fsS http://localhost:5002/healthz && curl -fsS http://localhost:5002/readyz && docker compose down
+docker compose up -d --build
+trap 'docker compose down' EXIT
+curl -fsS http://localhost:5002/healthz
+curl -fsS http://localhost:5002/readyz
+docker compose down
+trap - EXIT
 ```
 
 ### B. 验收结果（2026-03-16）
