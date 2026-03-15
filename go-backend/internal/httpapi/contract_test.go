@@ -150,12 +150,73 @@ func TestContract_DownloadResponsesMatchFrozenSchema(t *testing.T) {
 			t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
 		}
 		payload := decodeJSONResponse(t, rec.Body.Bytes())
-		assertExactJSONKeys(t, payload, "ok", "message")
-		assertPayloadBool(t, payload, "ok", false)
-		if payload["message"] != "Please provide a Telegraph URL." {
-			t.Fatalf("expected legacy invalid-json message, got %#v", payload["message"])
+		errorText := assertPayloadNonEmptyString(t, payload, "error")
+		if errorText != "Please provide a Telegraph URL." {
+			t.Fatalf("expected legacy invalid-json message, got %#v", errorText)
+		}
+		code := assertPayloadNonEmptyString(t, payload, "code")
+		if code != apiErrorCodeValidation {
+			t.Fatalf("expected code=%s, got %#v", apiErrorCodeValidation, code)
+		}
+		if message, ok := payload["message"]; ok && message != "Please provide a Telegraph URL." {
+			t.Fatalf("expected message to mirror error text, got %#v", message)
 		}
 	})
+}
+
+func TestContractErrorPayloadContainsCode(t *testing.T) {
+	repo := &fakeTaskReader{}
+	handler := NewRouter(repo)
+
+	req := httptest.NewRequest(http.MethodPost, "/download", strings.NewReader("url=https%3A%2F%2Fexample.com%2Finvalid"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	payload := decodeJSONResponse(t, rec.Body.Bytes())
+	errorText := assertPayloadNonEmptyString(t, payload, "error")
+	if errorText != "Only telegra.ph or graph.org URLs are supported." {
+		t.Fatalf("expected legacy error text, got %q", errorText)
+	}
+	code := assertPayloadNonEmptyString(t, payload, "code")
+	if code != apiErrorCodeValidation {
+		t.Fatalf("expected code=%s, got %q", apiErrorCodeValidation, code)
+	}
+}
+
+func TestContractInternalErrorsUseInternalErrorCode(t *testing.T) {
+	repo := &fakeTaskReader{
+		claimResponses: []domain.ClaimDownloadTaskResult{
+			{
+				Decision: domain.ClaimDecision("BROKEN_DECISION"),
+				Task:     domain.TaskLog{ID: "broken-task-id"},
+			},
+		},
+	}
+	handler := NewRouterWithOptions(repo, RouterOptions{DownloadSubmitter: &fakeDownloadSubmitter{}})
+
+	req := httptest.NewRequest(http.MethodPost, "/download", strings.NewReader("url=https%3A%2F%2Ftelegra.ph%2Fbroken"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	payload := decodeJSONResponse(t, rec.Body.Bytes())
+	if got := assertPayloadNonEmptyString(t, payload, "code"); got != apiErrorCodeInternal {
+		t.Fatalf("expected code=%s, got %q", apiErrorCodeInternal, got)
+	}
+	if got := assertPayloadNonEmptyString(t, payload, "error"); got != "internal server error" {
+		t.Fatalf("expected error text internal server error, got %q", got)
+	}
 }
 
 func TestContract_LogsResponseFrozenSchema(t *testing.T) {
@@ -394,7 +455,7 @@ func TestContract_CancelAndDownloadStatusCodes(t *testing.T) {
 	}
 	handler := NewRouter(repo)
 
-	assertStatusAndMessage := func(method, target string, expectedStatus int, expectedMessage string) {
+	assertStatusAndMessage := func(method, target string, expectedStatus int, expectedCode string, expectedMessage string) {
 		t.Helper()
 
 		req := httptest.NewRequest(method, target, nil)
@@ -406,10 +467,14 @@ func TestContract_CancelAndDownloadStatusCodes(t *testing.T) {
 			t.Fatalf("expected %d for %s %s, got %d body=%s", expectedStatus, method, target, rec.Code, rec.Body.String())
 		}
 		payload := decodeJSONResponse(t, rec.Body.Bytes())
-		assertExactJSONKeys(t, payload, "ok", "message")
-		assertPayloadBool(t, payload, "ok", false)
-		if payload["message"] != expectedMessage {
-			t.Fatalf("expected message %q for %s %s, got %#v", expectedMessage, method, target, payload["message"])
+		if gotCode := assertPayloadNonEmptyString(t, payload, "code"); gotCode != expectedCode {
+			t.Fatalf("expected code %q for %s %s, got %q", expectedCode, method, target, gotCode)
+		}
+		if gotError := assertPayloadNonEmptyString(t, payload, "error"); gotError != expectedMessage {
+			t.Fatalf("expected error %q for %s %s, got %#v", expectedMessage, method, target, gotError)
+		}
+		if message, ok := payload["message"]; ok && message != expectedMessage {
+			t.Fatalf("expected optional message %q for %s %s, got %#v", expectedMessage, method, target, message)
 		}
 	}
 
@@ -432,14 +497,14 @@ func TestContract_CancelAndDownloadStatusCodes(t *testing.T) {
 		}
 	}
 
-	assertStatusAndMessage(http.MethodPost, "/api/tasks/not-found/cancel", http.StatusNotFound, "Task not found.")
-	assertStatusAndMessage(http.MethodPost, "/api/tasks/cancel-finished/cancel", http.StatusConflict, "Task already finished with status SUCCESS.")
+	assertStatusAndMessage(http.MethodPost, "/api/tasks/not-found/cancel", http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.")
+	assertStatusAndMessage(http.MethodPost, "/api/tasks/cancel-finished/cancel", http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Task already finished with status SUCCESS.")
 	assertSuccessShape(http.MethodPost, "/api/tasks/cancel-pending/cancel", http.StatusAccepted, "Cancellation requested.")
 	assertSuccessShape(http.MethodPost, "/api/tasks/cancel-pending/cancel", http.StatusOK, "Cancellation already requested.")
 
-	assertStatusAndMessage(http.MethodGet, "/api/tasks/unknown/download", http.StatusNotFound, "Task not found.")
-	assertStatusAndMessage(http.MethodGet, "/api/tasks/download-running/download", http.StatusConflict, "Task is not completed yet.")
-	assertStatusAndMessage(http.MethodGet, "/api/tasks/download-no-output/download", http.StatusNotFound, "Output file not found for this task.")
+	assertStatusAndMessage(http.MethodGet, "/api/tasks/unknown/download", http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.")
+	assertStatusAndMessage(http.MethodGet, "/api/tasks/download-running/download", http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.")
+	assertStatusAndMessage(http.MethodGet, "/api/tasks/download-no-output/download", http.StatusNotFound, apiErrorCodeArtifactNotFound, "Output file not found for this task.")
 
 	headReq := httptest.NewRequest(http.MethodHead, "/api/tasks/download-ready/download", nil)
 	headRec := httptest.NewRecorder()

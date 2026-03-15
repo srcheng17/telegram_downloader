@@ -479,25 +479,16 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 	rawURL, forceDownload, metadata, err := extractDownloadRequest(r)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"ok":      false,
-			"message": "Please provide a Telegraph URL.",
-		})
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Please provide a Telegraph URL.", nil)
 		return
 	}
 
 	if rawURL == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"ok":      false,
-			"message": "Please provide a Telegraph URL.",
-		})
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Please provide a Telegraph URL.", nil)
 		return
 	}
 	if !isAllowedTelegraphURL(rawURL) {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"ok":      false,
-			"message": "Only telegra.ph or graph.org URLs are supported.",
-		})
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Only telegra.ph or graph.org URLs are supported.", map[string]any{"field": "url"})
 		return
 	}
 
@@ -522,10 +513,7 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if errors.Is(err, ErrLegacyAdapterEnqueueFailed) {
-				writeJSON(w, http.StatusBadGateway, map[string]any{
-					"ok":      false,
-					"message": "Failed to enqueue task.",
-				})
+				writeAPIErrorResponse(w, http.StatusBadGateway, apiErrorCodeEnqueueFailed, "Failed to enqueue task.", nil)
 				return
 			}
 			writeInternalError(w, err)
@@ -587,10 +575,7 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 			})
 			if err != nil {
 				_ = a.store.MarkTaskFailed(r.Context(), taskID, fmt.Sprintf("failed to enqueue task: %v", err))
-				writeJSON(w, http.StatusBadGateway, map[string]any{
-					"ok":      false,
-					"message": "Failed to enqueue task.",
-				})
+				writeAPIErrorResponse(w, http.StatusBadGateway, apiErrorCodeEnqueueFailed, "Failed to enqueue task.", nil)
 				return
 			}
 		case a.downloadSubmitter != nil:
@@ -603,18 +588,12 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 			})
 			if err != nil {
 				_ = a.store.MarkTaskFailed(r.Context(), taskID, fmt.Sprintf("failed to enqueue task: %v", err))
-				writeJSON(w, http.StatusBadGateway, map[string]any{
-					"ok":      false,
-					"message": "Failed to enqueue task.",
-				})
+				writeAPIErrorResponse(w, http.StatusBadGateway, apiErrorCodeEnqueueFailed, "Failed to enqueue task.", nil)
 				return
 			}
 		default:
 			_ = a.store.MarkTaskFailed(r.Context(), taskID, "enqueue bridge not configured")
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-				"ok":      false,
-				"message": "Task queue bridge is unavailable.",
-			})
+			writeAPIErrorResponse(w, http.StatusServiceUnavailable, apiErrorCodeServiceUnavailable, "Task queue bridge is unavailable.", nil)
 			return
 		}
 
@@ -642,10 +621,7 @@ func (a *API) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 
 		switch result.Decision {
 		case LegacyCancelDecisionNotFound:
-			writeJSON(w, http.StatusNotFound, map[string]any{
-				"ok":      false,
-				"message": "Task not found.",
-			})
+			writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
 			return
 		case LegacyCancelDecisionAlreadyRequested:
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -654,10 +630,7 @@ func (a *API) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		case LegacyCancelDecisionAlreadyFinished:
-			writeJSON(w, http.StatusConflict, map[string]any{
-				"ok":      false,
-				"message": "Task already finished with status " + strings.TrimSpace(result.Status) + ".",
-			})
+			writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Task already finished with status "+strings.TrimSpace(result.Status)+".", nil)
 			return
 		case LegacyCancelDecisionRequested:
 			writeJSON(w, http.StatusAccepted, map[string]any{
@@ -677,19 +650,13 @@ func (a *API) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if task == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{
-			"ok":      false,
-			"message": "Task not found.",
-		})
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
 		return
 	}
 
 	status := strings.TrimSpace(task.Status)
 	if isTerminalStatus(status) {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"ok":      false,
-			"message": "Task already finished with status " + status + ".",
-		})
+		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Task already finished with status "+status+".", nil)
 		return
 	}
 
@@ -718,25 +685,13 @@ func (a *API) handleTaskDownload(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			switch {
 			case errors.Is(err, ErrLegacyAdapterTaskNotFound):
-				writeJSON(w, http.StatusNotFound, map[string]any{
-					"ok":      false,
-					"message": "Task not found.",
-				})
+				writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
 			case errors.Is(err, ErrLegacyAdapterTaskNotReady):
-				writeJSON(w, http.StatusConflict, map[string]any{
-					"ok":      false,
-					"message": "Task is not completed yet.",
-				})
+				writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.", nil)
 			case errors.Is(err, ErrLegacyAdapterTaskOutputNotFound):
-				writeJSON(w, http.StatusNotFound, map[string]any{
-					"ok":      false,
-					"message": "Output file not found for this task.",
-				})
+				writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactNotFound, "Output file not found for this task.", nil)
 			case errors.Is(err, ErrLegacyAdapterArtifactUnavailable):
-				writeJSON(w, http.StatusNotFound, map[string]any{
-					"ok":      false,
-					"message": "Stored file is unavailable.",
-				})
+				writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
 			default:
 				writeInternalError(w, err)
 			}
@@ -762,34 +717,22 @@ func (a *API) handleTaskDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if task == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{
-			"ok":      false,
-			"message": "Task not found.",
-		})
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
 		return
 	}
 
 	if strings.TrimSpace(task.Status) != domain.StatusSuccess {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"ok":      false,
-			"message": "Task is not completed yet.",
-		})
+		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.", nil)
 		return
 	}
 
 	zipPath := stringValue(task.ResultZipPath)
 	if zipPath == "" {
-		writeJSON(w, http.StatusNotFound, map[string]any{
-			"ok":      false,
-			"message": "Output file not found for this task.",
-		})
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactNotFound, "Output file not found for this task.", nil)
 		return
 	}
 	if !isSafeExistingDownloadFile(zipPath) {
-		writeJSON(w, http.StatusNotFound, map[string]any{
-			"ok":      false,
-			"message": "Stored file is unavailable.",
-		})
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
 		return
 	}
 
@@ -800,20 +743,14 @@ func (a *API) handleTaskDownload(w http.ResponseWriter, r *http.Request) {
 
 	file, err := os.Open(zipPath)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{
-			"ok":      false,
-			"message": "Stored file is unavailable.",
-		})
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
 		return
 	}
 	defer file.Close()
 
 	info, err := file.Stat()
 	if err != nil || info.IsDir() {
-		writeJSON(w, http.StatusNotFound, map[string]any{
-			"ok":      false,
-			"message": "Stored file is unavailable.",
-		})
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
 		return
 	}
 
@@ -1054,19 +991,13 @@ func writeInternalError(w http.ResponseWriter, err error) {
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("request failed: %v", err)
 	}
-	writeJSON(w, http.StatusInternalServerError, map[string]any{
-		"ok":      false,
-		"message": "internal server error",
-	})
+	writeAPIErrorResponse(w, http.StatusInternalServerError, apiErrorCodeInternal, "internal server error", nil)
 }
 
 func (a *API) proxyToUpstream(w http.ResponseWriter, r *http.Request, upstreamPath string) {
 	baseURL := a.upstreamBaseURL
 	if baseURL == "" {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"ok":      false,
-			"message": "upstream service is not configured",
-		})
+		writeAPIErrorResponse(w, http.StatusServiceUnavailable, apiErrorCodeUpstreamUnavailable, "upstream service is not configured", nil)
 		return
 	}
 
@@ -1077,10 +1008,7 @@ func (a *API) proxyToUpstream(w http.ResponseWriter, r *http.Request, upstreamPa
 
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, r.Body)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"ok":      false,
-			"message": "failed to build upstream request",
-		})
+		writeAPIErrorResponse(w, http.StatusBadGateway, apiErrorCodeUpstreamBuildFailed, "failed to build upstream request", nil)
 		return
 	}
 	copyHeaders(upstreamReq.Header, r.Header)
@@ -1091,10 +1019,7 @@ func (a *API) proxyToUpstream(w http.ResponseWriter, r *http.Request, upstreamPa
 	}
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"ok":      false,
-			"message": "upstream request failed",
-		})
+		writeAPIErrorResponse(w, http.StatusBadGateway, apiErrorCodeUpstreamRequestFailed, "upstream request failed", nil)
 		return
 	}
 	defer resp.Body.Close()
