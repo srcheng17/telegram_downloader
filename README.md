@@ -121,6 +121,22 @@ npm run e2e:test
 > - 如需跳过 preflight，使用 `E2E_SKIP_BROWSER_PREFLIGHT=1 npm run e2e:test`
 > - 若 preflight 报 `Permission denied (1100)` / `SIGABRT`，通常表示当前 macOS 会话不允许该 shell 启动浏览器自动化
 
+### 发布级验收（2026-03-16）
+
+```bash
+cd go-backend && go test ./... && go test -race ./...
+cd .. && npm run test:frontend && npm run lint && npm run build
+PYTHONPATH=. ../.venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
+npm run e2e:test
+docker compose up -d --build && curl -fsS http://localhost:5002/healthz && curl -fsS http://localhost:5002/readyz && docker compose down
+```
+
+> 上述命令为 `/.worktrees/fullstack-refactor-stability` 的实跑门禁；因此 Python 命令使用 `../.venv/bin/pytest`。
+>
+> Compose smoke 依赖 `INTERNAL_ENQUEUE_TOKEN` 与可用 Docker 凭据会话（macOS 非交互 shell 可能遇到 keychain 访问失败）。
+>
+> 迁移步骤、回滚方案与已知问题见：`docs/runbooks/2026-03-16-fullstack-refactor-migration.md`。
+
 ## 关键接口说明（新增）
 
 *   `POST /download`

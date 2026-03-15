@@ -4,6 +4,33 @@
 
 ---
 
+## 增补（2026-03-16）：发布级验收与迁移文档收口
+
+### A. 发布级验收（Task 6）实跑命令
+
+```bash
+cd go-backend && go test ./... && go test -race ./...
+cd .. && npm run test:frontend && npm run lint && npm run build
+PYTHONPATH=. ../.venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
+npm run e2e:test
+docker compose up -d --build && curl -fsS http://localhost:5002/healthz && curl -fsS http://localhost:5002/readyz && docker compose down
+```
+
+### B. 验收结果（2026-03-16）
+
+- Go test / race：✅ PASS
+- Frontend test / lint / build：✅ PASS
+- Python compatibility：✅ PASS（`27 passed`）
+- Playwright E2E：✅ PASS（`6 passed`）
+- Compose smoke：⚠️ FAIL（环境前置问题：`INTERNAL_ENQUEUE_TOKEN` 缺失或 Docker keychain 非交互会话不可用）
+
+### C. 文档产出
+
+- 新增迁移与回滚 runbook：`docs/runbooks/2026-03-16-fullstack-refactor-migration.md`
+- README 新增“发布级验收（2026-03-16）”命令块，并与本节保持一致。
+
+---
+
 ## 增补（2026-03-13）：全仓收敛优化（Go 主线 + 前端源码事实来源）
 
 ### A. Go legacy-facing API 拆分与热路径收敛
