@@ -716,7 +716,7 @@ func (s *PostgresTaskStore) ListTasks(ctx context.Context, in ListTasksQuery) (L
 	if filterSQL != "" {
 		rowsQuery += " WHERE " + filterSQL
 	}
-	rowsQuery += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", len(filterArgs)+1, len(filterArgs)+2)
+	rowsQuery += fmt.Sprintf(" ORDER BY updated_at DESC LIMIT $%d OFFSET $%d", len(filterArgs)+1, len(filterArgs)+2)
 
 	rowsArgs := append(append([]any{}, filterArgs...), perPage, offset)
 	rows, err := s.db.Query(ctx, rowsQuery, rowsArgs...)

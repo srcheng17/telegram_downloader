@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/service"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
@@ -762,12 +764,108 @@ func TestDashboardSummarySuccessRateZeroWhenFinishedZero(t *testing.T) {
 func TestBuildTaskListFilterSupportsStatusOnlyFastPath(t *testing.T) {
 	clause, args := buildTaskListFilter("SUCCESS", "")
 
+	if !strings.Contains(clause, "status = $1") {
+		t.Fatalf("expected status-only clause to include status placeholder, got %q", clause)
+	}
 	if strings.Contains(clause, "ILIKE") {
 		t.Fatalf("expected status-only clause without ilike, got %q", clause)
 	}
 	if len(args) != 1 || args[0] != "SUCCESS" {
 		t.Fatalf("unexpected args: %#v", args)
 	}
+}
+
+func TestPostgresTaskStoreListTasksOrdersByUpdatedAtDesc(t *testing.T) {
+	db := &fakeListTasksDB{}
+	store := &PostgresTaskStore{db: db}
+
+	_, err := store.ListTasks(context.Background(), ListTasksQuery{
+		Page:    1,
+		PerPage: 20,
+		Status:  "SUCCESS",
+	})
+	if err != nil {
+		t.Fatalf("list tasks: %v", err)
+	}
+
+	if strings.TrimSpace(db.rowsQuery) == "" {
+		t.Fatalf("expected rows query to be executed")
+	}
+	if !strings.Contains(db.rowsQuery, "ORDER BY updated_at DESC") {
+		t.Fatalf("expected rows query ordered by updated_at desc, got %q", db.rowsQuery)
+	}
+	if strings.Contains(db.rowsQuery, "ORDER BY created_at DESC") {
+		t.Fatalf("expected rows query not to order by created_at desc, got %q", db.rowsQuery)
+	}
+}
+
+type fakeListTasksDB struct {
+	countQuery string
+	rowsQuery  string
+}
+
+func (f *fakeListTasksDB) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
+	f.countQuery = sql
+	return fakeListTasksCountRow{}
+}
+
+func (f *fakeListTasksDB) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, error) {
+	f.rowsQuery = sql
+	return &fakeListTasksRows{}, nil
+}
+
+func (f *fakeListTasksDB) Begin(context.Context) (pgx.Tx, error) {
+	panic("unexpected Begin call")
+}
+
+type fakeListTasksCountRow struct{}
+
+func (fakeListTasksCountRow) Scan(dest ...any) error {
+	if len(dest) != 1 {
+		return errors.New("expected one scan destination")
+	}
+	total, ok := dest[0].(*int)
+	if !ok {
+		return errors.New("expected *int destination")
+	}
+	*total = 0
+	return nil
+}
+
+type fakeListTasksRows struct{}
+
+func (f *fakeListTasksRows) Close() {}
+
+func (f *fakeListTasksRows) Err() error {
+	return nil
+}
+
+func (f *fakeListTasksRows) CommandTag() pgconn.CommandTag {
+	return pgconn.NewCommandTag("SELECT 0")
+}
+
+func (f *fakeListTasksRows) FieldDescriptions() []pgconn.FieldDescription {
+	return nil
+}
+
+func (f *fakeListTasksRows) Next() bool {
+	return false
+}
+
+func (f *fakeListTasksRows) Scan(dest ...any) error {
+	return errors.New("no rows")
+}
+
+func (f *fakeListTasksRows) Values() ([]any, error) {
+	return nil, errors.New("no rows")
+}
+
+func (f *fakeListTasksRows) RawValues() [][]byte {
+	return nil
+}
+
+func (f *fakeListTasksRows) Conn() *pgx.Conn {
+	return nil
 }
 
 func assertErrorResponseShape(t *testing.T, body []byte) {

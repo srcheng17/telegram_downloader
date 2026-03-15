@@ -82,6 +82,8 @@ func TestListMigrationVersionsIncludesTaskSearchIndexesMigration(t *testing.T) {
 }
 
 func TestRunnerApplies007V2TasksStatusUpdatedIndex(t *testing.T) {
+	const version007 = "007_v2_tasks_status_updated_index.sql"
+
 	versions, err := listMigrationVersions()
 	if err != nil {
 		t.Fatalf("list migration versions: %v", err)
@@ -89,7 +91,7 @@ func TestRunnerApplies007V2TasksStatusUpdatedIndex(t *testing.T) {
 
 	hasMigration := false
 	for _, version := range versions {
-		if version == "007_v2_tasks_status_updated_index.sql" {
+		if version == version007 {
 			hasMigration = true
 			break
 		}
@@ -102,10 +104,15 @@ func TestRunnerApplies007V2TasksStatusUpdatedIndex(t *testing.T) {
 	if err := Run(context.Background(), executor); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
+	if _, ok := executor.appliedVersions[version007]; !ok {
+		t.Fatalf("expected version %q to be recorded as applied, got %#v", version007, executor.appliedVersions)
+	}
 
+	const expectedSQL = "CREATE INDEX IF NOT EXISTS idx_v2_tasks_status_updated_at ON v2_tasks (status, updated_at DESC);"
 	applied := false
 	for _, body := range executor.appliedBodies {
-		if strings.Contains(body, "idx_v2_tasks_status_updated_at") {
+		normalizedBody := strings.Join(strings.Fields(body), " ")
+		if normalizedBody == expectedSQL {
 			applied = true
 			break
 		}
