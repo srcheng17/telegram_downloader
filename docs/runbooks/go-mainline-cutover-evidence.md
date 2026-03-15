@@ -120,3 +120,68 @@ INTERNAL_ENQUEUE_TOKEN=evidence-token APP_PORT=5012 docker compose down --remove
 - Compose 启停与健康检查通过（含 `/readyz`）。
 - 保留现有前端页面（`/`、`/logs`、`/settings`）并通过端到端回归。
 - 可按 `docs/runbooks/v2-cutover-checklist.md` 执行正式切流。
+
+---
+
+## 6) 2026-03-16 合并前全量验证增补（Task 7）
+
+执行时区：`Asia/Shanghai (CST)`  
+执行窗口：`2026-03-16 05:03-05:09 CST`  
+执行环境：`/Users/ryancheng/project/telegram-downloader-src/.worktrees/fullstack-refactor-stability`
+
+### 6.1 验证 Checklist
+
+| 项目 | 命令 | 结果 | 备注 |
+| --- | --- | --- | --- |
+| Go tests + race | `cd go-backend && go test ./... && go test -race ./...` | PASS | 全部包通过（含 `internal/httpapi`、`internal/httpv2`、migrations） |
+| Frontend test/lint/build | `npm run test:frontend && npm run lint && npm run build` | PASS | 前端单测 `13 passed`，lint/build 通过 |
+| Python compatibility | `PYTHONPATH=. .venv/bin/pytest ...` | FAIL (env path) | worktree 下无 `.venv/bin/pytest`；改用 `../.venv/bin/pytest` 后 PASS（`27 passed`） |
+| E2E | `npm run e2e:test` | PASS | Playwright `6 passed` |
+| Compose smoke | `docker compose up -d --build && ... && docker compose down` | FAIL (env blocker) | 缺少 `INTERNAL_ENQUEUE_TOKEN`；补充后仍受 Docker keychain 非交互锁定影响 |
+
+### 6.2 关键输出摘录
+
+```bash
+$ cd go-backend && go test ./... && go test -race ./...
+ok   github.com/ryancheng/telegram-downloader/go-backend/internal/httpapi  (cached)
+ok   github.com/ryancheng/telegram-downloader/go-backend/internal/httpv2    (cached)
+ok   github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres/migrations (cached)
+```
+
+```bash
+$ npm run test:frontend && npm run lint && npm run build
+... 
+pass 13
+fail 0
+...
+✓ built in 49ms
+```
+
+```bash
+$ PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
+zsh:1: no such file or directory: .venv/bin/pytest
+
+$ PYTHONPATH=. ../.venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
+27 passed, 1 warning in 0.30s
+```
+
+```bash
+$ npm run e2e:test
+...
+6 passed (5.1s)
+```
+
+```bash
+$ docker compose up -d --build && docker compose ps && curl -fsS http://localhost:5002/healthz && curl -fsS -w '\nHTTP %{http_code}\n' http://localhost:5002/readyz && docker compose down
+error while interpolating services.go-api.environment.INTERNAL_ENQUEUE_TOKEN: required variable INTERNAL_ENQUEUE_TOKEN is missing a value: required
+
+$ INTERNAL_ENQUEUE_TOKEN=verification-token docker compose up -d --build
+...
+error getting credentials ... keychain cannot be accessed because the current session does not allow user interaction
+```
+
+### 6.3 Caveats / Blockers 与清理状态
+
+- Compose 冒烟未完成：当前会话无法解锁 macOS keychain，Docker 拉取基础镜像凭据失败（非代码问题）。
+- 已执行清理检查：`INTERNAL_ENQUEUE_TOKEN=verification-token docker compose ps` 返回空列表；`INTERNAL_ENQUEUE_TOKEN=verification-token docker compose down` 已执行完成。
+- Python 兼容测试命令需按 worktree 路径修正为 `../.venv/bin/pytest`；测试本身通过但需在交付说明保留此路径 caveat。
