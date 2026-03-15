@@ -1,3 +1,9 @@
+import {
+    buildStartupRecoveryMessage,
+    getStartupRecoveryDismissKey,
+    parseStartupRecovery,
+} from '../shared/startup_recovery.js';
+
 export function createHomeModule(win, doc) {
     const state = win.__telegraphHomeState || {
         form: null,
@@ -32,54 +38,6 @@ export function createHomeModule(win, doc) {
         return localizeServerMessage(payload.message);
     }
 
-    function toNonNegativeInteger(value) {
-        const parsed = Number(value);
-        if (!Number.isFinite(parsed) || parsed < 0) {
-            return 0;
-        }
-        return Math.round(parsed);
-    }
-
-    function parseStartupRecovery(summary) {
-        if (!summary || typeof summary !== 'object') {
-            return null;
-        }
-        const raw = summary.startup_recovery;
-        if (!raw || typeof raw !== 'object') {
-            return null;
-        }
-
-        const recoveredFailed = toNonNegativeInteger(raw.recovered_failed ?? raw.failed_tasks);
-        const recoveredCanceled = toNonNegativeInteger(raw.recovered_canceled ?? raw.canceled_tasks);
-        const recoveredTotal = Math.max(
-            toNonNegativeInteger(raw.recovered_total ?? raw.total),
-            recoveredFailed + recoveredCanceled,
-        );
-        const happened = raw.happened === true || raw.happened === 'true' || recoveredTotal > 0;
-        if (!happened) {
-            return null;
-        }
-
-        const signature = String(
-            raw.event_id ||
-                raw.summary_id ||
-                raw.happened_at ||
-                raw.occurred_at ||
-                `${recoveredTotal}-${recoveredFailed}-${recoveredCanceled}`,
-        );
-
-        return {
-            recoveredFailed,
-            recoveredCanceled,
-            recoveredTotal,
-            signature,
-        };
-    }
-
-    function getStartupRecoveryDismissKey(signature) {
-        return `${STARTUP_RECOVERY_SESSION_KEY_PREFIX}${signature}`;
-    }
-
     function isStartupRecoveryDismissed(dismissKey) {
         if (!dismissKey) {
             return false;
@@ -111,13 +69,6 @@ export function createHomeModule(win, doc) {
         banner.setAttribute('aria-hidden', 'true');
     }
 
-    function buildStartupRecoveryMessage(recovery) {
-        if (recovery.recoveredTotal > 0) {
-            return `启动恢复已处理 ${recovery.recoveredTotal} 个任务（失败 ${recovery.recoveredFailed}，取消 ${recovery.recoveredCanceled}）。`;
-        }
-        return '启动恢复已完成，任务状态已更新。';
-    }
-
     function renderStartupRecoveryBanner(summary) {
         const banner = doc.getElementById('startup-recovery-banner-home');
         const messageNode = doc.getElementById('startup-recovery-text-home');
@@ -132,7 +83,7 @@ export function createHomeModule(win, doc) {
             return;
         }
 
-        const dismissKey = getStartupRecoveryDismissKey(recovery.signature);
+        const dismissKey = getStartupRecoveryDismissKey(STARTUP_RECOVERY_SESSION_KEY_PREFIX, recovery.signature);
         state.startupRecoveryDismissKey = dismissKey;
         if (isStartupRecoveryDismissed(dismissKey)) {
             hideStartupRecoveryBanner();
