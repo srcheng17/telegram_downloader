@@ -126,62 +126,86 @@ INTERNAL_ENQUEUE_TOKEN=evidence-token APP_PORT=5012 docker compose down --remove
 ## 6) 2026-03-16 合并前全量验证增补（Task 7）
 
 执行时区：`Asia/Shanghai (CST)`  
-执行窗口：`2026-03-16 05:03-05:09 CST`  
-执行环境：`/Users/ryancheng/project/telegram-downloader-src/.worktrees/fullstack-refactor-stability`
+执行窗口：`2026-03-16 05:36-05:39 CST`  
+执行环境：`/Users/ryancheng/project/telegram-downloader-src/.worktrees/fullstack-refactor-stability`  
+端口说明：此 worktree 默认 `APP_PORT=5002`；本节所有 Compose 冒烟与 HTTP 检查统一使用 `127.0.0.1:5002`（历史证据中的 `5012` 为早期手工避冲突端口，不作为当前默认值）。
 
-### 6.1 验证 Checklist
+### 6.1 验证 Checklist（可复制执行）
 
-| 项目 | 命令 | 结果 | 备注 |
-| --- | --- | --- | --- |
-| Go tests + race | `cd go-backend && go test ./... && go test -race ./...` | PASS | 全部包通过（含 `internal/httpapi`、`internal/httpv2`、migrations） |
-| Frontend test/lint/build | `npm run test:frontend && npm run lint && npm run build` | PASS | 前端单测 `13 passed`，lint/build 通过 |
-| Python compatibility | `PYTHONPATH=. .venv/bin/pytest ...` | FAIL (env path) | worktree 下无 `.venv/bin/pytest`；改用 `../.venv/bin/pytest` 后 PASS（`27 passed`） |
-| E2E | `npm run e2e:test` | PASS | Playwright `6 passed` |
-| Compose smoke | `docker compose up -d --build && ... && docker compose down` | FAIL (env blocker) | 缺少 `INTERNAL_ENQUEUE_TOKEN`；补充后仍受 Docker keychain 非交互锁定影响 |
-
-### 6.2 关键输出摘录
+1) Go tests（fresh run）
 
 ```bash
-$ cd go-backend && go test ./... && go test -race ./...
-ok   github.com/ryancheng/telegram-downloader/go-backend/internal/httpapi  (cached)
-ok   github.com/ryancheng/telegram-downloader/go-backend/internal/httpv2    (cached)
-ok   github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres/migrations (cached)
+cd go-backend && go test ./... -count=1
+```
+
+结果：PASS。
+
+2) Go race tests（fresh run）
+
+```bash
+cd go-backend && go test -race ./... -count=1
+```
+
+结果：PASS。
+
+3) Frontend test/lint/build
+
+```bash
+npm run test:frontend && npm run lint && npm run build
+```
+
+结果：PASS（前端单测 `13 passed`，lint/build 通过）。
+
+4) Python compatibility
+
+```bash
+PYTHONPATH=. ../.venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
+```
+
+结果：PASS（`27 passed, 1 warning`）。  
+说明：worktree 路径下需使用 `../.venv/bin/pytest`，不能使用 `.venv/bin/pytest`。
+
+5) E2E
+
+```bash
+npm run e2e:test
+```
+
+结果：PASS（Playwright `6 passed`）。
+
+6) Compose smoke（显式 env + teardown-safe）
+
+```bash
+INTERNAL_ENQUEUE_TOKEN=verification-token APP_PORT=5002 bash -lc 'set -euo pipefail; trap "docker compose down --remove-orphans" EXIT; docker compose up -d --build; docker compose ps; curl -fsS http://127.0.0.1:5002/healthz; curl -fsS -w "\nHTTP %{http_code}\n" http://127.0.0.1:5002/readyz'
+```
+
+结果：FAIL（Docker keychain 非交互锁定，镜像凭据拉取失败）。
+
+### 6.2 Go fresh-run 输出摘录（替换 cached 证据）
+
+```bash
+$ cd go-backend && go test ./... -count=1
+ok  	github.com/ryancheng/telegram-downloader/go-backend/cmd/server	0.552s
+ok  	github.com/ryancheng/telegram-downloader/go-backend/internal/httpapi	2.779s
+ok  	github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres/migrations	4.469s
+ok  	github.com/ryancheng/telegram-downloader/go-backend/internal/worker	5.291s
 ```
 
 ```bash
-$ npm run test:frontend && npm run lint && npm run build
-... 
-pass 13
-fail 0
-...
-✓ built in 49ms
-```
-
-```bash
-$ PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
-zsh:1: no such file or directory: .venv/bin/pytest
-
-$ PYTHONPATH=. ../.venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
-27 passed, 1 warning in 0.30s
-```
-
-```bash
-$ npm run e2e:test
-...
-6 passed (5.1s)
-```
-
-```bash
-$ docker compose up -d --build && docker compose ps && curl -fsS http://localhost:5002/healthz && curl -fsS -w '\nHTTP %{http_code}\n' http://localhost:5002/readyz && docker compose down
-error while interpolating services.go-api.environment.INTERNAL_ENQUEUE_TOKEN: required variable INTERNAL_ENQUEUE_TOKEN is missing a value: required
-
-$ INTERNAL_ENQUEUE_TOKEN=verification-token docker compose up -d --build
-...
-error getting credentials ... keychain cannot be accessed because the current session does not allow user interaction
+$ cd go-backend && go test -race ./... -count=1
+ok  	github.com/ryancheng/telegram-downloader/go-backend/cmd/server	1.453s
+ok  	github.com/ryancheng/telegram-downloader/go-backend/internal/httpapi	3.776s
+ok  	github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres/migrations	4.326s
+ok  	github.com/ryancheng/telegram-downloader/go-backend/internal/worker	5.373s
 ```
 
 ### 6.3 Caveats / Blockers 与清理状态
 
 - Compose 冒烟未完成：当前会话无法解锁 macOS keychain，Docker 拉取基础镜像凭据失败（非代码问题）。
-- 已执行清理检查：`INTERNAL_ENQUEUE_TOKEN=verification-token docker compose ps` 返回空列表；`INTERNAL_ENQUEUE_TOKEN=verification-token docker compose down` 已执行完成。
-- Python 兼容测试命令需按 worktree 路径修正为 `../.venv/bin/pytest`；测试本身通过但需在交付说明保留此路径 caveat。
+- Compose 命令已改为显式要求 `INTERNAL_ENQUEUE_TOKEN` 和 `APP_PORT=5002`，并通过 `trap` 保证异常退出也会执行 `docker compose down --remove-orphans`。
+- Python 兼容测试在 worktree 里应使用 `../.venv/bin/pytest`；路径修正后测试通过。
+
+### 6.4 Release Gate 决策
+
+- `Release gate: BLOCKED`
+- `Action`: 解锁 Docker keychain 后，重新执行 6.1 第 6 条 Compose smoke 全命令；当 `docker compose ps` 正常且 `/healthz`、`/readyz` 均返回 `HTTP 200` 时，更新本证据并将 gate 改为 `GO`。
