@@ -32,7 +32,6 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 ## 技术栈
 
 *   **后端主线**: Go（`go-api` + `go-worker`）
-*   **历史兼容代码**: Python/Flask（仅保留参考，不是默认发布链路）
 *   **前端**: HTML + CSS + htmx + 原生 JS（Vite 最小工程化）
 *   **部署**: Docker Compose, Nginx, Redis Streams, PostgreSQL
 *   **测试**: Go test, Playwright, GitHub Actions CI
@@ -59,8 +58,7 @@ web/templates/            # Go 页面模板
 web/static/               # 页面静态资源与构建产物
 ```
 
-根目录 Python 代码保留为历史兼容与迁移参考，不参与当前 Compose 主链路。
-其中 `telegram_downloader/web/` 现在定位为 compatibility bridge：仅保留 legacy 页面/路由与 Go 主线代理，不再作为默认运行时业务实现扩展。
+仓库当前只保留 Go 运行时主线；历史 Python compatibility runtime 已下线并转入 Git 历史参考。
 
 ## 测试分层（重构后）
 
@@ -77,9 +75,8 @@ tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose
 ## 前端源码与静态资源约定
 
 - `frontend/src/` 是首页、日志页、设置页和应用壳层的源码入口；Vite 从这里构建运行时 bundle。
-- 页面模板只直接引用 `static/dist/*.bundle.js`；`static/index.js`、`static/logs.js`、`static/app.js` 不再是模板入口，保留为历史参考。
-- 当前 Docker/Python 运行链路不会在启动时自动执行 `vite build`，因此变更前端源码时，必须同时提交更新后的 `static/dist/*.bundle.js`。
-- Python `telegram_downloader/web/` 当前仅承担 legacy 页面与 Go `/v2/*` compatibility bridge 的角色，不再作为默认主线业务实现扩展点。
+- 页面模板只直接引用 `web/static/dist/*.bundle.js`。
+- 当前 Docker/Compose 运行链路不会在启动时自动执行 `vite build`，因此变更前端源码时，必须同时提交更新后的 `web/static/dist/*.bundle.js`。
 
 ## 运行测试
 
@@ -97,12 +94,6 @@ npm ci
 npm run test:frontend
 npm run lint
 npm run build
-```
-
-### Python compatibility bridge 回归
-
-```bash
-PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
 ```
 
 ### Playwright 端到端测试（可复现）
@@ -134,7 +125,6 @@ bash scripts/verify_release_gates.sh
 ```bash
 go test ./... && go test -race ./...
 npm run test:frontend && npm run lint && npm run build
-PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
 npm run e2e:test
 ```
 

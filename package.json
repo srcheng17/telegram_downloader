@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "test:frontend": "node --test frontend/src/tests/*.test.mjs",
-    "lint": "eslint \"frontend/src/**/*.js\" \"static/*.js\" \"static/v2/**/*.js\"",
+    "lint": "eslint \"frontend/src/**/*.js\"",
     "build": "vite build",
     "e2e:install": "playwright install --with-deps chromium",
     "e2e:test": "bash tests/e2e/run-e2e.sh"

@@ -4,6 +4,25 @@
 
 ---
 
+## 增补（2026-03-18）：Python compatibility runtime 下线
+
+### A. 主线收口
+
+- 已删除 Python/Flask compatibility runtime：`app.py`、`telegram_downloader/`、`templates/`、`tests/web/*`。
+- 历史说明已转入 `docs/legacy/python-bridge-history.md`。
+
+### B. 前端历史入口清理
+
+- 已删除 `static/app.js`、`static/index.js`、`static/logs.js`、`static/v2/*`。
+- 当前模板只消费 `web/static/dist/*.bundle.js`。
+
+### C. 门禁收口
+
+- `scripts/verify_release_gates.sh`、CI、README 已移除 Python compatibility 回归步骤。
+- 当前发布级门禁聚焦 Go test / race、前端 test / lint / build、Playwright E2E 与 Compose smoke。
+
+---
+
 ## 增补（2026-03-18）：发布级门禁脚本与模板/bundle 合同锁定
 
 ### A. 新增统一发布级门禁脚本

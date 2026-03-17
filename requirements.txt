@@ -1,7 +1,0 @@
-Flask
-requests
-beautifulsoup4
-gunicorn
-celery
-redis
-psycopg[binary]
