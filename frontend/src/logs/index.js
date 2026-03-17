@@ -4,7 +4,6 @@ import { hideErrorModal as hideLogsErrorModal, showErrorModal as showLogsErrorMo
 import { applyStatusCatalog as normalizeStatusCatalog } from './status_filters.js';
 import { buildStatusBadgeModel } from './table_render.js';
 import {
-    buildStatusCatalog,
     fallbackStatusLabel as fallbackSharedStatusLabel,
     getStatusMeta as getSharedStatusMeta,
     normalizeStatusCode as normalizeSharedStatusCode,

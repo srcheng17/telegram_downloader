@@ -75,6 +75,7 @@ class WebRoutesApiLogsTests(unittest.TestCase):
         self.assertNotIn("/static/index.js", body)
         self.assertNotIn("/static/logs.js", body)
         self.assertNotIn("/static/app.js", body)
+        self.assertNotIn("/static/v2/", body)
 
     def test_api_logs_marks_active_tasks(self):
         self._add_task(task_id="pending-1", start_time=200, status="PENDING")

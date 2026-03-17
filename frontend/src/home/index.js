@@ -409,7 +409,7 @@ export function createHomeModule(win, doc) {
             fetchSummary();
             state.summaryTimer = win.setInterval(fetchSummary, 10000);
         } else {
-            hideStartupRecoveryBanner();
+            startupRecoveryBanner.hide();
         }
     }
 
@@ -435,7 +435,7 @@ export function createHomeModule(win, doc) {
             state.inflightSummaryController = null;
         }
 
-        hideStartupRecoveryBanner();
+        startupRecoveryBanner.hide();
         resetActionButtons();
         clearPendingDuplicate();
         clearTimers();

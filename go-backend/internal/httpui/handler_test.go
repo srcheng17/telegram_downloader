@@ -76,6 +76,7 @@ func TestBaseTemplateLoadsDistBundles(t *testing.T) {
 	assertNotContains(t, body, `/static/index.js`)
 	assertNotContains(t, body, `/static/logs.js`)
 	assertNotContains(t, body, `/static/app.js`)
+	assertNotContains(t, body, `/static/v2/`)
 }
 
 func TestSettingsPageUsesDynamicSettingsValues(t *testing.T) {
