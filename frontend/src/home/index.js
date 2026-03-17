@@ -1,9 +1,7 @@
 import { createTasksApi } from '../shared/api/tasks_api.js';
-import {
-    buildStartupRecoveryMessage,
-    getStartupRecoveryDismissKey,
-    parseStartupRecovery,
-} from '../shared/startup_recovery.js';
+import { buildDuplicateActions } from './form_submission.js';
+import { renderSummary, syncSummaryCollapseMode } from './summary_panel.js';
+import { createStartupRecoveryBannerController } from './startup_recovery_banner.js';
 import { localizeServerMessage } from '../shared/server_messages.js';
 
 export function createHomeModule(win, doc) {
@@ -20,6 +18,7 @@ export function createHomeModule(win, doc) {
     win.__telegraphHomeState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
     const api = createTasksApi((url, options) => win.fetch(url, options));
+    const startupRecoveryBanner = createStartupRecoveryBannerController(win, doc, STARTUP_RECOVERY_SESSION_KEY_PREFIX);
 
     function extractPayloadMessage(payload) {
         if (!payload || typeof payload !== 'object') {
@@ -28,99 +27,13 @@ export function createHomeModule(win, doc) {
         return localizeServerMessage(payload.message, 'home');
     }
 
-    function isStartupRecoveryDismissed(dismissKey) {
-        if (!dismissKey) {
-            return false;
-        }
-        try {
-            return win.sessionStorage.getItem(dismissKey) === '1';
-        } catch (error) {
-            return false;
-        }
-    }
-
-    function rememberStartupRecoveryDismissed(dismissKey) {
-        if (!dismissKey) {
-            return;
-        }
-        try {
-            win.sessionStorage.setItem(dismissKey, '1');
-        } catch (error) {
-            // Ignore session storage failures (private mode, browser policy, etc.).
-        }
-    }
-
-    function hideStartupRecoveryBanner() {
-        const banner = doc.getElementById('startup-recovery-banner-home');
-        if (!banner) {
-            return;
-        }
-        banner.classList.add('is-hidden');
-        banner.setAttribute('aria-hidden', 'true');
-    }
-
-    function renderStartupRecoveryBanner(summary) {
-        const banner = doc.getElementById('startup-recovery-banner-home');
-        const messageNode = doc.getElementById('startup-recovery-text-home');
-        if (!banner || !messageNode) {
-            return;
-        }
-
-        const recovery = parseStartupRecovery(summary);
-        if (!recovery) {
-            state.startupRecoveryDismissKey = '';
-            hideStartupRecoveryBanner();
-            return;
-        }
-
-        const dismissKey = getStartupRecoveryDismissKey(STARTUP_RECOVERY_SESSION_KEY_PREFIX, recovery.signature);
-        state.startupRecoveryDismissKey = dismissKey;
-        if (isStartupRecoveryDismissed(dismissKey)) {
-            hideStartupRecoveryBanner();
-            return;
-        }
-
-        messageNode.textContent = buildStartupRecoveryMessage(recovery);
-        banner.classList.remove('is-hidden');
-        banner.setAttribute('aria-hidden', 'false');
-    }
-
     function dismissStartupRecoveryBanner() {
-        rememberStartupRecoveryDismissed(state.startupRecoveryDismissKey);
-        hideStartupRecoveryBanner();
+        startupRecoveryBanner.dismiss();
     }
 
     function updateSummary(summary) {
-        renderStartupRecoveryBanner(summary);
-        if (!summary) {
-            return;
-        }
-        const totalNode = doc.getElementById('summary-total');
-        const activeNode = doc.getElementById('summary-active');
-        const successNode = doc.getElementById('summary-success');
-        const failedNode = doc.getElementById('summary-failed');
-
-        if (totalNode) {
-            totalNode.textContent = String(summary.total_tasks || 0);
-        }
-        if (activeNode) {
-            activeNode.textContent = String(summary.active_tasks || 0);
-        }
-        if (successNode) {
-            successNode.textContent = String(summary.success_tasks || 0);
-        }
-        if (failedNode) {
-            failedNode.textContent = String((summary.failed_tasks || 0) + (summary.canceled_tasks || 0));
-        }
-    }
-
-    function syncSummaryCollapseMode() {
-        const summaryCollapsible = doc.getElementById('summary-collapsible-home');
-        if (!summaryCollapsible || typeof win.matchMedia !== 'function') {
-            return;
-        }
-        const isMobile = win.matchMedia('(max-width: 768px)').matches;
-        summaryCollapsible.open = !isMobile;
+        startupRecoveryBanner.render(summary);
+        renderSummary(doc, summary);
     }
 
     function showFeedback(message, kind) {
@@ -303,12 +216,6 @@ export function createHomeModule(win, doc) {
         return api.postForm('/download', formPayload);
     }
 
-    function basePayloadForDuplicateRetry(formPayload) {
-        const payload = { ...formPayload };
-        delete payload.force;
-        return payload;
-    }
-
     function showExistingDownloadEntry() {
         const duplicateState = state.pendingDuplicate;
         if (!duplicateState) {
@@ -371,11 +278,7 @@ export function createHomeModule(win, doc) {
         }
 
         if (payload.duplicate && (payload.needs_confirmation || payload.download_url)) {
-            state.pendingDuplicate = {
-                basePayload: basePayloadForDuplicateRetry(basePayload),
-                downloadUrl: payload.download_url || '',
-                logsUrl: payload.logs_url || '/logs',
-            };
+            state.pendingDuplicate = buildDuplicateActions(payload, basePayload);
             showFeedback('该文件已有下载，是否生成新的CBZ文件？', 'info');
             showActionButtons({
                 onForce: submitForceDuplicate,
