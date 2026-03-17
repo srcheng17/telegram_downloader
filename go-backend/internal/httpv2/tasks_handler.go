@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	apptasks "github.com/ryancheng/telegram-downloader/go-backend/internal/app/tasks"
 	"log"
 	"math"
 	"net/http"
@@ -114,11 +115,12 @@ type LegacyClaimTaskResult struct {
 }
 
 type ListTasksResult struct {
-	Tasks      []Task `json:"tasks"`
-	Total      int    `json:"total"`
-	Page       int    `json:"page"`
-	PerPage    int    `json:"per_page"`
-	TotalPages int    `json:"total_pages"`
+	Tasks         []Task                         `json:"tasks"`
+	Total         int                            `json:"total"`
+	Page          int                            `json:"page"`
+	PerPage       int                            `json:"per_page"`
+	TotalPages    int                            `json:"total_pages"`
+	StatusCatalog map[string]apptasks.StatusMeta `json:"status_catalog,omitempty"`
 }
 
 type TaskStore interface {
@@ -147,15 +149,16 @@ type ArtifactService interface {
 }
 
 type DashboardSummary struct {
-	TotalTasks    int     `json:"total_tasks"`
-	QueuedTasks   int     `json:"queued_tasks"`
-	RunningTasks  int     `json:"running_tasks"`
-	SuccessTasks  int     `json:"success_tasks"`
-	FailedTasks   int     `json:"failed_tasks"`
-	CanceledTasks int     `json:"canceled_tasks"`
-	ActiveTasks   int     `json:"active_tasks"`
-	FinishedTasks int     `json:"finished_tasks"`
-	SuccessRate   float64 `json:"success_rate"`
+	TotalTasks    int                            `json:"total_tasks"`
+	QueuedTasks   int                            `json:"queued_tasks"`
+	RunningTasks  int                            `json:"running_tasks"`
+	SuccessTasks  int                            `json:"success_tasks"`
+	FailedTasks   int                            `json:"failed_tasks"`
+	CanceledTasks int                            `json:"canceled_tasks"`
+	ActiveTasks   int                            `json:"active_tasks"`
+	FinishedTasks int                            `json:"finished_tasks"`
+	SuccessRate   float64                        `json:"success_rate"`
+	StatusCatalog map[string]apptasks.StatusMeta `json:"status_catalog"`
 }
 
 type TasksHandler struct {
@@ -274,6 +277,7 @@ func (h *TasksHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	if result.Tasks == nil {
 		result.Tasks = make([]Task, 0)
 	}
+	result.StatusCatalog = apptasks.Catalog()
 
 	writeJSON(w, http.StatusOK, result)
 }
@@ -995,6 +999,7 @@ func buildDashboardSummary(statusCounts map[string]int) DashboardSummary {
 		ActiveTasks:   active,
 		FinishedTasks: finished,
 		SuccessRate:   successRate,
+		StatusCatalog: apptasks.Catalog(),
 	}
 }
 

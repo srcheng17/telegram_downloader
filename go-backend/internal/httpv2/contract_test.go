@@ -90,6 +90,7 @@ func TestContract_V2SummarySchema(t *testing.T) {
 		"active_tasks",
 		"finished_tasks",
 		"success_rate",
+		"status_catalog",
 	)
 	assertJSONValueType(t, payload, "total_tasks", "number")
 	assertJSONValueType(t, payload, "queued_tasks", "number")
@@ -100,6 +101,13 @@ func TestContract_V2SummarySchema(t *testing.T) {
 	assertJSONValueType(t, payload, "active_tasks", "number")
 	assertJSONValueType(t, payload, "finished_tasks", "number")
 	assertJSONValueType(t, payload, "success_rate", "number")
+	assertJSONValueType(t, payload, "status_catalog", "object")
+
+	statusCatalog := payload["status_catalog"].(map[string]any)
+	successMeta := statusCatalog["SUCCESS"].(map[string]any)
+	if successMeta["label"] != "已完成" {
+		t.Fatalf("expected success label 已完成, got %#v", successMeta["label"])
+	}
 
 	errorStore := &fakeTaskStore{summaryErr: errors.New("summary broken")}
 	errorHandler := NewRouter(errorStore, &fakeTaskQueue{})
@@ -110,6 +118,44 @@ func TestContract_V2SummarySchema(t *testing.T) {
 		t.Fatalf("expected summary store error to return 500, got %d body=%s", errRecorder.Code, errRecorder.Body.String())
 	}
 	assertErrorResponseShape(t, errRecorder.Body.Bytes())
+}
+
+func TestContract_V2ListTasksSchema(t *testing.T) {
+	store := &fakeTaskStore{
+		listResult: ListTasksResult{
+			Tasks: []Task{{
+				ID:           "task-contract-list",
+				URL:          "https://telegra.ph/contract-list",
+				CanonicalURL: stringPtr("https://telegra.ph/contract-list"),
+				Status:       "RUNNING",
+			}},
+			Total:      1,
+			Page:       1,
+			PerPage:    20,
+			TotalPages: 1,
+		},
+	}
+	handler := NewRouter(store, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/tasks?page=1&per_page=20", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	assertExactJSONKeys(t, payload, "tasks", "total", "page", "per_page", "total_pages", "status_catalog")
+	assertJSONValueType(t, payload, "status_catalog", "object")
+	statusCatalog := payload["status_catalog"].(map[string]any)
+	runningMeta := statusCatalog["RUNNING"].(map[string]any)
+	if runningMeta["label"] != "进行中" {
+		t.Fatalf("expected running label 进行中, got %#v", runningMeta["label"])
+	}
 }
 
 func TestContract_V2TaskDetailSchema(t *testing.T) {

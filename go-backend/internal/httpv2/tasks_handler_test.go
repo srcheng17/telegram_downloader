@@ -658,7 +658,19 @@ func TestDashboardSummaryReturnsSnapshot(t *testing.T) {
 		"active_tasks",
 		"finished_tasks",
 		"success_rate",
+		"status_catalog",
 	)
+	statusCatalog, ok := payload["status_catalog"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected status_catalog object, got %#v", payload["status_catalog"])
+	}
+	successMeta, ok := statusCatalog["SUCCESS"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected success status meta, got %#v", statusCatalog["SUCCESS"])
+	}
+	if successMeta["label"] != "已完成" {
+		t.Fatalf("expected success label 已完成, got %#v", successMeta["label"])
+	}
 
 	var summary DashboardSummary
 	if err := json.Unmarshal(recorder.Body.Bytes(), &summary); err != nil {
