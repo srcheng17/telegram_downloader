@@ -29,28 +29,28 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Go tests
-        working-directory: go-backend
-        run: go test ./...
-
-      - name: Go race tests
-        working-directory: go-backend
-        run: go test -race ./...
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
 
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+
       - name: Install Playwright browser
         run: npm run e2e:install
 
-      - name: Lint + E2E
+      - name: Release gate verification
         env:
           INTERNAL_ENQUEUE_TOKEN: ci-internal-token
-          APP_PORT: "5002"
+          APP_PORT: '5002'
           E2E_ARTIFACTS_DIR: tests/e2e/.artifacts
-        run: |
-          npm run lint
-          npm run e2e:test
+        run: bash scripts/verify_release_gates.sh
 
       - name: Upload E2E artifacts
         if: always()

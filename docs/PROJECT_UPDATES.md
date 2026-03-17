@@ -4,6 +4,44 @@
 
 ---
 
+## 增补（2026-03-18）：发布级门禁脚本与模板/bundle 合同锁定
+
+### A. 新增统一发布级门禁脚本
+
+- 新增 `scripts/verify_release_gates.sh`，按固定顺序执行：
+  - `cd go-backend && go test ./... && go test -race ./...`
+  - `npm run test:frontend`
+  - `npm run lint`
+  - `npm run build`
+  - `PYTHONPATH=. <venv>/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q`
+  - `npm run e2e:test`
+- 脚本对 worktree 做了虚拟环境回退兼容：优先 `.venv/bin/pytest`，否则使用 `../.venv/bin/pytest`。
+
+### B. CI 对齐发布级门禁
+
+- `.github/workflows/ci.yml` 现已补齐：
+  - Python 环境准备
+  - `.venv` 创建与 `requirements.txt` 安装
+  - `bash scripts/verify_release_gates.sh` 统一驱动门禁
+- 保留 Playwright 产物归档：`playwright-report`、`test-results`、`tests/e2e/.artifacts`。
+
+### C. 模板 / bundle 合同进一步收紧
+
+- 新增前端合同测试：`frontend/src/tests/bundle_contract.test.mjs`。
+- `package.json` 的 `lint` 脚本不再扫描 `static/dist/` 生成产物，仅覆盖：
+  - `frontend/src/**/*.js`
+  - `static/*.js`
+  - `static/v2/**/*.js`
+- Go / Flask 模板合同测试进一步防止页面重新引用 `/static/v2/*` 入口。
+
+### D. 回归过程中发现并修复的问题
+
+- 在执行 `scripts/verify_release_gates.sh` 时，Playwright 暴露首页 summary 未加载问题。
+- 根因是首页模块拆分后，`syncSummaryCollapseMode` 被提取为显式参数函数，但 `frontend/src/home/index.js` 仍按闭包函数方式调用。
+- 已补充单测 `createHomeModule mount loads summary without throwing` 并修复调用方，随后门禁脚本恢复通过。
+
+---
+
 ## 增补（2026-03-16）：发布级验收与迁移文档收口
 
 ### A. 发布级验收（Task 6）实跑命令

@@ -403,8 +403,8 @@ export function createHomeModule(win, doc) {
         }
 
         if (summaryPanel) {
-            syncSummaryCollapseMode();
-            state.summaryResizeHandler = syncSummaryCollapseMode;
+            syncSummaryCollapseMode(win, doc);
+            state.summaryResizeHandler = () => syncSummaryCollapseMode(win, doc);
             win.addEventListener('resize', state.summaryResizeHandler);
             fetchSummary();
             state.summaryTimer = win.setInterval(fetchSummary, 10000);

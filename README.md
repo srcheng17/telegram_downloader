@@ -121,26 +121,37 @@ npm run e2e:test
 > - 如需跳过 preflight，使用 `E2E_SKIP_BROWSER_PREFLIGHT=1 npm run e2e:test`
 > - 若 preflight 报 `Permission denied (1100)` / `SIGABRT`，通常表示当前 macOS 会话不允许该 shell 启动浏览器自动化
 
-### 发布级验收（2026-03-16）
+### 发布级验收（2026-03-18）
+
+推荐直接运行统一门禁脚本：
+
+```bash
+bash scripts/verify_release_gates.sh
+```
+
+脚本会顺序执行：
 
 ```bash
 cd go-backend && go test ./... && go test -race ./...
 cd .. && npm run test:frontend && npm run lint && npm run build
 PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
 npm run e2e:test
-docker compose up -d --build
-trap 'docker compose down' EXIT
+```
+
+若在 sibling worktree 复用仓库根虚拟环境，脚本会自动回退到 `../.venv/bin/pytest`。
+
+如需额外做显式 Compose smoke：
+
+```bash
+INTERNAL_ENQUEUE_TOKEN=test-token docker compose up -d --build
 curl -fsS http://localhost:5002/healthz
 curl -fsS http://localhost:5002/readyz
 docker compose down
-trap - EXIT
 ```
 
-> 上述命令以仓库根目录为基准；若在 sibling worktree（例如 `.worktrees/fullstack-refactor-stability`）复用仓库根虚拟环境，可改用 `../.venv/bin/pytest`。
->
 > Compose smoke 依赖 `INTERNAL_ENQUEUE_TOKEN` 与可用 Docker 凭据会话（macOS 非交互 shell 可能遇到 keychain 访问失败）。
 >
-> 迁移步骤、回滚方案与已知问题见：`docs/runbooks/2026-03-16-fullstack-refactor-migration.md`。
+> 迁移步骤、回滚方案与已知问题见：`docs/runbooks/2026-03-16-fullstack-refactor-migration.md` 与 `docs/runbooks/2026-03-18-project-refactor-rollout.md`。
 
 ## 关键接口说明（新增）
 
