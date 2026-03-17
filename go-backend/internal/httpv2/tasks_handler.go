@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	apptasks "github.com/ryancheng/telegram-downloader/go-backend/internal/app/tasks"
-	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -25,10 +23,9 @@ import (
 )
 
 const (
-	defaultListPage     = 1
-	defaultListPerPage  = 20
-	maxListPerPage      = 100
-	compensationTimeout = 3 * time.Second
+	defaultListPage    = 1
+	defaultListPerPage = 20
+	maxListPerPage     = 100
 
 	TaskStatusQueued          = string(domainv2.StatusQueued)
 	TaskStatusRunning         = string(domainv2.StatusRunning)
@@ -148,6 +145,79 @@ type ArtifactService interface {
 	OpenArtifact(resultZipPath string) (*service.OpenedV2Artifact, error)
 }
 
+type taskServiceStoreAdapter struct {
+	store TaskStore
+}
+
+func (a taskServiceStoreAdapter) CreateTask(ctx context.Context, in apptasks.CreateTaskInput) (apptasks.TaskRecord, error) {
+	if a.store == nil {
+		return apptasks.TaskRecord{}, errors.New("task store is not configured")
+	}
+	task, err := a.store.CreateTask(ctx, CreateTaskInput{
+		ID:           strings.TrimSpace(in.ID),
+		URL:          strings.TrimSpace(in.URL),
+		CanonicalURL: in.CanonicalURL,
+		EnqueueToken: strings.TrimSpace(in.EnqueueToken),
+	})
+	if err != nil {
+		return apptasks.TaskRecord{}, err
+	}
+	return apptasks.TaskRecord{
+		ID:           task.ID,
+		URL:          task.URL,
+		CanonicalURL: task.CanonicalURL,
+		Status:       task.Status,
+	}, nil
+}
+
+func (a taskServiceStoreAdapter) GetTask(ctx context.Context, taskID string) (*apptasks.TaskRecord, error) {
+	if a.store == nil {
+		return nil, errors.New("task store is not configured")
+	}
+	task, err := a.store.GetTask(ctx, strings.TrimSpace(taskID))
+	if err != nil || task == nil {
+		return nil, err
+	}
+	return &apptasks.TaskRecord{
+		ID:           task.ID,
+		URL:          task.URL,
+		CanonicalURL: task.CanonicalURL,
+		Status:       task.Status,
+	}, nil
+}
+
+func (a taskServiceStoreAdapter) CancelTask(ctx context.Context, taskID, fromStatus string) error {
+	if a.store == nil {
+		return errors.New("task store is not configured")
+	}
+	err := a.store.CancelTask(ctx, strings.TrimSpace(taskID), NormalizeTaskStatus(fromStatus))
+	if errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
+		return apptasks.ErrTaskStatusConflict
+	}
+	return err
+}
+
+func (a taskServiceStoreAdapter) MarkTaskFailed(ctx context.Context, taskID, message string) error {
+	if a.store == nil {
+		return errors.New("task store is not configured")
+	}
+	return a.store.MarkTaskFailed(ctx, strings.TrimSpace(taskID), message)
+}
+
+type taskServiceQueueAdapter struct {
+	queue TaskQueue
+}
+
+func (a taskServiceQueueAdapter) Enqueue(ctx context.Context, message apptasks.QueueMessage) error {
+	if a.queue == nil {
+		return errors.New("task queue is not configured")
+	}
+	return a.queue.Enqueue(ctx, TaskQueueMessage{
+		TaskID: strings.TrimSpace(message.TaskID),
+		Token:  strings.TrimSpace(message.Token),
+	})
+}
+
 type DashboardSummary struct {
 	TotalTasks    int                            `json:"total_tasks"`
 	QueuedTasks   int                            `json:"queued_tasks"`
@@ -165,6 +235,7 @@ type TasksHandler struct {
 	store     TaskStore
 	queue     TaskQueue
 	artifacts ArtifactService
+	tasks     *apptasks.Service
 }
 
 func NewTasksHandler(store TaskStore, queue TaskQueue) *TasksHandler {
@@ -180,11 +251,12 @@ func NewTasksHandlerWithArtifactService(store TaskStore, queue TaskQueue, artifa
 		store:     store,
 		queue:     queue,
 		artifacts: artifacts,
+		tasks:     apptasks.NewService(taskServiceStoreAdapter{store: store}, taskServiceQueueAdapter{queue: queue}),
 	}
 }
 
 func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
-	if h.store == nil || h.queue == nil {
+	if h.tasks == nil {
 		writeError(w, http.StatusInternalServerError, "task handler dependencies are not configured")
 		return
 	}
@@ -204,45 +276,18 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canonicalURL := normalizeCanonicalURL(url, request.CanonicalURL)
-	createInput := CreateTaskInput{
-		ID:           uuid.NewString(),
+	result, err := h.tasks.Create(r.Context(), apptasks.CreateInput{
 		URL:          url,
-		CanonicalURL: stringPtr(canonicalURL),
-		EnqueueToken: uuid.NewString(),
-	}
-
-	task, err := h.store.CreateTask(r.Context(), createInput)
+		CanonicalURL: request.CanonicalURL,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "create task")
 		return
 	}
-	if strings.TrimSpace(task.Status) == "" {
-		task.Status = TaskStatusQueued
-	}
-
-	if err := h.queue.Enqueue(r.Context(), TaskQueueMessage{TaskID: task.ID, Token: createInput.EnqueueToken}); err != nil {
-		compensationCtx, compensationCancel := context.WithTimeout(context.Background(), compensationTimeout)
-		compensationErr := h.store.MarkTaskFailed(
-			compensationCtx,
-			task.ID,
-			fmt.Sprintf("enqueue failed: %v", err),
-		)
-		compensationCancel()
-		if compensationErr != nil {
-			log.Printf(
-				"httpv2 task compensation failed task_id=%s err=%v",
-				strings.TrimSpace(task.ID),
-				compensationErr,
-			)
-		}
-		writeError(w, http.StatusInternalServerError, "enqueue task")
-		return
-	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"task_id": task.ID,
-		"status":  task.Status,
+		"task_id": result.TaskID,
+		"status":  result.Status,
 	})
 }
 
@@ -330,7 +375,7 @@ func (h *TasksHandler) GetDashboardSummary(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
-	if h.store == nil {
+	if h.tasks == nil {
 		writeError(w, http.StatusInternalServerError, "task store is not configured")
 		return
 	}
@@ -341,66 +386,24 @@ func (h *TasksHandler) CancelTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.store.GetTask(r.Context(), taskID)
+	result, err := h.tasks.Cancel(r.Context(), taskID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "get task")
-		return
-	}
-	if task == nil {
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-
-	status := NormalizeTaskStatus(task.Status)
-	switch status {
-	case TaskStatusCanceled:
-		writeJSON(w, http.StatusAccepted, map[string]any{
-			"task_id": taskID,
-			"status":  TaskStatusCanceled,
-		})
-		return
-	case TaskStatusCancelRequested:
-		writeJSON(w, http.StatusAccepted, map[string]any{
-			"task_id": taskID,
-			"status":  TaskStatusCancelRequested,
-		})
-		return
-	case TaskStatusSuccess, TaskStatusFailed:
-		writeError(w, http.StatusConflict, "task already completed")
-		return
-	}
-
-	if err := h.store.CancelTask(r.Context(), taskID, status); err != nil {
-		if errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
-			latestTask, latestErr := h.store.GetTask(r.Context(), taskID)
-			if latestErr != nil {
-				writeError(w, http.StatusInternalServerError, "get task")
-				return
-			}
-			if latestTask != nil && NormalizeTaskStatus(latestTask.Status) == TaskStatusCanceled {
-				writeJSON(w, http.StatusAccepted, map[string]any{
-					"task_id": taskID,
-					"status":  TaskStatusCanceled,
-				})
-				return
-			}
-			if latestTask != nil && NormalizeTaskStatus(latestTask.Status) == TaskStatusCancelRequested {
-				writeJSON(w, http.StatusAccepted, map[string]any{
-					"task_id": taskID,
-					"status":  TaskStatusCancelRequested,
-				})
-				return
-			}
+		switch {
+		case errors.Is(err, apptasks.ErrTaskNotFound):
+			writeError(w, http.StatusNotFound, "task not found")
+		case errors.Is(err, apptasks.ErrTaskNotCancelable):
+			writeError(w, http.StatusConflict, "task already completed")
+		case errors.Is(err, apptasks.ErrTaskStatusConflict):
 			writeError(w, http.StatusConflict, "task status conflict")
-			return
+		default:
+			writeError(w, http.StatusInternalServerError, "cancel task")
 		}
-		writeError(w, http.StatusInternalServerError, "cancel task")
 		return
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"task_id": taskID,
-		"status":  TaskStatusCancelRequested,
+		"task_id": result.TaskID,
+		"status":  result.Status,
 	})
 }
 

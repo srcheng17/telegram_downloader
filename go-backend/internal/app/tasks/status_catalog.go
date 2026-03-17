@@ -2,32 +2,32 @@ package tasks
 
 func Catalog() map[string]StatusMeta {
 	return map[string]StatusMeta{
-		"QUEUED": {
-			Code:      "QUEUED",
+		StatusQueued: {
+			Code:      StatusQueued,
 			Label:     "排队中",
 			CanCancel: true,
 		},
-		"RUNNING": {
-			Code:      "RUNNING",
+		StatusRunning: {
+			Code:      StatusRunning,
 			Label:     "进行中",
 			CanCancel: true,
 		},
-		"CANCEL_REQUESTED": {
-			Code:      "CANCEL_REQUESTED",
+		StatusCancelRequested: {
+			Code:      StatusCancelRequested,
 			Label:     "取消中",
 			CanCancel: true,
 		},
-		"SUCCESS": {
-			Code:        "SUCCESS",
+		StatusSuccess: {
+			Code:        StatusSuccess,
 			Label:       "已完成",
 			CanDownload: true,
 		},
-		"FAILED": {
-			Code:  "FAILED",
+		StatusFailed: {
+			Code:  StatusFailed,
 			Label: "失败",
 		},
-		"CANCELED": {
-			Code:  "CANCELED",
+		StatusCanceled: {
+			Code:  StatusCanceled,
 			Label: "已取消",
 		},
 	}
