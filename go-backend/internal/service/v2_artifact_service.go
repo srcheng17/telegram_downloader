@@ -3,9 +3,9 @@ package service
 import (
 	"errors"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
+
+	apptasks "github.com/ryancheng/telegram-downloader/go-backend/internal/app/tasks"
 )
 
 var (
@@ -19,6 +19,7 @@ type V2ArtifactServiceConfig struct {
 
 type V2ArtifactService struct {
 	downloadRoot string
+	access       *apptasks.ArtifactAccess
 }
 
 type OpenedV2Artifact struct {
@@ -36,131 +37,35 @@ func (a *OpenedV2Artifact) Close() error {
 }
 
 func NewV2ArtifactService(cfg V2ArtifactServiceConfig) *V2ArtifactService {
-	return &V2ArtifactService{downloadRoot: strings.TrimSpace(cfg.DownloadRoot)}
+	return &V2ArtifactService{
+		downloadRoot: cfg.DownloadRoot,
+		access: apptasks.NewArtifactAccess(apptasks.ArtifactAccessConfig{
+			DownloadRoot: cfg.DownloadRoot,
+		}),
+	}
 }
 
 func (s *V2ArtifactService) OpenArtifact(resultZipPath string) (*OpenedV2Artifact, error) {
-	rootAbs, safePath, err := s.resolveSafePath(resultZipPath)
-	if err != nil {
-		return nil, err
+	if s == nil || s.access == nil {
+		return nil, ErrV2ArtifactPathInvalid
 	}
 
-	containmentRoot := rootAbs
-	resolvedRoot, rootErr := filepath.EvalSymlinks(rootAbs)
-	if rootErr == nil {
-		containmentRoot = resolvedRoot
-	}
-
-	resolvedPath, err := filepath.EvalSymlinks(safePath)
+	artifact, err := s.access.Open(resultZipPath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		switch {
+		case errors.Is(err, apptasks.ErrArtifactUnavailable):
 			return nil, ErrV2ArtifactNotFound
+		case errors.Is(err, apptasks.ErrArtifactPathInvalid):
+			return nil, ErrV2ArtifactPathInvalid
+		default:
+			return nil, err
 		}
-		return nil, ErrV2ArtifactPathInvalid
-	}
-	if !isWithinRootPath(containmentRoot, resolvedPath) {
-		return nil, ErrV2ArtifactPathInvalid
-	}
-
-	file, err := os.Open(resolvedPath)
-	if err != nil {
-		return nil, ErrV2ArtifactNotFound
-	}
-
-	info, err := file.Stat()
-	if err != nil || info.IsDir() {
-		_ = file.Close()
-		return nil, ErrV2ArtifactNotFound
 	}
 
 	return &OpenedV2Artifact{
-		File:        file,
-		FileName:    filepath.Base(resolvedPath),
-		ContentType: artifactContentType(resolvedPath),
-		ModTime:     info.ModTime(),
+		File:        artifact.File,
+		FileName:    artifact.FileName,
+		ContentType: artifact.ContentType,
+		ModTime:     artifact.ModTime,
 	}, nil
-}
-
-func (s *V2ArtifactService) resolveSafePath(resultZipPath string) (string, string, error) {
-	raw := strings.TrimSpace(resultZipPath)
-	if raw == "" {
-		return "", "", ErrV2ArtifactNotFound
-	}
-	if strings.ContainsRune(raw, rune(0)) {
-		return "", "", ErrV2ArtifactPathInvalid
-	}
-
-	rootAbs, err := filepath.Abs(s.downloadRootOrDefault())
-	if err != nil {
-		return "", "", ErrV2ArtifactPathInvalid
-	}
-
-	candidatePath := filepath.Clean(raw)
-	if candidatePath == "." {
-		return "", "", ErrV2ArtifactPathInvalid
-	}
-	if !filepath.IsAbs(candidatePath) {
-		candidatePath = normalizeRootPrefixedRelativePath(rootAbs, candidatePath)
-		candidatePath = filepath.Join(rootAbs, candidatePath)
-	}
-
-	candidateAbs, err := filepath.Abs(candidatePath)
-	if err != nil {
-		return "", "", ErrV2ArtifactPathInvalid
-	}
-
-	if !isWithinRootPath(rootAbs, candidateAbs) {
-		return "", "", ErrV2ArtifactPathInvalid
-	}
-
-	return rootAbs, candidateAbs, nil
-}
-
-func normalizeRootPrefixedRelativePath(rootAbs, candidatePath string) string {
-	rootName := strings.TrimSpace(filepath.Base(rootAbs))
-	if rootName == "" || rootName == "." || rootName == string(filepath.Separator) {
-		return candidatePath
-	}
-
-	if candidatePath == rootName {
-		return ""
-	}
-
-	prefix := rootName + string(filepath.Separator)
-	if strings.HasPrefix(candidatePath, prefix) {
-		return strings.TrimPrefix(candidatePath, prefix)
-	}
-	return candidatePath
-}
-
-func isWithinRootPath(rootPath, candidatePath string) bool {
-	rel, err := filepath.Rel(rootPath, candidatePath)
-	if err != nil {
-		return false
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return false
-	}
-	return true
-}
-
-func (s *V2ArtifactService) downloadRootOrDefault() string {
-	if strings.TrimSpace(s.downloadRoot) != "" {
-		return strings.TrimSpace(s.downloadRoot)
-	}
-	if configured := strings.TrimSpace(os.Getenv("DOWNLOAD_PATH")); configured != "" {
-		return configured
-	}
-	return "downloaded_images"
-}
-
-func artifactContentType(filePath string) string {
-	switch strings.ToLower(filepath.Ext(filePath)) {
-	case ".cbz":
-		return "application/vnd.comicbook+zip"
-	case ".zip":
-		return "application/zip"
-	default:
-		return "application/octet-stream"
-	}
 }

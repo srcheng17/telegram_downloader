@@ -9,12 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-
-	domainv2 "github.com/ryancheng/telegram-downloader/go-backend/internal/domain/v2"
+	apptasks "github.com/ryancheng/telegram-downloader/go-backend/internal/app/tasks"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/downloader"
 	queuev2 "github.com/ryancheng/telegram-downloader/go-backend/internal/queue/v2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
@@ -77,6 +75,7 @@ type V2Executor struct {
 	heartbeatInterval    time.Duration
 	runRetryCount        int
 	runRetryBackoff      time.Duration
+	runner               *apptasks.RunTaskUseCase
 }
 
 func NewV2Executor(cfg V2ExecutorConfig) *V2Executor {
@@ -90,6 +89,14 @@ func NewV2Executor(cfg V2ExecutorConfig) *V2Executor {
 		heartbeatInterval:    cfg.HeartbeatInterval,
 		runRetryCount:        cfg.RunRetryCount,
 		runRetryBackoff:      cfg.RunRetryBackoff,
+		runner: apptasks.NewRunTaskUseCase(apptasks.RunTaskConfig{
+			Repo:                 runTaskRepoAdapter{repo: cfg.Repo},
+			Worker:               cfg.Worker,
+			Download:             runTaskDownloaderAdapter{downloader: cfg.Download},
+			TransientRetry:       cfg.TransientRetry,
+			TerminalWriteTimeout: cfg.TerminalWriteTimeout,
+			HeartbeatInterval:    cfg.HeartbeatInterval,
+		}),
 	}
 }
 
@@ -101,154 +108,14 @@ func (e *V2Executor) executeAttempt(ctx context.Context, taskID, token string, a
 	if e == nil {
 		return errors.New("v2 executor is required")
 	}
-	if e.repo == nil {
-		return errors.New("v2 executor requires repository")
+	if e.runner == nil {
+		return errors.New("v2 executor requires run task use case")
 	}
-	if e.downloader == nil {
-		return errors.New("v2 executor requires downloader")
+	err := e.runner.ExecuteAttempt(ctx, taskID, token, allowRunning)
+	if apptasks.IsRunningPhaseExecutionError(err) {
+		return markRunningPhaseExecutionError(err)
 	}
-	if strings.TrimSpace(e.worker) == "" {
-		return errors.New("v2 executor requires worker name")
-	}
-
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return errors.New("v2 executor requires task id")
-	}
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return errors.New("v2 executor requires enqueue token")
-	}
-
-	snapshot, err := e.repo.GetTaskForExecution(ctx, taskID)
-	if err != nil {
-		return fmt.Errorf("load v2 task snapshot: %w", err)
-	}
-	if strings.TrimSpace(snapshot.EnqueueToken) != token {
-		return nil
-	}
-
-	status := strings.TrimSpace(snapshot.Status)
-	switch status {
-	case string(domainv2.StatusQueued):
-		// continue below
-	case string(domainv2.StatusRunning):
-		if !allowRunning {
-			return nil
-		}
-	case string(domainv2.StatusCancelRequested):
-		return e.transitionCancelRequested(taskID, map[string]any{"stage": "preflight"})
-	default:
-		// Terminal/non-recoverable statuses are ignored by this executor path.
-		return nil
-	}
-	if strings.TrimSpace(snapshot.URL) == "" {
-		return fmt.Errorf("task %s has empty url", taskID)
-	}
-
-	enteredRunning := false
-	switch status {
-	case string(domainv2.StatusQueued):
-		if err := e.transition(
-			ctx,
-			taskID,
-			string(domainv2.StatusQueued),
-			string(domainv2.StatusRunning),
-			postgres.StatusPatch{ClaimedBy: stringPtrV2Executor(e.worker)},
-			map[string]any{"worker": e.worker},
-		); err != nil {
-			if errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
-				cancelRequested, checkErr := e.isTaskCancelRequested(ctx, taskID)
-				if checkErr != nil {
-					return checkErr
-				}
-				if cancelRequested {
-					return e.transitionCancelRequested(taskID, map[string]any{"stage": "queued_to_running_mismatch"})
-				}
-				return nil
-			}
-			return err
-		}
-		enteredRunning = true
-	case string(domainv2.StatusRunning):
-		// Recoverable state: previous run may have succeeded claim but failed to persist terminal status.
-		enteredRunning = true
-	}
-
-	attempts := e.maxAttempts()
-	for attempt := 1; attempt <= attempts; attempt++ {
-		downloadCtx := ctx
-		cancelRequested := &atomic.Bool{}
-		stopMonitor := func() {}
-		if enteredRunning {
-			downloadCtx, stopMonitor = e.startExecutionMonitor(ctx, taskID, cancelRequested)
-		}
-
-		artifactPath, runErr := e.downloader.DownloadAndPackage(
-			downloadCtx,
-			taskID,
-			snapshot.URL,
-			taskMetadataFromV2Snapshot(snapshot),
-		)
-		stopMonitor()
-
-		if cancelRequested.Load() {
-			return e.transitionCancelRequested(taskID, map[string]any{"attempt": attempt, "stage": "monitor"})
-		}
-
-		if runErr != nil && errors.Is(runErr, context.Canceled) && ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		if runErr == nil {
-			terminalErr := e.transitionTerminal(
-				taskID,
-				string(domainv2.StatusRunning),
-				string(domainv2.StatusSuccess),
-				postgres.StatusPatch{ResultZipPath: stringPtrV2Executor(artifactPath)},
-				map[string]any{
-					"artifact_path": strings.TrimSpace(artifactPath),
-					"attempt":       attempt,
-				},
-			)
-			if terminalErr != nil && enteredRunning {
-				return markRunningPhaseExecutionError(terminalErr)
-			}
-			return terminalErr
-		}
-
-		if errors.Is(runErr, context.Canceled) {
-			cancelRequestedByStatus, checkErr := e.isTaskCancelRequested(ctx, taskID)
-			if checkErr != nil {
-				return checkErr
-			}
-			if cancelRequestedByStatus {
-				return e.transitionCancelRequested(taskID, map[string]any{"attempt": attempt, "stage": "error"})
-			}
-		}
-
-		if shouldRetryTaskExecutionError(runErr) && attempt < attempts {
-			continue
-		}
-
-		errMessage := strings.TrimSpace(runErr.Error())
-		if errMessage == "" {
-			errMessage = "worker execution failed"
-		}
-		terminalErr := e.transitionTerminal(
-			taskID,
-			string(domainv2.StatusRunning),
-			string(domainv2.StatusFailed),
-			postgres.StatusPatch{Error: &errMessage},
-			map[string]any{"attempt": attempt},
-		)
-		if terminalErr != nil && enteredRunning {
-			return markRunningPhaseExecutionError(terminalErr)
-		}
-		return terminalErr
-	}
-
-	return nil
+	return err
 }
 
 func (e *V2Executor) Run(ctx context.Context, consumer V2QueueConsumer) error {
@@ -433,109 +300,7 @@ func markRunningPhaseExecutionError(err error) error {
 
 func isRunningPhaseExecutionError(err error) bool {
 	var typed *runningPhaseExecutionError
-	return errors.As(err, &typed)
-}
-
-func shouldRetryTaskExecutionError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if downloader.IsLimitExceededError(err) || downloader.IsContextCancellationError(err) {
-		return false
-	}
-	return downloader.ShouldRetryTaskError(err)
-}
-
-func (e *V2Executor) startExecutionMonitor(
-	parent context.Context,
-	taskID string,
-	cancelRequested *atomic.Bool,
-) (context.Context, func()) {
-	monitorCtx, monitorCancel := context.WithCancel(parent)
-	done := make(chan struct{})
-	heartbeatInterval := e.heartbeatDuration()
-
-	observe := func(ctx context.Context) bool {
-		heartbeatCtx, heartbeatCancel := context.WithTimeout(context.Background(), heartbeatInterval)
-		heartbeatErr := e.repo.UpdateTaskHeartbeat(heartbeatCtx, taskID, e.worker)
-		heartbeatCancel()
-		if heartbeatErr != nil {
-			log.Printf("v2 worker heartbeat update failed task_id=%s worker=%s: %v", strings.TrimSpace(taskID), strings.TrimSpace(e.worker), heartbeatErr)
-		}
-
-		requested, err := e.isTaskCancelRequested(ctx, taskID)
-		if err != nil {
-			log.Printf("v2 worker cancel check failed task_id=%s: %v", strings.TrimSpace(taskID), err)
-			return false
-		}
-		if requested {
-			cancelRequested.Store(true)
-			monitorCancel()
-			return true
-		}
-		return false
-	}
-
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(heartbeatInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-monitorCtx.Done():
-				return
-			case <-ticker.C:
-				if observe(monitorCtx) {
-					return
-				}
-			}
-		}
-	}()
-
-	return monitorCtx, func() {
-		monitorCancel()
-		<-done
-	}
-}
-
-func (e *V2Executor) isTaskCancelRequested(ctx context.Context, taskID string) (bool, error) {
-	snapshot, err := e.repo.GetTaskForExecution(ctx, taskID)
-	if err != nil {
-		return false, fmt.Errorf("load v2 task snapshot: %w", err)
-	}
-	return strings.TrimSpace(snapshot.Status) == string(domainv2.StatusCancelRequested), nil
-}
-
-func (e *V2Executor) transitionCancelRequested(taskID string, payload map[string]any) error {
-	reason := "Cancellation requested by user."
-	err := e.transitionTerminal(
-		taskID,
-		string(domainv2.StatusCancelRequested),
-		string(domainv2.StatusCanceled),
-		postgres.StatusPatch{Error: &reason},
-		payload,
-	)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, postgres.ErrV2TaskStatusMismatchOrNotFound) {
-		return err
-	}
-
-	statusCtx, statusCancel := context.WithTimeout(context.Background(), e.terminalWriteDuration())
-	defer statusCancel()
-	snapshot, statusErr := e.repo.GetTaskForExecution(statusCtx, taskID)
-	if statusErr != nil {
-		return fmt.Errorf("load v2 task snapshot: %w", statusErr)
-	}
-	switch strings.TrimSpace(snapshot.Status) {
-	case string(domainv2.StatusCanceled):
-		return nil
-	case string(domainv2.StatusCancelRequested):
-		return err
-	default:
-		return nil
-	}
+	return errors.As(err, &typed) || apptasks.IsRunningPhaseExecutionError(err)
 }
 
 func marshalPayload(payload map[string]any) string {
@@ -549,47 +314,57 @@ func marshalPayload(payload map[string]any) string {
 	return string(encoded)
 }
 
-func stringPtrV2Executor(value string) *string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
-	}
-	copied := trimmed
-	return &copied
+type runTaskRepoAdapter struct {
+	repo V2ExecutionRepo
 }
 
-func taskMetadataFromV2Snapshot(snapshot V2TaskSnapshot) downloader.TaskMetadata {
-	return downloader.TaskMetadata{
-		Writer:  valueOrEmptyV2Executor(snapshot.Author),
-		Series:  valueOrEmptyV2Executor(snapshot.SeriesName),
-		Title:   valueOrEmptyV2Executor(snapshot.ComicName),
-		Summary: valueOrEmptyV2Executor(snapshot.Summary),
-		Tags: firstNonEmptyV2Executor(
-			valueOrEmptyV2Executor(snapshot.TagsNormalized),
-			valueOrEmptyV2Executor(snapshot.TagsRaw),
-		),
-		Genre: firstNonEmptyV2Executor(
-			valueOrEmptyV2Executor(snapshot.GenresNormalized),
-			valueOrEmptyV2Executor(snapshot.GenresRaw),
-		),
+func (a runTaskRepoAdapter) GetTaskForExecution(ctx context.Context, taskID string) (apptasks.RunTaskSnapshot, error) {
+	if a.repo == nil {
+		return apptasks.RunTaskSnapshot{}, errors.New("v2 executor requires repository")
 	}
+	snapshot, err := a.repo.GetTaskForExecution(ctx, taskID)
+	if err != nil {
+		return apptasks.RunTaskSnapshot{}, err
+	}
+	return apptasks.RunTaskSnapshot{
+		ID:               snapshot.ID,
+		URL:              snapshot.URL,
+		Status:           snapshot.Status,
+		EnqueueToken:     snapshot.EnqueueToken,
+		Author:           snapshot.Author,
+		SeriesName:       snapshot.SeriesName,
+		ComicName:        snapshot.ComicName,
+		Summary:          snapshot.Summary,
+		TagsRaw:          snapshot.TagsRaw,
+		TagsNormalized:   snapshot.TagsNormalized,
+		GenresRaw:        snapshot.GenresRaw,
+		GenresNormalized: snapshot.GenresNormalized,
+	}, nil
 }
 
-func valueOrEmptyV2Executor(value *string) string {
-	if value == nil {
-		return ""
+func (a runTaskRepoAdapter) UpdateTaskHeartbeat(ctx context.Context, taskID, worker string) error {
+	if a.repo == nil {
+		return errors.New("v2 executor requires repository")
 	}
-	return strings.TrimSpace(*value)
+	return a.repo.UpdateTaskHeartbeat(ctx, taskID, worker)
 }
 
-func firstNonEmptyV2Executor(values ...string) string {
-	for _, value := range values {
-		normalized := strings.TrimSpace(value)
-		if normalized != "" {
-			return normalized
-		}
+func (a runTaskRepoAdapter) TransitionTaskWithEvent(ctx context.Context, in postgres.TransitionTaskWithEventInput) error {
+	if a.repo == nil {
+		return errors.New("v2 executor requires repository")
 	}
-	return ""
+	return a.repo.TransitionTaskWithEvent(ctx, in)
+}
+
+type runTaskDownloaderAdapter struct {
+	downloader V2TaskDownloader
+}
+
+func (a runTaskDownloaderAdapter) DownloadAndPackage(ctx context.Context, taskID, pageURL string, metadata downloader.TaskMetadata) (string, error) {
+	if a.downloader == nil {
+		return "", errors.New("v2 executor requires downloader")
+	}
+	return a.downloader.DownloadAndPackage(ctx, taskID, pageURL, metadata)
 }
 
 type V2QueueConsumer interface {

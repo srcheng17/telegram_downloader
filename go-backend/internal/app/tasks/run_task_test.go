@@ -1,0 +1,73 @@
+package tasks
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/downloader"
+	"github.com/ryancheng/telegram-downloader/go-backend/internal/store/postgres"
+)
+
+type fakeRunTaskRepo struct {
+	snapshot       RunTaskSnapshot
+	transitions    []postgres.TransitionTaskWithEventInput
+	heartbeatCalls int
+}
+
+func (f *fakeRunTaskRepo) GetTaskForExecution(context.Context, string) (RunTaskSnapshot, error) {
+	return f.snapshot, nil
+}
+
+func (f *fakeRunTaskRepo) UpdateTaskHeartbeat(context.Context, string, string) error {
+	f.heartbeatCalls++
+	return nil
+}
+
+func (f *fakeRunTaskRepo) TransitionTaskWithEvent(_ context.Context, in postgres.TransitionTaskWithEventInput) error {
+	f.transitions = append(f.transitions, in)
+	f.snapshot.Status = in.ToStatus
+	return nil
+}
+
+type fakeRunTaskDownloader struct {
+	artifactPath string
+	calls        int
+}
+
+func (f *fakeRunTaskDownloader) DownloadAndPackage(context.Context, string, string, downloader.TaskMetadata) (string, error) {
+	f.calls++
+	return f.artifactPath, nil
+}
+
+func TestRunTaskTransitionsQueuedToSuccess(t *testing.T) {
+	repo := &fakeRunTaskRepo{snapshot: RunTaskSnapshot{
+		ID:           "task-1",
+		URL:          "https://telegra.ph/demo-run-task",
+		Status:       StatusQueued,
+		EnqueueToken: "token-1",
+	}}
+	downloader := &fakeRunTaskDownloader{artifactPath: "/tmp/task-1.cbz"}
+	runner := NewRunTaskUseCase(RunTaskConfig{
+		Repo:              repo,
+		Worker:            "worker-run-task",
+		Download:          downloader,
+		HeartbeatInterval: time.Second,
+	})
+
+	if err := runner.Execute(context.Background(), "task-1", "token-1"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if downloader.calls != 1 {
+		t.Fatalf("expected downloader called once, got %d", downloader.calls)
+	}
+	if len(repo.transitions) != 2 {
+		t.Fatalf("expected 2 transitions, got %d", len(repo.transitions))
+	}
+	if repo.transitions[0].ToStatus != StatusRunning {
+		t.Fatalf("expected first transition to RUNNING, got %q", repo.transitions[0].ToStatus)
+	}
+	if repo.transitions[1].ToStatus != StatusSuccess {
+		t.Fatalf("expected second transition to SUCCESS, got %q", repo.transitions[1].ToStatus)
+	}
+}
