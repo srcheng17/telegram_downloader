@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	apptasks "github.com/ryancheng/telegram-downloader/go-backend/internal/app/tasks"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/domain"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/httpv2"
 	"github.com/ryancheng/telegram-downloader/go-backend/internal/service"
@@ -93,6 +94,7 @@ type LegacyAdapter struct {
 	store     LegacyV2TaskStore
 	queue     LegacyV2TaskQueue
 	artifacts LegacyV2ArtifactService
+	bridge    *apptasks.LegacyBridge
 }
 
 func NewLegacyAdapter(store LegacyV2TaskStore, queue LegacyV2TaskQueue, artifacts LegacyV2ArtifactService) *LegacyAdapter {
@@ -102,11 +104,16 @@ func NewLegacyAdapter(store LegacyV2TaskStore, queue LegacyV2TaskQueue, artifact
 	if artifacts == nil {
 		artifacts = service.NewV2ArtifactService(service.V2ArtifactServiceConfig{})
 	}
-	return &LegacyAdapter{
+	adapter := &LegacyAdapter{
 		store:     store,
 		queue:     queue,
 		artifacts: artifacts,
 	}
+	adapter.bridge = apptasks.NewLegacyBridge(
+		legacyBridgeClaimer{adapter: adapter},
+		legacyBridgeSummaryReader{adapter: adapter},
+	)
+	return adapter
 }
 
 func (a *LegacyAdapter) SupportsSummary() bool {
@@ -130,6 +137,32 @@ func (a *LegacyAdapter) SupportsArtifactDownload() bool {
 }
 
 func (a *LegacyAdapter) CreateOrReuseDownloadTask(ctx context.Context, input LegacyDownloadInput) (LegacyDownloadResult, error) {
+	if a.bridge != nil {
+		result, err := a.bridge.Submit(ctx, apptasks.LegacySubmitInput{
+			RawURL:       input.RawURL,
+			CanonicalURL: input.CanonicalURL,
+			ReuseSuccess: !input.Force,
+			Metadata: apptasks.MetadataInput{
+				Author:     input.Author,
+				SeriesName: input.SeriesName,
+				ComicName:  input.ComicName,
+				Summary:    input.Summary,
+				TagsRaw:    input.TagsRaw,
+				GenresRaw:  input.GenresRaw,
+			},
+		})
+		if err != nil {
+			return LegacyDownloadResult{}, err
+		}
+		return LegacyDownloadResult{
+			Decision: LegacyDownloadDecision(result.Decision),
+			TaskID:   result.TaskID,
+		}, nil
+	}
+	return a.createOrReuseDownloadTask(ctx, input)
+}
+
+func (a *LegacyAdapter) createOrReuseDownloadTask(ctx context.Context, input LegacyDownloadInput) (LegacyDownloadResult, error) {
 	if !a.SupportsDownload() {
 		return LegacyDownloadResult{}, errors.New("legacy adapter download dependencies are not configured")
 	}
@@ -318,6 +351,17 @@ func (a *LegacyAdapter) ReadLogs(ctx context.Context, query domain.LogQuery) (do
 }
 
 func (a *LegacyAdapter) BuildSummary(ctx context.Context) (domain.Summary, error) {
+	if a.bridge != nil {
+		result, err := a.bridge.BuildSummary(ctx)
+		if err != nil {
+			return domain.Summary{}, err
+		}
+		return result.Summary, nil
+	}
+	return a.buildSummary(ctx)
+}
+
+func (a *LegacyAdapter) buildSummary(ctx context.Context) (domain.Summary, error) {
 	if !a.SupportsSummary() {
 		return domain.Summary{}, errors.New("legacy adapter summary dependencies are not configured")
 	}
@@ -342,6 +386,47 @@ func (a *LegacyAdapter) BuildSummary(ctx context.Context) (domain.Summary, error
 		domain.StatusFailed:          failed,
 		domain.StatusCanceled:        canceled,
 	}, domain.DefaultStartupRecovery()), nil
+}
+
+type legacyBridgeClaimer struct {
+	adapter *LegacyAdapter
+}
+
+func (c legacyBridgeClaimer) ClaimOrReuse(ctx context.Context, in apptasks.LegacyClaimInput) (apptasks.LegacyClaimResult, error) {
+	if c.adapter == nil {
+		return apptasks.LegacyClaimResult{}, errors.New("legacy bridge claimer is not configured")
+	}
+	result, err := c.adapter.createOrReuseDownloadTask(ctx, LegacyDownloadInput{
+		RawURL:           in.RawURL,
+		CanonicalURL:     in.CanonicalURL,
+		Force:            !in.ReuseSuccess,
+		Author:           in.Metadata.Author,
+		SeriesName:       in.Metadata.SeriesName,
+		ComicName:        in.Metadata.ComicName,
+		Summary:          in.Metadata.Summary,
+		TagsRaw:          in.Metadata.TagsRaw,
+		TagsNormalized:   in.Metadata.TagsNormalized,
+		GenresRaw:        in.Metadata.GenresRaw,
+		GenresNormalized: in.Metadata.GenresNormalized,
+	})
+	if err != nil {
+		return apptasks.LegacyClaimResult{}, err
+	}
+	return apptasks.LegacyClaimResult{
+		Decision: apptasks.LegacyDownloadDecision(result.Decision),
+		TaskID:   result.TaskID,
+	}, nil
+}
+
+type legacyBridgeSummaryReader struct {
+	adapter *LegacyAdapter
+}
+
+func (r legacyBridgeSummaryReader) GetStatusCounts(ctx context.Context) (map[string]int, error) {
+	if r.adapter == nil {
+		return nil, errors.New("legacy bridge summary reader is not configured")
+	}
+	return r.adapter.getStatusCounts(ctx)
 }
 
 func (a *LegacyAdapter) enqueueCreatedTask(ctx context.Context, taskID string, enqueueToken string) error {
