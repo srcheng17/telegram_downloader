@@ -1,3 +1,10 @@
+import { createTasksApi } from '../shared/api/tasks_api.js';
+import {
+    buildStatusCatalog,
+    fallbackStatusLabel as fallbackSharedStatusLabel,
+    getStatusMeta as getSharedStatusMeta,
+    normalizeStatusCode as normalizeSharedStatusCode,
+} from '../shared/models/status_catalog.js';
 import { resolvePollDelay } from '../shared/polling.js';
 import {
     buildStartupRecoveryMessage,
@@ -37,6 +44,7 @@ export function createLogsModule(win, doc) {
     };
     win.__telegraphLogsState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
+    const api = createTasksApi((url, options) => win.fetch(url, options));
     function showFeedback(message, kind) {
         const feedback = doc.getElementById('logs-feedback');
         if (!feedback) {
@@ -53,16 +61,15 @@ export function createLogsModule(win, doc) {
     }
 
     function normalizeStatusCode(status) {
-        return String(status || '').trim().toUpperCase();
+        return normalizeSharedStatusCode(status);
     }
 
     function fallbackStatusLabel(statusCode) {
-        return normalizeStatusCode(statusCode).replace(/_/g, ' ') || '未知状态';
+        return fallbackSharedStatusLabel(statusCode);
     }
 
     function getStatusMeta(status) {
-        const statusCode = normalizeStatusCode(status);
-        return state.statusCatalog[statusCode] || null;
+        return getSharedStatusMeta(state.statusCatalog, status);
     }
 
     function renderStatusFilterOptions() {
@@ -96,25 +103,7 @@ export function createLogsModule(win, doc) {
     }
 
     function applyStatusCatalog(rawCatalog) {
-        if (!rawCatalog || typeof rawCatalog !== 'object') {
-            return;
-        }
-        const nextCatalog = {};
-        Object.entries(rawCatalog).forEach(([rawStatus, rawMeta]) => {
-            const statusCode = normalizeStatusCode(rawStatus);
-            if (!statusCode) {
-                return;
-            }
-            const metadata = rawMeta && typeof rawMeta === 'object' ? rawMeta : {};
-            nextCatalog[statusCode] = {
-                label:
-                    typeof metadata.label === 'string' && metadata.label.trim()
-                        ? metadata.label.trim()
-                        : fallbackStatusLabel(statusCode),
-                can_cancel: Boolean(metadata.can_cancel),
-                can_download: Boolean(metadata.can_download),
-            };
-        });
+        const nextCatalog = buildStatusCatalog(rawCatalog, fallbackStatusLabel);
         if (!Object.keys(nextCatalog).length) {
             return;
         }
@@ -307,17 +296,6 @@ export function createLogsModule(win, doc) {
         return cell;
     }
 
-    async function readJsonPayload(response) {
-        if (!response) {
-            return null;
-        }
-        try {
-            return await response.json();
-        } catch (error) {
-            return null;
-        }
-    }
-
     function extractPayloadMessage(payload) {
         if (!payload || typeof payload !== 'object') {
             return '';
@@ -335,12 +313,9 @@ export function createLogsModule(win, doc) {
             button.textContent = '取消中...';
         }
         try {
-            const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+            const { response, payload } = await api.postJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, {}, {
                 cache: 'no-store',
             });
-            const payload = await readJsonPayload(response);
             const payloadMessage = extractPayloadMessage(payload);
 
             if (response.ok && payload && payload.ok === true) {
@@ -385,12 +360,10 @@ export function createLogsModule(win, doc) {
     async function fetchDownloadErrorMessage(downloadUrl, statusCode) {
         const fallbackMessage = `下载失败（${statusCode}）。`;
         try {
-            const response = await fetch(downloadUrl, {
-                method: 'GET',
+            const { payload } = await api.getJson(downloadUrl, {
                 headers: { Accept: 'application/json' },
                 cache: 'no-store',
             });
-            const payload = await readJsonPayload(response);
             return extractPayloadMessage(payload) || fallbackMessage;
         } catch (error) {
             console.error('Failed to load download error details:', error);
@@ -399,8 +372,7 @@ export function createLogsModule(win, doc) {
     }
 
     async function precheckDownload(downloadUrl) {
-        const response = await fetch(downloadUrl, {
-            method: 'HEAD',
+        const response = await api.head(downloadUrl, {
             cache: 'no-store',
         });
 
@@ -642,7 +614,7 @@ export function createLogsModule(win, doc) {
         let shouldSchedule = true;
 
         try {
-            const response = await fetch(buildLogsUrl(page), {
+            const { response, payload: data } = await api.getJson(buildLogsUrl(page), {
                 signal: controller.signal,
                 cache: 'no-store',
             });
@@ -651,7 +623,6 @@ export function createLogsModule(win, doc) {
                 httpError.statusCode = response.status;
                 throw httpError;
             }
-            const data = await response.json();
             applyStatusCatalog(data.status_catalog);
             renderLogs(data.logs || []);
             updateSummary(data.summary || null);

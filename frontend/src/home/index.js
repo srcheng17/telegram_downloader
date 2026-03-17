@@ -1,3 +1,4 @@
+import { createTasksApi } from '../shared/api/tasks_api.js';
 import {
     buildStartupRecoveryMessage,
     getStartupRecoveryDismissKey,
@@ -18,6 +19,7 @@ export function createHomeModule(win, doc) {
     };
     win.__telegraphHomeState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
+    const api = createTasksApi((url, options) => win.fetch(url, options));
 
     function extractPayloadMessage(payload) {
         if (!payload || typeof payload !== 'object') {
@@ -248,12 +250,6 @@ export function createHomeModule(win, doc) {
         button.textContent = isSubmitting ? '提交中...' : '开始下载';
     }
 
-    function toFormUrlEncoded(data) {
-        return Object.keys(data)
-            .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(data[key])}`)
-            .join('&');
-    }
-
     function readForceValue(form) {
         if (!form) {
             return null;
@@ -304,16 +300,7 @@ export function createHomeModule(win, doc) {
     }
 
     async function postDownloadRequest(formPayload) {
-        const response = await fetch('/download', {
-            method: 'POST',
-            headers: {
-                Accept: 'application/json',
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            },
-            body: toFormUrlEncoded(formPayload),
-        });
-        const payload = await response.json().catch(() => null);
-        return { response, payload };
+        return api.postForm('/download', formPayload);
     }
 
     function basePayloadForDuplicateRetry(formPayload) {
@@ -414,15 +401,13 @@ export function createHomeModule(win, doc) {
         const controller = new AbortController();
         state.inflightSummaryController = controller;
         try {
-            const response = await fetch('/api/summary', {
-                method: 'GET',
+            const { response, payload } = await api.getJson('/api/summary', {
                 cache: 'no-store',
                 signal: controller.signal,
             });
-            if (!response.ok) {
+            if (!response.ok || !payload) {
                 return;
             }
-            const payload = await response.json();
             updateSummary(payload);
         } catch (error) {
             if (error && error.name !== 'AbortError') {
