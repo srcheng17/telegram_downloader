@@ -1,4 +1,8 @@
 import { createTasksApi } from '../shared/api/tasks_api.js';
+import { normalizeHeadResult } from './download_preflight.js';
+import { hideErrorModal as hideLogsErrorModal, showErrorModal as showLogsErrorModal } from './error_modal.js';
+import { applyStatusCatalog as normalizeStatusCatalog } from './status_filters.js';
+import { buildStatusBadgeModel } from './table_render.js';
 import {
     buildStatusCatalog,
     fallbackStatusLabel as fallbackSharedStatusLabel,
@@ -103,7 +107,7 @@ export function createLogsModule(win, doc) {
     }
 
     function applyStatusCatalog(rawCatalog) {
-        const nextCatalog = buildStatusCatalog(rawCatalog, fallbackStatusLabel);
+        const nextCatalog = normalizeStatusCatalog(rawCatalog);
         if (!Object.keys(nextCatalog).length) {
             return;
         }
@@ -184,35 +188,11 @@ export function createLogsModule(win, doc) {
     }
 
     function showErrorModal(errorText, triggerElement) {
-        const modal = doc.getElementById('error-modal');
-        const content = doc.getElementById('error-modal-content');
-        const closeButton = doc.getElementById('error-modal-close');
-        if (!modal || !content || !closeButton) {
-            return;
-        }
-        state.modalRestoreFocusEl = triggerElement || doc.activeElement;
-        content.textContent = errorText || '';
-        modal.classList.remove('hidden');
-        doc.body.classList.add('modal-open');
-        closeButton.focus();
+        showLogsErrorModal(doc, state, errorText, triggerElement);
     }
 
     function hideErrorModal() {
-        const modal = doc.getElementById('error-modal');
-        const content = doc.getElementById('error-modal-content');
-        if (!modal || !content) {
-            return;
-        }
-        modal.classList.add('hidden');
-        content.textContent = '';
-        doc.body.classList.remove('modal-open');
-
-        // Return focus to the "Details" trigger for keyboard users.
-        const restoreFocusEl = state.modalRestoreFocusEl;
-        state.modalRestoreFocusEl = null;
-        if (restoreFocusEl && typeof restoreFocusEl.focus === 'function' && doc.body.contains(restoreFocusEl)) {
-            restoreFocusEl.focus();
-        }
+        hideLogsErrorModal(doc, state);
     }
 
     function createValueContainer() {
@@ -256,15 +236,13 @@ export function createLogsModule(win, doc) {
     }
 
     function createStatusCell(status) {
-        const safeStatus = normalizeStatusCode(status) || 'UNKNOWN';
-        const classSuffix = safeStatus.toLowerCase().replace(/[^a-z_]/g, '');
-        const statusMeta = getStatusMeta(safeStatus);
+        const model = buildStatusBadgeModel(status, state.statusCatalog);
         const cell = doc.createElement('td');
         const value = createValueContainer();
         const badge = doc.createElement('span');
-        badge.className = `status-badge status-${classSuffix || 'unknown'}`;
-        badge.textContent = statusMeta ? statusMeta.label : fallbackStatusLabel(safeStatus);
-        badge.title = safeStatus;
+        badge.className = model.className;
+        badge.textContent = model.label;
+        badge.title = model.statusCode;
         value.appendChild(badge);
         cell.appendChild(value);
         return cell;
@@ -375,12 +353,12 @@ export function createLogsModule(win, doc) {
         const response = await api.head(downloadUrl, {
             cache: 'no-store',
         });
-
-        if (response.ok || response.status === 405 || response.status === 501) {
+        const normalized = await normalizeHeadResult(response);
+        if (normalized.ok) {
             return { ok: true };
         }
 
-        const message = await fetchDownloadErrorMessage(downloadUrl, response.status);
+        const message = await fetchDownloadErrorMessage(downloadUrl, normalized.status);
         return { ok: false, message };
     }
 
