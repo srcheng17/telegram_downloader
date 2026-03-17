@@ -54,7 +54,7 @@ services:
   go-api:
     volumes:
       - ${temp_data_root}/downloaded_images:/app/downloaded_images
-      - ./static:/app/static:ro
+      - ./web/static:/app/static:ro
   go-worker:
     volumes:
       - ${temp_data_root}/downloaded_images:/app/downloaded_images

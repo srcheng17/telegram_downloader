@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   build: {
-    outDir: 'static/dist',
+    outDir: 'web/static/dist',
     emptyOutDir: false,
     rollupOptions: {
       input: {

@@ -48,14 +48,15 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 核心目录：
 
 ```text
-go-backend/
-  cmd/server/              # go-api 入口
-  cmd/worker/              # go-worker 入口
-  internal/httpui/         # 首页/日志/设置 UI（保持现有界面）
-  internal/httpapi/        # /download + /api/* legacy-facing 适配层
-  internal/httpv2/         # /v2/* API
-  internal/queue/v2/       # Redis Streams v2 队列抽象
-  internal/store/postgres/ # v2 任务仓储 + migrations runner
+cmd/server/               # go-api 入口
+cmd/worker/               # go-worker 入口
+internal/httpui/          # 首页/日志/设置 UI（保持现有界面）
+internal/httpapi/         # /download + /api/* legacy-facing 适配层
+internal/httpv2/          # /v2/* API
+internal/queue/v2/        # Redis Streams v2 队列抽象
+internal/store/postgres/  # v2 任务仓储 + migrations runner
+web/templates/            # Go 页面模板
+web/static/               # 页面静态资源与构建产物
 ```
 
 根目录 Python 代码保留为历史兼容与迁移参考，不参与当前 Compose 主链路。
@@ -64,7 +65,7 @@ go-backend/
 ## 测试分层（重构后）
 
 ```text
-go-backend/...   # Go 单元/集成/竞态测试
+./...            # Go 单元/集成/竞态测试
 tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose）
 .github/workflows/ci.yml  # CI 门禁（go test + race + lint + e2e）
 ```
@@ -85,7 +86,6 @@ tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose
 ### Go 单元与竞态测试
 
 ```bash
-cd go-backend
 go test ./...
 go test -race ./...
 ```
@@ -132,8 +132,8 @@ bash scripts/verify_release_gates.sh
 脚本会顺序执行：
 
 ```bash
-cd go-backend && go test ./... && go test -race ./...
-cd .. && npm run test:frontend && npm run lint && npm run build
+go test ./... && go test -race ./...
+npm run test:frontend && npm run lint && npm run build
 PYTHONPATH=. .venv/bin/pytest tests/web/test_go_proxy.py tests/web/test_routes_api_logs.py -q
 npm run e2e:test
 ```

@@ -26,7 +26,7 @@ services:
 
   go-api:
     build:
-      context: ./go-backend
+      context: .
     environment:
       PORT: "5000"
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
@@ -39,7 +39,7 @@ services:
       DOWNLOAD_PATH: /app/downloaded_images
     volumes:
       - ./downloaded_images:/app/downloaded_images
-      - ./static:/app/static:ro
+      - ./web/static:/app/static:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5000/healthz || exit 1"]
       interval: 10s
@@ -54,7 +54,7 @@ services:
 
   go-worker:
     build:
-      context: ./go-backend
+      context: .
     entrypoint: ["/app/go-worker"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable

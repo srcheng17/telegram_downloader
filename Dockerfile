@@ -1,23 +1,24 @@
-# Use an official Python runtime as a parent image
-FROM python:3.9-slim
+FROM golang:1.23-alpine AS builder
 
-# Set the working directory in the container
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/go-api ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/go-worker ./cmd/worker
+
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata \
+    && adduser -D -u 10001 app
+
 WORKDIR /app
+COPY --from=builder /out/go-api /app/go-api
+COPY --from=builder /out/go-worker /app/go-worker
 
-# Copy the current directory contents into the container at /app
-COPY . /app
-
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-# Create directories for downloads
-RUN mkdir -p /app/temp_downloads /app/downloaded_images
-
-# Environment variables for paths, can be overridden at runtime
-ENV DOWNLOAD_PATH=/app/downloaded_images
-ENV TEMP_PATH=/app/temp_downloads
-
-# Make port 5000 available to the world outside this container
+USER app
 EXPOSE 5000
 
-# Run app.py when the container launches
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+ENTRYPOINT ["/app/go-api"]

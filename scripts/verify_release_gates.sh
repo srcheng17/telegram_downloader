@@ -13,11 +13,8 @@ else
   exit 1
 fi
 
-(
-  cd go-backend
-  go test ./...
-  go test -race ./...
-)
+go test ./...
+go test -race ./...
 
 npm run test:frontend
 npm run lint
