@@ -129,10 +129,6 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	}
 
 	body := recorder.Body.String()
-	assertContains(t, body, "telegra.ph, www.telegra.ph, graph.org, www.graph.org")
-	assertContains(t, body, ">456<")
-	assertContains(t, body, "33554432 字节")
-	assertContains(t, body, "1073741824 字节")
 	assertContains(t, body, `href="/" hx-get="/" hx-target="#content" hx-push-url="true"`)
 	assertContains(t, body, `href="/logs" hx-get="/logs" hx-target="#content" hx-push-url="true"`)
 	assertContains(t, body, `href="/settings" hx-get="/settings" hx-target="#content" hx-push-url="true"`)
@@ -140,9 +136,14 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	assertContains(t, body, `hx-get="/logs"`)
 	assertContains(t, body, `hx-target="#content"`)
 	assertContains(t, body, `hx-push-url="true"`)
-	assertContains(t, body, "支持英文逗号 (,) 与中文逗号（，）分隔多个作者。")
-	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格与 # 分隔多个标签，自动清理多余空格。")
-	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格与 # 分隔多个类型，自动清理多余空格。")
+	assertContains(t, body, "最近 20 条填写的元数据")
+	assertContains(t, body, "URL 下载")
+	assertContains(t, body, "上传压缩包")
+	assertContains(t, body, `id="archive_file"`)
+	assertContains(t, body, "支持 ZIP、RAR、7Z。")
+	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、半角 # 与全角 ＃ 分隔多个作者")
+	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个标签")
+	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个类型")
 }
 
 func TestHTMXRequestReturnsPageFragment(t *testing.T) {

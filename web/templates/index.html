@@ -45,41 +45,49 @@
             </article>
         </div>
     </details>
-    <details class="guardrails-panel" aria-labelledby="guardrails-title">
-        <summary id="guardrails-title" class="guardrails-summary collapsible-summary">下载护栏说明</summary>
-        <div class="guardrails-content">
-            <p class="guardrails-description">每个任务都会进行校验和资源限制，以保障服务稳定性与下载质量。</p>
-            <dl class="guardrail-list">
-                <div class="guardrail-item">
-                    <dt>允许域名</dt>
-                    <dd>{{ join .Guardrails.AllowedDomains ", " }}</dd>
-                </div>
-                <div class="guardrail-item">
-                    <dt>图片数量上限</dt>
-                    <dd>{{ .Guardrails.MaxImages }}</dd>
-                </div>
-                <div class="guardrail-item">
-                    <dt>单张图片大小上限</dt>
-                    <dd>{{ formatGuardrailBytes .Guardrails.MaxImageBytes }}</dd>
-                </div>
-                <div class="guardrail-item">
-                    <dt>总下载体积上限</dt>
-                    <dd>{{ formatGuardrailBytes .Guardrails.MaxTotalBytes }}</dd>
-                </div>
-            </dl>
+    <section class="metadata-history-panel" aria-labelledby="metadata-history-title">
+        <div class="metadata-history-header">
+            <h3 id="metadata-history-title">最近 20 条填写的元数据</h3>
+            <p class="field-help metadata-history-help">点击记录可回填首页元数据；URL 记录会一并恢复链接，上传记录会切回上传模式但不会恢复本地文件。</p>
         </div>
-    </details>
+        <ul id="metadata-history-list" class="metadata-history-list" aria-live="polite">
+            <li class="metadata-history-empty">暂无最近填写记录。</li>
+        </ul>
+    </section>
     <form id="download-form" action="/download" method="post" novalidate>
-        <div class="form-group">
+        <div class="form-group input-mode-group">
+            <span class="input-mode-title">任务来源</span>
+            <div class="input-mode-options">
+                <label class="input-mode-option">
+                    <input type="radio" name="input_mode" value="url" checked>
+                    <span>URL 下载</span>
+                </label>
+                <label class="input-mode-option">
+                    <input type="radio" name="input_mode" value="upload">
+                    <span>上传压缩包</span>
+                </label>
+            </div>
+        </div>
+
+        <div id="url-input-group" class="form-group">
             <label for="url">Telegraph 链接 <span class="required-mark" aria-hidden="true">*</span></label>
             <input type="text" id="url" name="url" placeholder="https://telegra.ph/..." required>
         </div>
 
+        <div id="archive-input-group" class="form-group is-hidden" aria-hidden="true">
+            <label for="archive_file">压缩包文件 <span class="required-mark" aria-hidden="true">*</span></label>
+            <input type="file" id="archive_file" name="archive_file" accept=".zip,.rar,.7z" disabled>
+            <p class="field-help">支持 ZIP、RAR、7Z。上传任务会先进入日志，再显示上传进度与后续处理状态。</p>
+        </div>
+
         <div class="home-metadata-grid">
             <div class="form-group">
-                <label for="author">作者</label>
+                <div class="field-label-row">
+                    <label for="author">作者</label>
+                    <button type="button" class="field-hint-toggle" data-field-hint-target="author-hint">说明</button>
+                </div>
                 <input type="text" id="author" name="author" placeholder="例如：张三">
-                <p class="field-help">支持英文逗号 (,) 与中文逗号（，）分隔多个作者。</p>
+                <p id="author-hint" class="field-help is-hidden" aria-hidden="true">支持英文逗号 (,)、中文逗号（，）、半角 # 与全角 ＃ 分隔多个作者，自动清理多余空格。</p>
             </div>
             <div class="form-group">
                 <label for="series_name">漫画系列名</label>
@@ -94,14 +102,20 @@
                 <textarea id="summary" name="summary" rows="3" placeholder="可填写作品简介或补充信息"></textarea>
             </div>
             <div class="form-group home-metadata-full">
-                <label for="tags">标签</label>
+                <div class="field-label-row">
+                    <label for="tags">标签</label>
+                    <button type="button" class="field-hint-toggle" data-field-hint-target="tags-hint">说明</button>
+                </div>
                 <input type="text" id="tags" name="tags" placeholder="例如：科幻,冒险，连载">
-                <p class="field-help">支持英文逗号 (,)、中文逗号（，）、空格与 # 分隔多个标签，自动清理多余空格。</p>
+                <p id="tags-hint" class="field-help is-hidden" aria-hidden="true">支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个标签，自动清理多余空格。</p>
             </div>
             <div class="form-group home-metadata-full">
-                <label for="genres">类型</label>
+                <div class="field-label-row">
+                    <label for="genres">类型</label>
+                    <button type="button" class="field-hint-toggle" data-field-hint-target="genres-hint">说明</button>
+                </div>
                 <input type="text" id="genres" name="genres" placeholder="例如：青年,悬疑，热血">
-                <p class="field-help">支持英文逗号 (,)、中文逗号（，）、空格与 # 分隔多个类型，自动清理多余空格。</p>
+                <p id="genres-hint" class="field-help is-hidden" aria-hidden="true">支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个类型，自动清理多余空格。</p>
             </div>
         </div>
 
