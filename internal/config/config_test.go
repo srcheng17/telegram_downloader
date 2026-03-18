@@ -52,9 +52,10 @@ func TestLoadFromEnvReadsV2StreamOverride(t *testing.T) {
 
 func TestNormalizeSettingsSnapshotClampsBounds(t *testing.T) {
 	snapshot := NormalizeSettingsSnapshot(SettingsSnapshot{
-		Timeout:          999,
-		Retries:          -10,
-		ImageConcurrency: 0,
+		Timeout:            999,
+		Retries:            -10,
+		ImageConcurrency:   0,
+		DownloadActionMode: "invalid-mode",
 	})
 
 	if snapshot.Timeout != 300 {
@@ -65,6 +66,9 @@ func TestNormalizeSettingsSnapshotClampsBounds(t *testing.T) {
 	}
 	if snapshot.ImageConcurrency != 1 {
 		t.Fatalf("expected image_concurrency clamped to 1, got %d", snapshot.ImageConcurrency)
+	}
+	if snapshot.DownloadActionMode != "browser" {
+		t.Fatalf("expected download_action_mode default browser, got %q", snapshot.DownloadActionMode)
 	}
 }
 
@@ -78,6 +82,9 @@ func TestDefaultSettingsSnapshot(t *testing.T) {
 	}
 	if defaults.ImageConcurrency != 2 {
 		t.Fatalf("expected default image_concurrency 2, got %d", defaults.ImageConcurrency)
+	}
+	if defaults.DownloadActionMode != "browser" {
+		t.Fatalf("expected default download_action_mode browser, got %q", defaults.DownloadActionMode)
 	}
 }
 
