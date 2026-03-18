@@ -13,6 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	apptasks "github.com/ryancheng/telegram-downloader/internal/app/tasks"
+	taskarchive "github.com/ryancheng/telegram-downloader/internal/archive"
+	"github.com/ryancheng/telegram-downloader/internal/domain"
 	"github.com/ryancheng/telegram-downloader/internal/downloader"
 	queuev2 "github.com/ryancheng/telegram-downloader/internal/queue/v2"
 	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
@@ -29,18 +31,21 @@ const (
 )
 
 type V2TaskSnapshot struct {
-	ID               string
-	URL              string
-	Status           string
-	EnqueueToken     string
-	Author           *string
-	SeriesName       *string
-	ComicName        *string
-	Summary          *string
-	TagsRaw          *string
-	TagsNormalized   *string
-	GenresRaw        *string
-	GenresNormalized *string
+	ID                string
+	URL               string
+	Status            string
+	EnqueueToken      string
+	TaskType          *string
+	SourceArchivePath *string
+	SourceArchiveName *string
+	Author            *string
+	SeriesName        *string
+	ComicName         *string
+	Summary           *string
+	TagsRaw           *string
+	TagsNormalized    *string
+	GenresRaw         *string
+	GenresNormalized  *string
 }
 
 type V2ExecutionRepo interface {
@@ -327,18 +332,21 @@ func (a runTaskRepoAdapter) GetTaskForExecution(ctx context.Context, taskID stri
 		return apptasks.RunTaskSnapshot{}, err
 	}
 	return apptasks.RunTaskSnapshot{
-		ID:               snapshot.ID,
-		URL:              snapshot.URL,
-		Status:           snapshot.Status,
-		EnqueueToken:     snapshot.EnqueueToken,
-		Author:           snapshot.Author,
-		SeriesName:       snapshot.SeriesName,
-		ComicName:        snapshot.ComicName,
-		Summary:          snapshot.Summary,
-		TagsRaw:          snapshot.TagsRaw,
-		TagsNormalized:   snapshot.TagsNormalized,
-		GenresRaw:        snapshot.GenresRaw,
-		GenresNormalized: snapshot.GenresNormalized,
+		ID:                snapshot.ID,
+		URL:               snapshot.URL,
+		Status:            snapshot.Status,
+		EnqueueToken:      snapshot.EnqueueToken,
+		TaskType:          snapshot.TaskType,
+		SourceArchivePath: snapshot.SourceArchivePath,
+		SourceArchiveName: snapshot.SourceArchiveName,
+		Author:            snapshot.Author,
+		SeriesName:        snapshot.SeriesName,
+		ComicName:         snapshot.ComicName,
+		Summary:           snapshot.Summary,
+		TagsRaw:           snapshot.TagsRaw,
+		TagsNormalized:    snapshot.TagsNormalized,
+		GenresRaw:         snapshot.GenresRaw,
+		GenresNormalized:  snapshot.GenresNormalized,
 	}, nil
 }
 
@@ -403,6 +411,9 @@ func (r *V2PostgresExecutionRepo) GetTaskForExecution(ctx context.Context, taskI
 			url,
 			status,
 			enqueue_token,
+			task_type,
+			source_archive_path,
+			source_archive_name,
 			author,
 			series_name,
 			comic_name,
@@ -420,6 +431,9 @@ func (r *V2PostgresExecutionRepo) GetTaskForExecution(ctx context.Context, taskI
 		&snapshot.URL,
 		&snapshot.Status,
 		&snapshot.EnqueueToken,
+		&snapshot.TaskType,
+		&snapshot.SourceArchivePath,
+		&snapshot.SourceArchiveName,
 		&snapshot.Author,
 		&snapshot.SeriesName,
 		&snapshot.ComicName,
@@ -455,12 +469,13 @@ func (r *V2PostgresExecutionRepo) UpdateTaskHeartbeat(ctx context.Context, taskI
 type V2ServiceDownloader struct {
 	Service      *downloader.Service
 	DownloadRoot string
+	Extractor    *taskarchive.Extractor
 }
 
 func (d *V2ServiceDownloader) DownloadAndPackage(
 	ctx context.Context,
 	taskID,
-	pageURL string,
+	source string,
 	metadata downloader.TaskMetadata,
 ) (string, error) {
 	if d == nil {
@@ -474,14 +489,35 @@ func (d *V2ServiceDownloader) DownloadAndPackage(
 	if taskID == "" {
 		return "", errors.New("v2 service downloader requires task id")
 	}
-	pageURL = strings.TrimSpace(pageURL)
-	if pageURL == "" {
-		return "", errors.New("v2 service downloader requires page url")
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return "", errors.New("v2 service downloader requires source")
 	}
 
-	result, err := d.Service.Download(ctx, pageURL)
-	if err != nil {
-		return "", err
+	var images []domain.DownloadedImage
+	if isRemotePageSource(source) {
+		result, err := d.Service.Download(ctx, source)
+		if err != nil {
+			return "", err
+		}
+		images = result.Images
+	} else {
+		extractor := d.Extractor
+		if extractor == nil {
+			extractor = taskarchive.NewExtractor(taskarchive.ExtractorConfig{})
+		}
+		extractedImages, err := extractor.Extract(ctx, source)
+		if err != nil {
+			return "", err
+		}
+		images = make([]domain.DownloadedImage, 0, len(extractedImages))
+		for _, image := range extractedImages {
+			images = append(images, domain.DownloadedImage{
+				URL:         image.Name,
+				ContentType: image.ContentType,
+				Data:        image.Data,
+			})
+		}
 	}
 
 	downloadRoot := strings.TrimSpace(d.DownloadRoot)
@@ -493,8 +529,13 @@ func (d *V2ServiceDownloader) DownloadAndPackage(
 	}
 
 	outputPath := filepath.Join(downloadRoot, buildDownloadFilename(metadata, time.Now().Unix()))
-	if err := d.Service.PackageCBZ(result.Images, metadata, outputPath); err != nil {
+	if err := d.Service.PackageCBZ(images, metadata, outputPath); err != nil {
 		return "", err
 	}
 	return outputPath, nil
+}
+
+func isRemotePageSource(source string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(source))
+	return strings.HasPrefix(normalized, "http://") || strings.HasPrefix(normalized, "https://")
 }

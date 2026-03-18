@@ -13,6 +13,7 @@ const (
 	defaultTimeoutSeconds   = 30
 	defaultRetries          = 10
 	defaultImageConcurrency = 2
+	defaultDownloadAction   = "browser"
 
 	minTimeoutSeconds   = 1
 	maxTimeoutSeconds   = 300
@@ -23,9 +24,10 @@ const (
 )
 
 type SettingsSnapshot struct {
-	Timeout          int `json:"timeout"`
-	Retries          int `json:"retries"`
-	ImageConcurrency int `json:"image_concurrency"`
+	Timeout            int    `json:"timeout"`
+	Retries            int    `json:"retries"`
+	ImageConcurrency   int    `json:"image_concurrency"`
+	DownloadActionMode string `json:"download_action_mode"`
 }
 
 type Config struct {
@@ -165,17 +167,28 @@ func parseIntEnv(name string, defaultValue int) int {
 
 func DefaultSettingsSnapshot() SettingsSnapshot {
 	return SettingsSnapshot{
-		Timeout:          defaultTimeoutSeconds,
-		Retries:          defaultRetries,
-		ImageConcurrency: defaultImageConcurrency,
+		Timeout:            defaultTimeoutSeconds,
+		Retries:            defaultRetries,
+		ImageConcurrency:   defaultImageConcurrency,
+		DownloadActionMode: defaultDownloadAction,
 	}
 }
 
 func NormalizeSettingsSnapshot(input SettingsSnapshot) SettingsSnapshot {
 	return SettingsSnapshot{
-		Timeout:          clampInt(input.Timeout, minTimeoutSeconds, maxTimeoutSeconds),
-		Retries:          clampInt(input.Retries, minRetries, maxRetries),
-		ImageConcurrency: clampInt(input.ImageConcurrency, minImageConcurrency, maxImageConcurrency),
+		Timeout:            clampInt(input.Timeout, minTimeoutSeconds, maxTimeoutSeconds),
+		Retries:            clampInt(input.Retries, minRetries, maxRetries),
+		ImageConcurrency:   clampInt(input.ImageConcurrency, minImageConcurrency, maxImageConcurrency),
+		DownloadActionMode: normalizeDownloadActionMode(input.DownloadActionMode),
+	}
+}
+
+func normalizeDownloadActionMode(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case "komga_copy":
+		return "komga_copy"
+	default:
+		return defaultDownloadAction
 	}
 }
 

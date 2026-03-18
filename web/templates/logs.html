@@ -68,6 +68,7 @@
             <thead>
                 <tr>
                     <th scope="col" aria-describedby="task-id-column-help">任务 ID</th>
+                    <th scope="col">类型</th>
                     <th scope="col">URL</th>
                     <th scope="col">状态</th>
                     <th scope="col">进度</th>
@@ -78,7 +79,7 @@
             </thead>
             <tbody id="log-body">
                 <tr class="table-state-row table-state-loading">
-                    <td colspan="7">
+                    <td colspan="8">
                         <div class="table-state-message" id="logs-state-loading-desc">
                             <p class="table-state-title">日志加载中...</p>
                             <p class="table-state-detail">稍后将在此展示最近任务状态和下载操作。</p>
@@ -86,7 +87,7 @@
                     </td>
                 </tr>
                 <tr class="table-state-row table-state-empty is-hidden" aria-hidden="true">
-                    <td colspan="7">
+                    <td colspan="8">
                         <div class="table-state-message">
                             <p class="table-state-title">暂无日志</p>
                             <p class="table-state-detail">运行任务后，这里会显示状态历史。</p>

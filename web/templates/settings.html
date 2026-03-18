@@ -6,7 +6,7 @@
 <p class="settings-impact-note" role="note">
     设置项为全局生效：点击 <strong>保存设置</strong> 后，仅影响后续新建任务，正在运行的任务会保持原值。
 </p>
-<form action="/settings" method="post" class="settings-form">
+<form action="/settings" method="post" class="settings-form" id="settings-form">
     <div class="form-group settings-grid-item">
         <label for="task_concurrency">任务并发数（同时运行任务数）</label>
         <input type="number" id="task_concurrency" name="task_concurrency" value="{{ .Settings.TaskConcurrency }}" min="1" max="10">
@@ -37,6 +37,19 @@
         <input type="number" id="file_retention_days" name="file_retention_days" value="{{ .Settings.FileRetentionDays }}" min="1">
         <p class="field-help">已生成 ZIP/CBZ 文件的缓存保留时长。</p>
     </div>
+    <div class="form-group settings-grid-item settings-grid-item-full">
+        <span class="settings-radio-label">成功任务动作</span>
+        <label class="settings-radio-option">
+            <input type="radio" name="download_action_mode" value="browser" {{ if eq .Settings.DownloadActionMode "browser" }}checked{{ end }}>
+            <span>浏览器下载（默认）</span>
+        </label>
+        <label class="settings-radio-option">
+            <input type="radio" name="download_action_mode" value="komga_copy" {{ if eq .Settings.DownloadActionMode "komga_copy" }}checked{{ end }}>
+            <span>复制到 Komga</span>
+        </label>
+        <p class="field-help">切换日志页成功任务“下载”按钮的行为：默认浏览器下载，也可改为复制到固定的 Komga 目录。</p>
+    </div>
     <button type="submit">保存设置</button>
 </form>
+<div id="settings-feedback" class="inline-feedback" role="status" aria-live="polite"></div>
 {{ end }}

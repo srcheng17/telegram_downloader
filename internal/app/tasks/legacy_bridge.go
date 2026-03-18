@@ -127,7 +127,7 @@ func (b *LegacyBridge) BuildSummary(ctx context.Context) (LegacySummaryResult, e
 func buildLegacySummaryFromCounts(counts map[string]int, recovery domain.StartupRecovery) domain.Summary {
 	summary := domain.Summary{
 		PendingTasks:         safeCount(counts[domain.StatusPending]),
-		InProgressTasks:      safeCount(counts[domain.StatusInProgress]),
+		InProgressTasks:      safeCount(counts[domain.StatusUploading]) + safeCount(counts[domain.StatusInProgress]),
 		CancelRequestedTasks: safeCount(counts[domain.StatusCancelRequested]),
 		CanceledTasks:        safeCount(counts[domain.StatusCanceled]),
 		SuccessTasks:         safeCount(counts[domain.StatusSuccess]),

@@ -2,7 +2,8 @@ import { createTasksApi } from '../shared/api/tasks_api.js';
 import { normalizeHeadResult } from './download_preflight.js';
 import { hideErrorModal as hideLogsErrorModal, showErrorModal as showLogsErrorModal } from './error_modal.js';
 import { applyStatusCatalog as normalizeStatusCatalog } from './status_filters.js';
-import { buildStatusBadgeModel } from './table_render.js';
+import { buildStatusBadgeModel, formatProgressValue, getTaskTypeLabel } from './table_render.js';
+import { requestRetryTask, runSuccessTaskAction } from './task_actions.js';
 import {
     fallbackStatusLabel as fallbackSharedStatusLabel,
     getStatusMeta as getSharedStatusMeta,
@@ -32,6 +33,7 @@ export function createLogsModule(win, doc) {
         filters: { status: '', q: '' },
         statusCatalog: {},
         downloadInProgressTaskIds: new Set(),
+        retryInProgressTaskIds: new Set(),
         startupRecoveryDismissKey: '',
         modalRestoreFocusEl: null,
         formHandler: null,
@@ -247,6 +249,14 @@ export function createLogsModule(win, doc) {
         return cell;
     }
 
+    function createTaskTypeCell(log) {
+        const cell = doc.createElement('td');
+        const value = createValueContainer();
+        appendTextValue(value, getTaskTypeLabel(log));
+        cell.appendChild(value);
+        return cell;
+    }
+
     function createErrorCell(errorText) {
         const cell = doc.createElement('td');
         const value = createValueContainer();
@@ -372,19 +382,30 @@ export function createLogsModule(win, doc) {
         }
 
         try {
-            const downloadUrl = `/api/tasks/${encodeURIComponent(taskId)}/download`;
-            const precheckResult = await precheckDownload(downloadUrl);
-            if (!precheckResult.ok) {
-                showFeedback(precheckResult.message || '下载失败。', 'error');
+            const mode = await getDownloadActionMode();
+            const result = await runSuccessTaskAction({
+                api,
+                taskId,
+                mode,
+                browserDownload: async (resolvedTaskId) => {
+                    const downloadUrl = `/api/tasks/${encodeURIComponent(resolvedTaskId)}/download`;
+                    const precheckResult = await precheckDownload(downloadUrl);
+                    if (!precheckResult.ok) {
+                        throw new Error(precheckResult.message || '下载失败。');
+                    }
+                    triggerNativeDownload(downloadUrl);
+                    return { response: { ok: true }, payload: null };
+                },
+            });
+            if (mode === 'komga_copy') {
+                const targetPath = result && result.payload ? String(result.payload.target_path || '').trim() : '';
+                showFeedback(targetPath ? `已复制到 ${targetPath}` : '已复制到 Komga。', 'success');
                 return;
             }
-
-            // Let the browser stream the response directly instead of buffering a Blob in memory.
-            triggerNativeDownload(downloadUrl);
             showFeedback('下载已开始。', 'success');
         } catch (error) {
-            console.error('Error downloading task file:', error);
-            showFeedback('下载启动失败，请重试。', 'error');
+            console.error('Error handling success task action:', error);
+            showFeedback(error && error.message ? error.message : '下载启动失败，请重试。', 'error');
         } finally {
             setTimeout(() => {
                 state.downloadInProgressTaskIds.delete(taskId);
@@ -396,6 +417,57 @@ export function createLogsModule(win, doc) {
         }
     }
 
+    async function requestRetry(taskId, button) {
+        if (!taskId || state.retryInProgressTaskIds.has(taskId)) {
+            return;
+        }
+        state.retryInProgressTaskIds.add(taskId);
+        if (button) {
+            button.disabled = true;
+            button.textContent = '重试中...';
+        }
+        try {
+            const { response, payload } = await requestRetryTask(api, taskId);
+            const payloadMessage = extractPayloadMessage(payload);
+
+            if (response.ok && payload && payload.ok === true) {
+                showFeedback(payloadMessage || '已重新加入队列。', 'success');
+                return;
+            }
+            showFeedback(payloadMessage || `重试失败（${response.status}）。`, 'error');
+        } catch (error) {
+            console.error('Error retrying upload task:', error);
+            showFeedback('重试失败，请稍后再试。', 'error');
+        } finally {
+            state.retryInProgressTaskIds.delete(taskId);
+            fetchLogs(state.currentPage);
+        }
+    }
+
+    async function getDownloadActionMode() {
+        const cachedMode =
+            win.__telegraphSettingsState && typeof win.__telegraphSettingsState.downloadActionMode === 'string'
+                ? String(win.__telegraphSettingsState.downloadActionMode).trim()
+                : '';
+        if (cachedMode) {
+            return cachedMode;
+        }
+        try {
+            const { response, payload } = await api.getJson('/v2/settings', { cache: 'no-store' });
+            if (response.ok && payload && typeof payload.download_action_mode === 'string') {
+                const resolvedMode = String(payload.download_action_mode).trim() || 'browser';
+                win.__telegraphSettingsState = {
+                    ...(win.__telegraphSettingsState || {}),
+                    downloadActionMode: resolvedMode,
+                };
+                return resolvedMode;
+            }
+        } catch (error) {
+            console.error('Failed to load settings mode for logs action:', error);
+        }
+        return 'browser';
+    }
+
     function createActionCell(log) {
         const cell = doc.createElement('td');
         cell.className = 'log-action-cell';
@@ -404,6 +476,12 @@ export function createLogsModule(win, doc) {
         const statusMeta = getStatusMeta(status);
         const canCancel = Boolean(statusMeta && statusMeta.can_cancel && log.id);
         const canDownload = Boolean(statusMeta && statusMeta.can_download && log.id);
+        const canRetry = Boolean(
+            String(log && log.task_type || '').trim().toLowerCase() === 'upload' &&
+            status === 'FAILED' &&
+            log.retryable &&
+            log.id,
+        );
 
         if (canCancel) {
             const button = doc.createElement('button');
@@ -411,6 +489,17 @@ export function createLogsModule(win, doc) {
             button.className = 'btn-cancel';
             button.textContent = '取消';
             button.onclick = () => requestCancel(log.id, button);
+            value.appendChild(button);
+            cell.appendChild(value);
+            return cell;
+        }
+
+        if (canRetry) {
+            const button = doc.createElement('button');
+            button.type = 'button';
+            button.className = 'btn-secondary';
+            button.textContent = '重试';
+            button.onclick = () => requestRetry(log.id, button);
             value.appendChild(button);
             cell.appendChild(value);
             return cell;
@@ -442,7 +531,7 @@ export function createLogsModule(win, doc) {
         if (!logs.length) {
             const row = doc.createElement('tr');
             const cell = doc.createElement('td');
-            cell.colSpan = 7;
+            cell.colSpan = 8;
             cell.style.textAlign = 'center';
             cell.textContent = '当前筛选条件下暂无日志。';
             row.appendChild(cell);
@@ -453,11 +542,11 @@ export function createLogsModule(win, doc) {
         const fragment = doc.createDocumentFragment();
         logs.forEach((log) => {
             const row = doc.createElement('tr');
-            const progress = log.total_images > 0 ? `${log.progress} / ${log.total_images}` : '暂无';
             row.appendChild(createCell(log.id || ''));
+            row.appendChild(createTaskTypeCell(log));
             row.appendChild(createLinkCell(log.url || ''));
             row.appendChild(createStatusCell(log.status));
-            row.appendChild(createCell(progress));
+            row.appendChild(createCell(formatProgressValue(log)));
             row.appendChild(createCell(new Date((log.start_time || 0) * 1000).toLocaleString()));
             row.appendChild(createErrorCell(log.error || ''));
             row.appendChild(createActionCell(log));
@@ -474,7 +563,7 @@ export function createLogsModule(win, doc) {
         logBody.innerHTML = '';
         const row = doc.createElement('tr');
         const cell = doc.createElement('td');
-        cell.colSpan = 7;
+        cell.colSpan = 8;
         cell.style.textAlign = 'center';
         cell.style.color = 'red';
         cell.textContent = message;

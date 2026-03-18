@@ -24,9 +24,10 @@ type SettingsHandler struct {
 }
 
 type settingsUpdatePayload struct {
-	Timeout          *int `json:"timeout"`
-	Retries          *int `json:"retries"`
-	ImageConcurrency *int `json:"image_concurrency"`
+	Timeout            *int    `json:"timeout"`
+	Retries            *int    `json:"retries"`
+	ImageConcurrency   *int    `json:"image_concurrency"`
+	DownloadActionMode *string `json:"download_action_mode"`
 }
 
 func NewSettingsHandler(store SettingsStore) *SettingsHandler {
@@ -71,15 +72,16 @@ func (h *SettingsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	if payload.Timeout == nil || payload.Retries == nil || payload.ImageConcurrency == nil {
-		writeError(w, http.StatusBadRequest, "timeout, retries, image_concurrency are required")
+	if payload.Timeout == nil || payload.Retries == nil || payload.ImageConcurrency == nil || payload.DownloadActionMode == nil {
+		writeError(w, http.StatusBadRequest, "timeout, retries, image_concurrency, download_action_mode are required")
 		return
 	}
 
 	normalized := config.NormalizeSettingsSnapshot(config.SettingsSnapshot{
-		Timeout:          *payload.Timeout,
-		Retries:          *payload.Retries,
-		ImageConcurrency: *payload.ImageConcurrency,
+		Timeout:            *payload.Timeout,
+		Retries:            *payload.Retries,
+		ImageConcurrency:   *payload.ImageConcurrency,
+		DownloadActionMode: *payload.DownloadActionMode,
 	})
 	snapshot, err := h.store.UpdateSettings(r.Context(), normalized)
 	if err != nil {
@@ -104,11 +106,11 @@ func (s *PostgresTaskStore) GetSettings(ctx context.Context) (config.SettingsSna
 	err := s.db.QueryRow(
 		ctx,
 		`
-		SELECT timeout, retries, image_concurrency
+		SELECT timeout, retries, image_concurrency, download_action_mode
 		FROM app_settings
 		WHERE id = 1
 		`,
-	).Scan(&snapshot.Timeout, &snapshot.Retries, &snapshot.ImageConcurrency)
+	).Scan(&snapshot.Timeout, &snapshot.Retries, &snapshot.ImageConcurrency, &snapshot.DownloadActionMode)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return config.DefaultSettingsSnapshot(), nil
@@ -133,20 +135,22 @@ func (s *PostgresTaskStore) UpdateSettings(ctx context.Context, snapshot config.
 		ctx,
 		`
 		INSERT INTO app_settings (
-			id, timeout, retries, image_concurrency, updated_at
+			id, timeout, retries, image_concurrency, download_action_mode, updated_at
 		) VALUES (
-			1, $1, $2, $3, NOW()
+			1, $1, $2, $3, $4, NOW()
 		)
 		ON CONFLICT (id) DO UPDATE
 		SET
 			timeout = EXCLUDED.timeout,
 			retries = EXCLUDED.retries,
 			image_concurrency = EXCLUDED.image_concurrency,
+			download_action_mode = EXCLUDED.download_action_mode,
 			updated_at = NOW()
 		`,
 		normalized.Timeout,
 		normalized.Retries,
 		normalized.ImageConcurrency,
+		normalized.DownloadActionMode,
 	)
 	if err != nil {
 		return config.SettingsSnapshot{}, err
@@ -174,15 +178,16 @@ func (s *PostgresTaskStore) ensureAppSettingsDefaultRow(ctx context.Context) err
 		ctx,
 		`
 		INSERT INTO app_settings (
-			id, timeout, retries, image_concurrency, updated_at
+			id, timeout, retries, image_concurrency, download_action_mode, updated_at
 		) VALUES (
-			1, $1, $2, $3, NOW()
+			1, $1, $2, $3, $4, NOW()
 		)
 		ON CONFLICT (id) DO NOTHING
 		`,
 		defaults.Timeout,
 		defaults.Retries,
 		defaults.ImageConcurrency,
+		defaults.DownloadActionMode,
 	)
 	if err != nil {
 		return err

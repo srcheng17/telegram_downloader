@@ -32,12 +32,13 @@ type pageData struct {
 }
 
 type Settings struct {
-	TaskConcurrency   int
-	ImageConcurrency  int
-	Timeout           int
-	Retries           int
-	LogRetentionDays  int
-	FileRetentionDays int
+	TaskConcurrency    int
+	ImageConcurrency   int
+	Timeout            int
+	Retries            int
+	LogRetentionDays   int
+	FileRetentionDays  int
+	DownloadActionMode string
 }
 
 type Guardrails struct {
@@ -155,6 +156,7 @@ func (h *Handler) currentSettings(r *http.Request) Settings {
 	settings.Timeout = normalized.Timeout
 	settings.Retries = normalized.Retries
 	settings.ImageConcurrency = normalized.ImageConcurrency
+	settings.DownloadActionMode = normalized.DownloadActionMode
 	return settings
 }
 
@@ -253,6 +255,9 @@ func normalizeSettings(settings Settings) Settings {
 	if settings.FileRetentionDays <= 0 {
 		settings.FileRetentionDays = 7
 	}
+	if settings.DownloadActionMode == "" {
+		settings.DownloadActionMode = "browser"
+	}
 	return settings
 }
 
@@ -296,9 +301,10 @@ func parseSettingsForm(r *http.Request) (appconfig.SettingsSnapshot, error) {
 	}
 
 	return appconfig.NormalizeSettingsSnapshot(appconfig.SettingsSnapshot{
-		Timeout:          timeout,
-		Retries:          retries,
-		ImageConcurrency: imageConcurrency,
+		Timeout:            timeout,
+		Retries:            retries,
+		ImageConcurrency:   imageConcurrency,
+		DownloadActionMode: strings.TrimSpace(r.FormValue("download_action_mode")),
 	}), nil
 }
 

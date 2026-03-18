@@ -773,6 +773,40 @@ func TestDashboardSummarySuccessRateZeroWhenFinishedZero(t *testing.T) {
 	}
 }
 
+func TestDashboardSummaryCountsUploadingAsActive(t *testing.T) {
+	repo := &fakeTaskStore{
+		summaryCounts: map[string]int{
+			"UPLOADING": 2,
+			"RUNNING":   1,
+			"SUCCESS":   1,
+		},
+	}
+	handler := NewRouter(repo, &fakeTaskQueue{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/dashboard/summary", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var summary DashboardSummary
+	if err := json.Unmarshal(recorder.Body.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary struct: %v", err)
+	}
+	if summary.TotalTasks != 4 {
+		t.Fatalf("expected total_tasks=4, got %d", summary.TotalTasks)
+	}
+	if summary.ActiveTasks != 3 {
+		t.Fatalf("expected active_tasks=3, got %d", summary.ActiveTasks)
+	}
+	if summary.FinishedTasks != 1 {
+		t.Fatalf("expected finished_tasks=1, got %d", summary.FinishedTasks)
+	}
+}
+
 func TestBuildTaskListFilterSupportsStatusOnlyFastPath(t *testing.T) {
 	clause, args := buildTaskListFilter("SUCCESS", "")
 
@@ -814,6 +848,10 @@ func TestPostgresTaskStoreListTasksOrdersByUpdatedAtDesc(t *testing.T) {
 type fakeListTasksDB struct {
 	countQuery string
 	rowsQuery  string
+}
+
+func (f *fakeListTasksDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	panic("unexpected Exec call")
 }
 
 func (f *fakeListTasksDB) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {

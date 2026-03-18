@@ -126,6 +126,33 @@ func TestExecutorPassesSnapshotMetadataToDownloader(t *testing.T) {
 	}
 }
 
+func TestExecutorPassesUploadSourcePathToDownloader(t *testing.T) {
+	repo := newFakeV2ExecutorRepo()
+	repo.tasks["task-upload-meta"] = v2ExecutorTaskRecord{
+		id:                "task-upload-meta",
+		status:            "QUEUED",
+		enqueueToken:      "token-upload-meta",
+		taskType:          stringPtr("upload"),
+		sourceArchivePath: stringPtr("/tmp/task-upload-meta/source.zip"),
+		sourceArchiveName: stringPtr("source.zip"),
+		author:            stringPtr("作者A"),
+	}
+	downloader := &fakeV2ExecutorDownloader{artifactPath: "/tmp/task-upload-meta.cbz"}
+	executor := NewV2Executor(V2ExecutorConfig{
+		Repo:     repo,
+		Worker:   "worker-v2-upload",
+		Download: downloader,
+	})
+
+	if err := executor.Execute(context.Background(), "task-upload-meta", "token-upload-meta"); err != nil {
+		t.Fatalf("execute upload task: %v", err)
+	}
+
+	if downloader.lastURL != "/tmp/task-upload-meta/source.zip" {
+		t.Fatalf("expected upload source path /tmp/task-upload-meta/source.zip, got %q", downloader.lastURL)
+	}
+}
+
 func TestExecutorMarksFailedAfterRetryExhausted(t *testing.T) {
 	repo := newFakeV2ExecutorRepo()
 	repo.tasks["task-failed"] = v2ExecutorTaskRecord{
@@ -675,21 +702,24 @@ type fakeV2ExecutorRepo struct {
 }
 
 type v2ExecutorTaskRecord struct {
-	id               string
-	url              string
-	status           string
-	enqueueToken     string
-	error            *string
-	resultZipPath    *string
-	claimedBy        *string
-	author           *string
-	seriesName       *string
-	comicName        *string
-	summary          *string
-	tagsRaw          *string
-	tagsNormalized   *string
-	genresRaw        *string
-	genresNormalized *string
+	id                string
+	url               string
+	status            string
+	enqueueToken      string
+	taskType          *string
+	sourceArchivePath *string
+	sourceArchiveName *string
+	error             *string
+	resultZipPath     *string
+	claimedBy         *string
+	author            *string
+	seriesName        *string
+	comicName         *string
+	summary           *string
+	tagsRaw           *string
+	tagsNormalized    *string
+	genresRaw         *string
+	genresNormalized  *string
 }
 
 type v2ExecutorStatusUpdate struct {
@@ -734,18 +764,21 @@ func (f *fakeV2ExecutorRepo) GetTaskForExecution(_ context.Context, taskID strin
 		f.getTaskStatusSequence = f.getTaskStatusSequence[1:]
 	}
 	return V2TaskSnapshot{
-		ID:               task.id,
-		URL:              task.url,
-		Status:           status,
-		EnqueueToken:     task.enqueueToken,
-		Author:           task.author,
-		SeriesName:       task.seriesName,
-		ComicName:        task.comicName,
-		Summary:          task.summary,
-		TagsRaw:          task.tagsRaw,
-		TagsNormalized:   task.tagsNormalized,
-		GenresRaw:        task.genresRaw,
-		GenresNormalized: task.genresNormalized,
+		ID:                task.id,
+		URL:               task.url,
+		Status:            status,
+		EnqueueToken:      task.enqueueToken,
+		TaskType:          task.taskType,
+		SourceArchivePath: task.sourceArchivePath,
+		SourceArchiveName: task.sourceArchiveName,
+		Author:            task.author,
+		SeriesName:        task.seriesName,
+		ComicName:         task.comicName,
+		Summary:           task.summary,
+		TagsRaw:           task.tagsRaw,
+		TagsNormalized:    task.tagsNormalized,
+		GenresRaw:         task.genresRaw,
+		GenresNormalized:  task.genresNormalized,
 	}, nil
 }
 

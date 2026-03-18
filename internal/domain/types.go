@@ -40,24 +40,29 @@ type StatusMeta struct {
 }
 
 type TaskLog struct {
-	ID               string  `json:"id"`
-	URL              string  `json:"url"`
-	CanonicalURL     *string `json:"canonical_url"`
-	Status           string  `json:"status"`
-	StartTime        float64 `json:"start_time"`
-	Error            *string `json:"error"`
-	Progress         int     `json:"progress"`
-	TotalImages      int     `json:"total_images"`
-	ImageConcurrency int     `json:"image_concurrency"`
-	ResultZipPath    *string `json:"result_zip_path"`
-	Author           *string `json:"author"`
-	SeriesName       *string `json:"series_name"`
-	ComicName        *string `json:"comic_name"`
-	Summary          *string `json:"summary"`
-	TagsRaw          *string `json:"tags_raw"`
-	TagsNormalized   *string `json:"tags_normalized"`
-	GenresRaw        *string `json:"genres_raw"`
-	GenresNormalized *string `json:"genres_normalized"`
+	ID                string  `json:"id"`
+	URL               string  `json:"url"`
+	CanonicalURL      *string `json:"canonical_url"`
+	Status            string  `json:"status"`
+	TaskType          *string `json:"task_type"`
+	SourceArchiveName *string `json:"source_archive_name"`
+	UploadLoadedBytes int64   `json:"upload_loaded_bytes"`
+	UploadTotalBytes  int64   `json:"upload_total_bytes"`
+	Retryable         bool    `json:"retryable"`
+	StartTime         float64 `json:"start_time"`
+	Error             *string `json:"error"`
+	Progress          int     `json:"progress"`
+	TotalImages       int     `json:"total_images"`
+	ImageConcurrency  int     `json:"image_concurrency"`
+	ResultZipPath     *string `json:"result_zip_path"`
+	Author            *string `json:"author"`
+	SeriesName        *string `json:"series_name"`
+	ComicName         *string `json:"comic_name"`
+	Summary           *string `json:"summary"`
+	TagsRaw           *string `json:"tags_raw"`
+	TagsNormalized    *string `json:"tags_normalized"`
+	GenresRaw         *string `json:"genres_raw"`
+	GenresNormalized  *string `json:"genres_normalized"`
 }
 
 type LogQuery struct {

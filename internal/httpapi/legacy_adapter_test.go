@@ -105,6 +105,65 @@ func TestLegacyAdapterReadLogsMapsFromV2Tasks(t *testing.T) {
 	}
 }
 
+func TestLegacyAdapterReadLogsPreservesUploadTaskFields(t *testing.T) {
+	store := &fakeLegacyV2Store{
+		listResult: httpv2.ListTasksResult{
+			Tasks: []httpv2.Task{
+				{
+					ID:                "task-v2-upload-log",
+					URL:               "",
+					Status:            httpv2.TaskStatusUploading,
+					TaskType:          stringPtr("upload"),
+					SourceArchiveName: stringPtr("demo.7z"),
+					UploadLoadedBytes: 12,
+					UploadTotalBytes:  40,
+					Retryable:         true,
+					Author:            stringPtr("作者A"),
+					SeriesName:        stringPtr("系列B"),
+					ComicName:         stringPtr("漫画C"),
+					CreatedAt:         time.Unix(1700000999, 0).UTC(),
+					UpdatedAt:         time.Unix(1700001001, 0).UTC(),
+				},
+			},
+			Total:      1,
+			Page:       1,
+			PerPage:    25,
+			TotalPages: 1,
+		},
+		statusCounts: map[string]int{
+			httpv2.TaskStatusUploading: 1,
+		},
+	}
+	adapter := NewLegacyAdapter(store, nil, nil)
+
+	response, err := adapter.ReadLogs(context.Background(), domain.LogQuery{Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("read logs: %v", err)
+	}
+	if len(response.Logs) != 1 {
+		t.Fatalf("expected one log row, got %d", len(response.Logs))
+	}
+	logItem := response.Logs[0]
+	if logItem.TaskType == nil || *logItem.TaskType != "upload" {
+		t.Fatalf("expected task_type upload, got %#v", logItem.TaskType)
+	}
+	if logItem.SourceArchiveName == nil || *logItem.SourceArchiveName != "demo.7z" {
+		t.Fatalf("expected source archive name demo.7z, got %#v", logItem.SourceArchiveName)
+	}
+	if logItem.UploadLoadedBytes != 12 || logItem.UploadTotalBytes != 40 {
+		t.Fatalf("expected upload bytes 12/40, got %d/%d", logItem.UploadLoadedBytes, logItem.UploadTotalBytes)
+	}
+	if !logItem.Retryable {
+		t.Fatalf("expected retryable=true")
+	}
+	if logItem.Author == nil || *logItem.Author != "作者A" {
+		t.Fatalf("expected author preserved, got %#v", logItem.Author)
+	}
+	if logItem.Status != domain.StatusUploading {
+		t.Fatalf("expected mapped status %q, got %q", domain.StatusUploading, logItem.Status)
+	}
+}
+
 func TestLegacyAdapterCreateOrReuseDownloadTaskPrefersAtomicClaimPath(t *testing.T) {
 	store := &fakeLegacyAtomicClaimStore{
 		claimResult: httpv2.LegacyClaimTaskResult{

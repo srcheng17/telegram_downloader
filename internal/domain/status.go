@@ -1,6 +1,7 @@
 package domain
 
 const (
+	StatusUploading       = "UPLOADING"
 	StatusPending         = "PENDING"
 	StatusInProgress      = "IN_PROGRESS"
 	StatusCancelRequested = "CANCEL_REQUESTED"
@@ -10,6 +11,7 @@ const (
 )
 
 var knownStatuses = map[string]struct{}{
+	StatusUploading:       {},
 	StatusPending:         {},
 	StatusInProgress:      {},
 	StatusCancelRequested: {},
@@ -19,12 +21,19 @@ var knownStatuses = map[string]struct{}{
 }
 
 var ActiveTaskStatuses = []string{
+	StatusUploading,
 	StatusPending,
 	StatusInProgress,
 	StatusCancelRequested,
 }
 
 var StatusCatalog = map[string]StatusMeta{
+	StatusUploading: {
+		Label:       "上传中",
+		CanCancel:   true,
+		CanDownload: false,
+		Terminal:    false,
+	},
 	StatusPending: {
 		Label:       "等待中",
 		CanCancel:   true,

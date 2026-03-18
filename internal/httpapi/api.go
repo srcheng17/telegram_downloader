@@ -279,6 +279,9 @@ type ReadyzChecker func(ctx context.Context) (bool, error)
 type API struct {
 	store                   TaskReader
 	legacyAdapter           *LegacyAdapter
+	v2TaskStore             LegacyV2TaskStore
+	v2TaskQueue             LegacyV2TaskQueue
+	v2ArtifactService       LegacyV2ArtifactService
 	upstreamBaseURL         string
 	httpClient              *http.Client
 	downloadSubmitter       DownloadSubmitter
@@ -288,6 +291,8 @@ type API struct {
 	downloadTimeout         int
 	downloadRetries         int
 	imageConcurrency        int
+	uploadTempDir           string
+	komgaRootDir            string
 }
 
 type RouterOptions struct {
@@ -305,6 +310,8 @@ type RouterOptions struct {
 	DownloadRetries         int
 	ImageConcurrency        int
 	ReadyzChecker           ReadyzChecker
+	UploadTempDir           string
+	KomgaRootDir            string
 }
 
 func NewRouter(store TaskReader) http.Handler {
@@ -330,6 +337,9 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 	api := &API{
 		store:                   store,
 		legacyAdapter:           NewLegacyAdapter(options.V2TaskStore, options.V2TaskQueue, options.V2ArtifactService),
+		v2TaskStore:             options.V2TaskStore,
+		v2TaskQueue:             options.V2TaskQueue,
+		v2ArtifactService:       options.V2ArtifactService,
 		upstreamBaseURL:         upstreamBaseURL,
 		httpClient:              httpClient,
 		downloadSubmitter:       downloadSubmitter,
@@ -339,6 +349,8 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 		downloadTimeout:         positiveOrDefault(options.DownloadTimeout, defaultTimeoutSeconds),
 		downloadRetries:         nonNegativeOrDefault(options.DownloadRetries, defaultRetries),
 		imageConcurrency:        positiveOrDefault(options.ImageConcurrency, defaultImageConcurrency),
+		uploadTempDir:           strings.TrimSpace(options.UploadTempDir),
+		komgaRootDir:            strings.TrimSpace(options.KomgaRootDir),
 	}
 
 	router := chi.NewRouter()
@@ -352,8 +364,13 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 	router.Get("/readyz", api.handleReadyz)
 	router.Get("/api/summary", api.handleSummary)
 	router.Get("/api/logs", api.handleLogs)
+	router.Get("/api/metadata-history", api.handleMetadataHistory)
 	router.Post("/download", api.handleDownload)
+	router.Post("/api/tasks/upload/init", api.handleUploadInit)
+	router.Put("/api/tasks/{task_id}/upload-source", api.handleUploadSource)
 	router.Post("/api/tasks/{task_id}/cancel", api.handleTaskCancel)
+	router.Post("/api/tasks/{task_id}/retry", api.handleTaskRetry)
+	router.Post("/api/tasks/{task_id}/copy-to-komga", api.handleTaskCopyToKomga)
 	router.Get("/api/tasks/{task_id}/download", api.handleTaskDownload)
 	router.Head("/api/tasks/{task_id}/download", api.handleTaskDownload)
 	return router

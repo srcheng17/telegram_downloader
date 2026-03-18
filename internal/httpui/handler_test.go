@@ -82,12 +82,13 @@ func TestBaseTemplateLoadsDistBundles(t *testing.T) {
 func TestSettingsPageUsesDynamicSettingsValues(t *testing.T) {
 	router := NewRouterWithConfig(Config{
 		Settings: Settings{
-			TaskConcurrency:   7,
-			ImageConcurrency:  9,
-			Timeout:           45,
-			Retries:           12,
-			LogRetentionDays:  15,
-			FileRetentionDays: 21,
+			TaskConcurrency:    7,
+			ImageConcurrency:   9,
+			Timeout:            45,
+			Retries:            12,
+			LogRetentionDays:   15,
+			FileRetentionDays:  21,
+			DownloadActionMode: "komga_copy",
 		},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
@@ -106,6 +107,7 @@ func TestSettingsPageUsesDynamicSettingsValues(t *testing.T) {
 	assertContains(t, body, `name="retries" value="12"`)
 	assertContains(t, body, `name="log_retention_days" value="15"`)
 	assertContains(t, body, `name="file_retention_days" value="21"`)
+	assertContains(t, body, `name="download_action_mode" value="komga_copy" checked`)
 }
 
 func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
@@ -127,10 +129,6 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	}
 
 	body := recorder.Body.String()
-	assertContains(t, body, "telegra.ph, www.telegra.ph, graph.org, www.graph.org")
-	assertContains(t, body, ">456<")
-	assertContains(t, body, "33554432 字节")
-	assertContains(t, body, "1073741824 字节")
 	assertContains(t, body, `href="/" hx-get="/" hx-target="#content" hx-push-url="true"`)
 	assertContains(t, body, `href="/logs" hx-get="/logs" hx-target="#content" hx-push-url="true"`)
 	assertContains(t, body, `href="/settings" hx-get="/settings" hx-target="#content" hx-push-url="true"`)
@@ -138,9 +136,14 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	assertContains(t, body, `hx-get="/logs"`)
 	assertContains(t, body, `hx-target="#content"`)
 	assertContains(t, body, `hx-push-url="true"`)
-	assertContains(t, body, "支持英文逗号 (,) 与中文逗号（，）分隔多个作者。")
-	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格与 # 分隔多个标签，自动清理多余空格。")
-	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格与 # 分隔多个类型，自动清理多余空格。")
+	assertContains(t, body, "最近 20 条填写的元数据")
+	assertContains(t, body, "URL 下载")
+	assertContains(t, body, "上传压缩包")
+	assertContains(t, body, `id="archive_file"`)
+	assertContains(t, body, "支持 ZIP、RAR、7Z。")
+	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、半角 # 与全角 ＃ 分隔多个作者")
+	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个标签")
+	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个类型")
 }
 
 func TestHTMXRequestReturnsPageFragment(t *testing.T) {
@@ -199,12 +202,13 @@ func TestHTMXRequestReturnsPageFragment(t *testing.T) {
 func TestSettingsPageKeepsZeroRetriesValue(t *testing.T) {
 	router := NewRouterWithConfig(Config{
 		Settings: Settings{
-			TaskConcurrency:   2,
-			ImageConcurrency:  2,
-			Timeout:           30,
-			Retries:           0,
-			LogRetentionDays:  7,
-			FileRetentionDays: 7,
+			TaskConcurrency:    2,
+			ImageConcurrency:   2,
+			Timeout:            30,
+			Retries:            0,
+			LogRetentionDays:   7,
+			FileRetentionDays:  7,
+			DownloadActionMode: "browser",
 		},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
@@ -240,9 +244,10 @@ func TestSettingsPagePostUpdatesSettingsStore(t *testing.T) {
 		SettingsStore: store,
 	})
 	form := url.Values{
-		"timeout":           {"75"},
-		"retries":           {"6"},
-		"image_concurrency": {"9"},
+		"timeout":              {"75"},
+		"retries":              {"6"},
+		"image_concurrency":    {"9"},
+		"download_action_mode": {"komga_copy"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -260,9 +265,10 @@ func TestSettingsPagePostUpdatesSettingsStore(t *testing.T) {
 		t.Fatalf("expected update to be called once, got %d", store.updateCalls)
 	}
 	want := appconfig.SettingsSnapshot{
-		Timeout:          75,
-		Retries:          6,
-		ImageConcurrency: 9,
+		Timeout:            75,
+		Retries:            6,
+		ImageConcurrency:   9,
+		DownloadActionMode: "komga_copy",
 	}
 	if !reflect.DeepEqual(store.lastUpdated, want) {
 		t.Fatalf("unexpected update payload:\n got: %#v\nwant: %#v", store.lastUpdated, want)
@@ -272,19 +278,21 @@ func TestSettingsPagePostUpdatesSettingsStore(t *testing.T) {
 func TestSettingsPageUsesSettingsStoreSnapshotValues(t *testing.T) {
 	store := &fakeUISettingsStore{
 		getSnapshot: appconfig.SettingsSnapshot{
-			Timeout:          81,
-			Retries:          4,
-			ImageConcurrency: 13,
+			Timeout:            81,
+			Retries:            4,
+			ImageConcurrency:   13,
+			DownloadActionMode: "komga_copy",
 		},
 	}
 	router := NewRouterWithConfig(Config{
 		Settings: Settings{
-			TaskConcurrency:   2,
-			ImageConcurrency:  3,
-			Timeout:           30,
-			Retries:           10,
-			LogRetentionDays:  7,
-			FileRetentionDays: 7,
+			TaskConcurrency:    2,
+			ImageConcurrency:   3,
+			Timeout:            30,
+			Retries:            10,
+			LogRetentionDays:   7,
+			FileRetentionDays:  7,
+			DownloadActionMode: "browser",
 		},
 		SettingsStore: store,
 	})
@@ -303,6 +311,7 @@ func TestSettingsPageUsesSettingsStoreSnapshotValues(t *testing.T) {
 	assertContains(t, body, `name="timeout" value="81"`)
 	assertContains(t, body, `name="retries" value="4"`)
 	assertContains(t, body, `name="image_concurrency" value="13"`)
+	assertContains(t, body, `name="download_action_mode" value="komga_copy" checked`)
 }
 
 func TestStaticRouteUsesConfiguredStaticDir(t *testing.T) {

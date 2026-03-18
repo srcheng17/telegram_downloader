@@ -396,3 +396,124 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
   await expect(page.locator('#logs-feedback')).toContainText('下载已开始。');
   await expect.poll(() => successDownloadRequests).toBeGreaterThan(0);
 });
+
+test('日志页：上传失败可重试，Komga 模式成功任务走复制动作', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__telegraphSettingsState = { downloadActionMode: 'komga_copy' };
+  });
+
+  const statusCatalog = {
+    UPLOADING: { label: '上传中', can_cancel: true, can_download: false },
+    FAILED: { label: '失败', can_cancel: false, can_download: false },
+    QUEUED: { label: '等待中', can_cancel: true, can_download: false },
+    SUCCESS: { label: '成功', can_cancel: false, can_download: true },
+  };
+  const logs = [
+    {
+      id: 'e2e-upload-progress',
+      url: '',
+      task_type: 'upload',
+      source_archive_name: 'demo.zip',
+      status: 'UPLOADING',
+      upload_loaded_bytes: 12,
+      upload_total_bytes: 40,
+      progress: 0,
+      total_images: 0,
+      start_time: 1762531204,
+      error: '',
+    },
+    {
+      id: 'e2e-upload-failed',
+      url: '',
+      task_type: 'upload',
+      source_archive_name: 'retry-me.7z',
+      status: 'FAILED',
+      retryable: true,
+      upload_loaded_bytes: 40,
+      upload_total_bytes: 40,
+      progress: 0,
+      total_images: 0,
+      start_time: 1762531205,
+      error: 'upload failed',
+    },
+    {
+      id: 'e2e-komga-copy',
+      url: '',
+      task_type: 'upload',
+      source_archive_name: 'copy.zip',
+      status: 'SUCCESS',
+      progress: 8,
+      total_images: 8,
+      start_time: 1762531206,
+      error: '',
+    },
+  ];
+  let retryRequests = 0;
+  let copyRequests = 0;
+
+  await page.route('**/api/logs**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        logs,
+        total: logs.length,
+        page: 1,
+        per_page: 25,
+        total_pages: 1,
+        has_active_tasks: true,
+        filters: { status: '', q: '' },
+        summary: {
+          active_tasks: 1,
+          finished_tasks: 2,
+          success_rate: 50,
+          failed_tasks: 1,
+          canceled_tasks: 0,
+        },
+        status_catalog: statusCatalog,
+      }),
+    });
+  });
+
+  await page.route('**/api/tasks/*/retry', async (route) => {
+    retryRequests += 1;
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        task_id: 'e2e-upload-failed',
+        status: 'QUEUED',
+      }),
+    });
+  });
+
+  await page.route('**/api/tasks/*/copy-to-komga', async (route) => {
+    copyRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        task_id: 'e2e-komga-copy',
+        target_path: '/Users/ryancheng/docker_data/komga/data/myReadingManga/tanbokon/demo.cbz',
+      }),
+    });
+  });
+
+  await page.goto('/logs');
+
+  const uploadRow = page.locator('#log-body tr', { hasText: 'e2e-upload-progress' });
+  await expect(uploadRow).toContainText('上传');
+  await expect(uploadRow).toContainText('12 / 40');
+
+  const failedUploadRow = page.locator('#log-body tr', { hasText: 'e2e-upload-failed' });
+  await failedUploadRow.getByRole('button', { name: '重试' }).click();
+  await expect(page.locator('#logs-feedback')).toContainText('已重新加入队列。');
+  await expect.poll(() => retryRequests).toBe(1);
+
+  const successRow = page.locator('#log-body tr', { hasText: 'e2e-komga-copy' });
+  await successRow.getByRole('button', { name: '下载' }).click();
+  await expect(page.locator('#logs-feedback')).toContainText('myReadingManga');
+  await expect.poll(() => copyRequests).toBe(1);
+});

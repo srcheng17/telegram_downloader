@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"unicode"
+
+	apptasks "github.com/ryancheng/telegram-downloader/internal/app/tasks"
 )
 
 type downloadMetadata struct {
@@ -49,16 +51,24 @@ func extractFromMap(payload map[string]any) (string, bool, downloadMetadata) {
 	rawAuthor := normalizePayloadText(payload["author"], maxMetadataFieldLength)
 	tagsRaw := normalizePayloadText(payload["tags"], maxMetadataFieldLength)
 	genresRaw := normalizePayloadText(payload["genres"], maxMetadataFieldLength)
+	normalized := apptasks.NormalizeMetadata(apptasks.MetadataInput{
+		Author:     optionalString(rawAuthor),
+		SeriesName: optionalString(normalizePayloadText(payload["series_name"], maxMetadataFieldLength)),
+		ComicName:  optionalString(normalizePayloadText(payload["comic_name"], maxMetadataFieldLength)),
+		Summary:    optionalString(normalizePayloadText(payload["summary"], maxMetadataFieldLength)),
+		TagsRaw:    optionalString(tagsRaw),
+		GenresRaw:  optionalString(genresRaw),
+	})
 
 	metadata := downloadMetadata{
-		author:           optionalString(normalizeAuthorList(rawAuthor)),
-		seriesName:       optionalString(normalizePayloadText(payload["series_name"], maxMetadataFieldLength)),
-		comicName:        optionalString(normalizePayloadText(payload["comic_name"], maxMetadataFieldLength)),
-		summary:          optionalString(normalizePayloadText(payload["summary"], maxMetadataFieldLength)),
-		tagsRaw:          optionalString(tagsRaw),
-		tagsNormalized:   optionalString(normalizeTagLikeList(tagsRaw)),
-		genresRaw:        optionalString(genresRaw),
-		genresNormalized: optionalString(normalizeTagLikeList(genresRaw)),
+		author:           normalized.Author,
+		seriesName:       normalized.SeriesName,
+		comicName:        normalized.ComicName,
+		summary:          normalized.Summary,
+		tagsRaw:          normalized.TagsRaw,
+		tagsNormalized:   normalized.TagsNormalized,
+		genresRaw:        normalized.GenresRaw,
+		genresNormalized: normalized.GenresNormalized,
 	}
 	return rawURL, forceDownload, metadata
 }

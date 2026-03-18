@@ -289,6 +289,11 @@ func TestContract_LogsResponseFrozenSchema(t *testing.T) {
 		"url",
 		"canonical_url",
 		"status",
+		"task_type",
+		"source_archive_name",
+		"upload_loaded_bytes",
+		"upload_total_bytes",
+		"retryable",
 		"start_time",
 		"error",
 		"progress",
@@ -308,10 +313,14 @@ func TestContract_LogsResponseFrozenSchema(t *testing.T) {
 	assertPayloadNonEmptyString(t, firstLog, "url")
 	assertPayloadNonEmptyString(t, firstLog, "status")
 	assertPayloadIsNumber(t, firstLog, "start_time")
+	assertPayloadIsNumber(t, firstLog, "upload_loaded_bytes")
+	assertPayloadIsNumber(t, firstLog, "upload_total_bytes")
 	assertPayloadIsNumber(t, firstLog, "progress")
 	assertPayloadIsNumber(t, firstLog, "total_images")
 	assertPayloadIsNumber(t, firstLog, "image_concurrency")
 	assertPayloadOptionalString(t, firstLog, "canonical_url")
+	assertPayloadOptionalString(t, firstLog, "task_type")
+	assertPayloadOptionalString(t, firstLog, "source_archive_name")
 	assertPayloadOptionalString(t, firstLog, "error")
 	assertPayloadOptionalString(t, firstLog, "result_zip_path")
 	assertPayloadOptionalString(t, firstLog, "author")
@@ -322,6 +331,7 @@ func TestContract_LogsResponseFrozenSchema(t *testing.T) {
 	assertPayloadOptionalString(t, firstLog, "tags_normalized")
 	assertPayloadOptionalString(t, firstLog, "genres_raw")
 	assertPayloadOptionalString(t, firstLog, "genres_normalized")
+	assertPayloadBool(t, firstLog, "retryable", false)
 	assertPayloadNumber(t, payload, "total", 1)
 	assertPayloadNumber(t, payload, "page", 1)
 	assertPayloadNumber(t, payload, "per_page", 25)

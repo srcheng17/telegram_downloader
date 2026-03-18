@@ -19,9 +19,29 @@ export function createTasksApi(fetchImpl = fetch) {
                 ...options,
             });
         },
+        getMetadataHistory(limit = 20, options = {}) {
+            const params = new URLSearchParams();
+            params.set('limit', String(limit));
+            return requestJson(`/api/metadata-history?${params.toString()}`, {
+                method: 'GET',
+                cache: 'no-store',
+                ...options,
+            });
+        },
         postJson(url, payload, options = {}) {
             return requestJson(url, {
                 method: 'POST',
+                ...options,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(options.headers || {}),
+                },
+                body: JSON.stringify(payload),
+            });
+        },
+        putJson(url, payload, options = {}) {
+            return requestJson(url, {
+                method: 'PUT',
                 ...options,
                 headers: {
                     'Content-Type': 'application/json',

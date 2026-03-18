@@ -1,5 +1,9 @@
 import { createTasksApi } from '../shared/api/tasks_api.js';
 import { buildDuplicateActions } from './form_submission.js';
+import { applyInputMode, getSelectedMode } from './input_mode.js';
+import { renderMetadataHistory, applyHistoryEntryToForm } from './metadata_history.js';
+import { submitArchive } from './upload_submission.js';
+import { bindFieldHintToggles } from './field_hints.js';
 import { renderSummary, syncSummaryCollapseMode } from './summary_panel.js';
 import { createStartupRecoveryBannerController } from './startup_recovery_banner.js';
 import { localizeServerMessage } from '../shared/server_messages.js';
@@ -14,6 +18,9 @@ export function createHomeModule(win, doc) {
         startupRecoveryDismissHandler: null,
         pendingDuplicate: null,
         summaryResizeHandler: null,
+        inputModeHandler: null,
+        inputModeNodes: [],
+        hintCleanup: null,
     };
     win.__telegraphHomeState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
@@ -154,13 +161,13 @@ export function createHomeModule(win, doc) {
         actions.setAttribute('aria-hidden', 'true');
     }
 
-    function setSubmitting(isSubmitting) {
+    function setSubmitting(isSubmitting, label = '提交中...') {
         const button = doc.querySelector('#download-form button[type="submit"]');
         if (!button) {
             return;
         }
         button.disabled = Boolean(isSubmitting);
-        button.textContent = isSubmitting ? '提交中...' : '开始下载';
+        button.textContent = isSubmitting ? label : '开始下载';
     }
 
     function readForceValue(form) {
@@ -190,16 +197,21 @@ export function createHomeModule(win, doc) {
         return input ? String(input.value || '').trim() : '';
     }
 
-    function collectFormPayload(form) {
-        const url = readOptionalField(form, 'url');
-        const payload = {
-            url,
+    function collectMetadataPayload(form) {
+        return {
             author: readOptionalField(form, 'author'),
             series_name: readOptionalField(form, 'series_name'),
             comic_name: readOptionalField(form, 'comic_name'),
             summary: readOptionalField(form, 'summary'),
             tags: readOptionalField(form, 'tags'),
             genres: readOptionalField(form, 'genres'),
+        };
+    }
+
+    function collectFormPayload(form) {
+        const payload = {
+            url: readOptionalField(form, 'url'),
+            ...collectMetadataPayload(form),
         };
         const forceValue = readForceValue(form);
         if (forceValue !== null) {
@@ -323,16 +335,99 @@ export function createHomeModule(win, doc) {
         }
     }
 
-    async function submitDownload(event) {
+    function syncInputModeSelection(mode) {
+        if (!state.form || typeof state.form.querySelectorAll !== 'function') {
+            applyInputMode(doc, mode);
+            return;
+        }
+        state.form.querySelectorAll('input[name="input_mode"]').forEach((radio) => {
+            radio.checked = String(radio.value || '').trim().toLowerCase() === mode;
+        });
+        applyInputMode(doc, mode);
+    }
+
+    async function fetchMetadataHistory() {
+        try {
+            const { response, payload } = await api.getMetadataHistory(20);
+            if (!response.ok || !Array.isArray(payload)) {
+                return;
+            }
+            renderMetadataHistory(doc, payload, (entry) => {
+                if (!state.form) {
+                    return;
+                }
+                const mode = applyHistoryEntryToForm(state.form, entry);
+                syncInputModeSelection(mode);
+                if (mode === 'upload') {
+                    showFeedback('已回填上传任务元数据，请重新选择压缩包。', 'info');
+                    return;
+                }
+                showFeedback('已回填 URL 与元数据。', 'info');
+            });
+        } catch (error) {
+            console.error('Failed to load metadata history:', error);
+        }
+    }
+
+    async function submitUpload(form) {
+        const archiveInput = doc.getElementById('archive_file');
+        const file = archiveInput && archiveInput.files && archiveInput.files[0] ? archiveInput.files[0] : null;
+        if (!file) {
+            showFeedback('请先选择压缩包文件。', 'error');
+            return;
+        }
+
+        const metadataPayload = collectMetadataPayload(form);
+        let initPayload = null;
+        setSubmitting(true, '上传中...');
+        showFeedback('正在创建上传任务...', 'info');
+
+        try {
+            const result = await submitArchive({
+                api,
+                file,
+                metadata: metadataPayload,
+                onInit(payload) {
+                    initPayload = payload;
+                    showFeedback('上传任务已创建，正在上传压缩包...', 'info');
+                    showActionButtons({ logsUrl: payload.logs_url || '/logs' });
+                },
+                onProgress(snapshot) {
+                    showFeedback(`正在上传 ${snapshot.fileName}（${snapshot.loadedBytes} / ${snapshot.totalBytes}）`, 'info');
+                },
+                createXHR: typeof win.XMLHttpRequest === 'function' ? () => new win.XMLHttpRequest() : undefined,
+            });
+            showFeedback('任务已加入队列。', 'success');
+            fetchSummary();
+            showActionButtons({ logsUrl: (initPayload && initPayload.logs_url) || (result.uploadPayload && result.uploadPayload.logs_url) || '/logs' });
+        } catch (error) {
+            console.error('Failed to submit upload task:', error);
+            showFeedback(error && error.message ? error.message : '上传失败，请稍后重试。', 'error');
+            if (initPayload) {
+                showActionButtons({ logsUrl: initPayload.logs_url || '/logs' });
+            } else {
+                resetActionButtons();
+            }
+        } finally {
+            setSubmitting(false);
+        }
+    }
+
+    async function submitForm(event) {
         event.preventDefault();
 
         const form = event.currentTarget;
-        const formPayload = collectFormPayload(form);
-        const url = (formPayload.url || '').trim();
-
         resetActionButtons();
         clearPendingDuplicate();
 
+        const mode = getSelectedMode(doc);
+        if (mode === 'upload') {
+            await submitUpload(form);
+            return;
+        }
+
+        const formPayload = collectFormPayload(form);
+        const url = (formPayload.url || '').trim();
         if (!url) {
             showFeedback('请先输入 Telegraph 链接。', 'error');
             return;
@@ -379,6 +474,13 @@ export function createHomeModule(win, doc) {
         if (state.startupRecoveryDismissHandler && startupRecoveryDismissBtn) {
             startupRecoveryDismissBtn.removeEventListener('click', state.startupRecoveryDismissHandler);
         }
+        if (state.inputModeNodes.length && state.inputModeHandler) {
+            state.inputModeNodes.forEach((node) => node.removeEventListener('change', state.inputModeHandler));
+        }
+        if (typeof state.hintCleanup === 'function') {
+            state.hintCleanup();
+            state.hintCleanup = null;
+        }
         clearTimers();
         if (state.summaryResizeHandler) {
             win.removeEventListener('resize', state.summaryResizeHandler);
@@ -387,14 +489,22 @@ export function createHomeModule(win, doc) {
 
         if (form) {
             state.form = form;
-            state.submitHandler = submitDownload;
+            state.submitHandler = submitForm;
             form.addEventListener('submit', state.submitHandler);
+            state.inputModeNodes = Array.from(form.querySelectorAll('input[name="input_mode"]'));
+            state.inputModeHandler = () => applyInputMode(doc, getSelectedMode(doc));
+            state.inputModeNodes.forEach((node) => node.addEventListener('change', state.inputModeHandler));
+            applyInputMode(doc, getSelectedMode(doc));
+            state.hintCleanup = bindFieldHintToggles(doc);
+            fetchMetadataHistory();
             resetActionButtons();
             clearPendingDuplicate();
             setSubmitting(false);
         } else {
             state.form = null;
             state.submitHandler = null;
+            state.inputModeNodes = [];
+            state.inputModeHandler = null;
         }
 
         state.startupRecoveryDismissHandler = dismissStartupRecoveryBanner;
@@ -418,11 +528,20 @@ export function createHomeModule(win, doc) {
         if (state.form && state.submitHandler) {
             state.form.removeEventListener('submit', state.submitHandler);
         }
+        if (state.inputModeNodes.length && state.inputModeHandler) {
+            state.inputModeNodes.forEach((node) => node.removeEventListener('change', state.inputModeHandler));
+        }
         if (startupRecoveryDismissBtn && state.startupRecoveryDismissHandler) {
             startupRecoveryDismissBtn.removeEventListener('click', state.startupRecoveryDismissHandler);
         }
+        if (typeof state.hintCleanup === 'function') {
+            state.hintCleanup();
+            state.hintCleanup = null;
+        }
         state.form = null;
         state.submitHandler = null;
+        state.inputModeNodes = [];
+        state.inputModeHandler = null;
         state.startupRecoveryDismissHandler = null;
         state.startupRecoveryDismissKey = '';
         if (state.summaryResizeHandler) {
