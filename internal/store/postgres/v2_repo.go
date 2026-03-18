@@ -16,36 +16,48 @@ const statusQueued = "QUEUED"
 var ErrV2TaskStatusMismatchOrNotFound = errors.New("v2 task status mismatch or not found")
 
 type CreateTaskInput struct {
-	ID               string
-	URL              string
-	CanonicalURL     *string
-	EnqueueToken     string
-	Author           *string
-	SeriesName       *string
-	ComicName        *string
-	Summary          *string
-	TagsRaw          *string
-	TagsNormalized   *string
-	GenresRaw        *string
-	GenresNormalized *string
+	ID                string
+	URL               string
+	CanonicalURL      *string
+	EnqueueToken      string
+	TaskType          *string
+	SourceArchivePath *string
+	SourceArchiveName *string
+	UploadLoadedBytes int64
+	UploadTotalBytes  int64
+	Retryable         bool
+	Author            *string
+	SeriesName        *string
+	ComicName         *string
+	Summary           *string
+	TagsRaw           *string
+	TagsNormalized    *string
+	GenresRaw         *string
+	GenresNormalized  *string
 }
 
 type TaskRecord struct {
-	ID               string
-	URL              string
-	CanonicalURL     *string
-	Status           string
-	EnqueueToken     string
-	Author           *string
-	SeriesName       *string
-	ComicName        *string
-	Summary          *string
-	TagsRaw          *string
-	TagsNormalized   *string
-	GenresRaw        *string
-	GenresNormalized *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                string
+	URL               string
+	CanonicalURL      *string
+	Status            string
+	EnqueueToken      string
+	TaskType          *string
+	SourceArchivePath *string
+	SourceArchiveName *string
+	UploadLoadedBytes int64
+	UploadTotalBytes  int64
+	Retryable         bool
+	Author            *string
+	SeriesName        *string
+	ComicName         *string
+	Summary           *string
+	TagsRaw           *string
+	TagsNormalized    *string
+	GenresRaw         *string
+	GenresNormalized  *string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type StatusPatch struct {
@@ -99,16 +111,22 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 
 	now := time.Now().UTC()
 	record := TaskRecord{
-		ID:           strings.TrimSpace(in.ID),
-		URL:          url,
-		CanonicalURL: stringPtr(canonicalURL),
-		Status:       statusQueued,
-		EnqueueToken: strings.TrimSpace(in.EnqueueToken),
-		Author:       copyOptionalText(in.Author),
-		SeriesName:   copyOptionalText(in.SeriesName),
-		ComicName:    copyOptionalText(in.ComicName),
-		Summary:      copyOptionalText(in.Summary),
-		TagsRaw:      copyOptionalText(in.TagsRaw),
+		ID:                strings.TrimSpace(in.ID),
+		URL:               url,
+		CanonicalURL:      stringPtr(canonicalURL),
+		Status:            statusQueued,
+		EnqueueToken:      strings.TrimSpace(in.EnqueueToken),
+		TaskType:          stringPtr(normalizeCreateTaskType(in.TaskType)),
+		SourceArchivePath: copyOptionalText(in.SourceArchivePath),
+		SourceArchiveName: copyOptionalText(in.SourceArchiveName),
+		UploadLoadedBytes: normalizeNonNegativeInt64(in.UploadLoadedBytes),
+		UploadTotalBytes:  normalizeNonNegativeInt64(in.UploadTotalBytes),
+		Retryable:         in.Retryable,
+		Author:            copyOptionalText(in.Author),
+		SeriesName:        copyOptionalText(in.SeriesName),
+		ComicName:         copyOptionalText(in.ComicName),
+		Summary:           copyOptionalText(in.Summary),
+		TagsRaw:           copyOptionalText(in.TagsRaw),
 		TagsNormalized: copyOptionalText(
 			in.TagsNormalized,
 		),
@@ -127,6 +145,12 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 			canonical_url,
 			status,
 			enqueue_token,
+			task_type,
+			source_archive_path,
+			source_archive_name,
+			upload_loaded_bytes,
+			upload_total_bytes,
+			retryable,
 			author,
 			series_name,
 			comic_name,
@@ -138,7 +162,7 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 			created_at,
 			updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
 		)
 		`,
 		record.ID,
@@ -146,6 +170,12 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 		canonicalURL,
 		record.Status,
 		record.EnqueueToken,
+		record.TaskType,
+		record.SourceArchivePath,
+		record.SourceArchiveName,
+		record.UploadLoadedBytes,
+		record.UploadTotalBytes,
+		record.Retryable,
 		record.Author,
 		record.SeriesName,
 		record.ComicName,
@@ -162,6 +192,25 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 	}
 
 	return record, nil
+}
+
+func normalizeCreateTaskType(value *string) string {
+	if value == nil {
+		return "url"
+	}
+	switch strings.ToLower(strings.TrimSpace(*value)) {
+	case "upload":
+		return "upload"
+	default:
+		return "url"
+	}
+}
+
+func normalizeNonNegativeInt64(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 func (r *PostgresV2TaskRepo) UpdateTaskStatus(ctx context.Context, id string, from, to string, patch StatusPatch) error {

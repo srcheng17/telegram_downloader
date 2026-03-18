@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	domainv2 "github.com/ryancheng/telegram-downloader/internal/domain/v2"
@@ -27,6 +28,7 @@ const (
 	defaultListPerPage = 20
 	maxListPerPage     = 100
 
+	TaskStatusUploading       = "UPLOADING"
 	TaskStatusQueued          = string(domainv2.StatusQueued)
 	TaskStatusRunning         = string(domainv2.StatusRunning)
 	TaskStatusCancelRequested = string(domainv2.StatusCancelRequested)
@@ -41,7 +43,7 @@ func NormalizeTaskStatus(status string) string {
 
 func IsActiveTaskStatus(status string) bool {
 	switch NormalizeTaskStatus(status) {
-	case TaskStatusQueued, TaskStatusRunning, TaskStatusCancelRequested:
+	case TaskStatusUploading, TaskStatusQueued, TaskStatusRunning, TaskStatusCancelRequested:
 		return true
 	default:
 		return false
@@ -49,29 +51,49 @@ func IsActiveTaskStatus(status string) bool {
 }
 
 type CreateTaskInput struct {
-	ID               string
-	URL              string
-	CanonicalURL     *string
-	EnqueueToken     string
-	Author           *string
-	SeriesName       *string
-	ComicName        *string
-	Summary          *string
-	TagsRaw          *string
-	TagsNormalized   *string
-	GenresRaw        *string
-	GenresNormalized *string
+	ID                string
+	URL               string
+	CanonicalURL      *string
+	EnqueueToken      string
+	TaskType          *string
+	SourceArchivePath *string
+	SourceArchiveName *string
+	UploadLoadedBytes int64
+	UploadTotalBytes  int64
+	Retryable         bool
+	Author            *string
+	SeriesName        *string
+	ComicName         *string
+	Summary           *string
+	TagsRaw           *string
+	TagsNormalized    *string
+	GenresRaw         *string
+	GenresNormalized  *string
 }
 
 type Task struct {
-	ID            string    `json:"id"`
-	URL           string    `json:"url"`
-	CanonicalURL  *string   `json:"canonical_url,omitempty"`
-	Status        string    `json:"status"`
-	Error         *string   `json:"error,omitempty"`
-	ResultZipPath *string   `json:"result_zip_path,omitempty"`
-	CreatedAt     time.Time `json:"created_at,omitempty"`
-	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+	ID                string    `json:"id"`
+	URL               string    `json:"url"`
+	CanonicalURL      *string   `json:"canonical_url,omitempty"`
+	Status            string    `json:"status"`
+	TaskType          *string   `json:"task_type,omitempty"`
+	SourceArchivePath *string   `json:"-"`
+	SourceArchiveName *string   `json:"source_archive_name,omitempty"`
+	UploadLoadedBytes int64     `json:"upload_loaded_bytes,omitempty"`
+	UploadTotalBytes  int64     `json:"upload_total_bytes,omitempty"`
+	Retryable         bool      `json:"retryable,omitempty"`
+	Error             *string   `json:"error,omitempty"`
+	ResultZipPath     *string   `json:"result_zip_path,omitempty"`
+	Author            *string   `json:"author,omitempty"`
+	SeriesName        *string   `json:"series_name,omitempty"`
+	ComicName         *string   `json:"comic_name,omitempty"`
+	Summary           *string   `json:"summary,omitempty"`
+	TagsRaw           *string   `json:"tags_raw,omitempty"`
+	TagsNormalized    *string   `json:"tags_normalized,omitempty"`
+	GenresRaw         *string   `json:"genres_raw,omitempty"`
+	GenresNormalized  *string   `json:"genres_normalized,omitempty"`
+	CreatedAt         time.Time `json:"created_at,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at,omitempty"`
 }
 
 type ListTasksQuery struct {
@@ -90,19 +112,25 @@ const (
 )
 
 type LegacyClaimTaskInput struct {
-	ID               string
-	URL              string
-	CanonicalURL     *string
-	EnqueueToken     string
-	ReuseSuccess     bool
-	Author           *string
-	SeriesName       *string
-	ComicName        *string
-	Summary          *string
-	TagsRaw          *string
-	TagsNormalized   *string
-	GenresRaw        *string
-	GenresNormalized *string
+	ID                string
+	URL               string
+	CanonicalURL      *string
+	EnqueueToken      string
+	ReuseSuccess      bool
+	TaskType          *string
+	SourceArchivePath *string
+	SourceArchiveName *string
+	UploadLoadedBytes int64
+	UploadTotalBytes  int64
+	Retryable         bool
+	Author            *string
+	SeriesName        *string
+	ComicName         *string
+	Summary           *string
+	TagsRaw           *string
+	TagsNormalized    *string
+	GenresRaw         *string
+	GenresNormalized  *string
 }
 
 type LegacyClaimTaskResult struct {
@@ -459,6 +487,7 @@ func (h *TasksHandler) DownloadArtifact(w http.ResponseWriter, r *http.Request) 
 }
 
 type pgxQueryer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 	Begin(ctx context.Context) (pgx.Tx, error)
@@ -485,30 +514,50 @@ func (s *PostgresTaskStore) CreateTask(ctx context.Context, in CreateTaskInput) 
 	}
 
 	record, err := s.writer.CreateTask(ctx, postgres.CreateTaskInput{
-		ID:               strings.TrimSpace(in.ID),
-		URL:              strings.TrimSpace(in.URL),
-		CanonicalURL:     in.CanonicalURL,
-		EnqueueToken:     strings.TrimSpace(in.EnqueueToken),
-		Author:           in.Author,
-		SeriesName:       in.SeriesName,
-		ComicName:        in.ComicName,
-		Summary:          in.Summary,
-		TagsRaw:          in.TagsRaw,
-		TagsNormalized:   in.TagsNormalized,
-		GenresRaw:        in.GenresRaw,
-		GenresNormalized: in.GenresNormalized,
+		ID:                strings.TrimSpace(in.ID),
+		URL:               strings.TrimSpace(in.URL),
+		CanonicalURL:      in.CanonicalURL,
+		EnqueueToken:      strings.TrimSpace(in.EnqueueToken),
+		TaskType:          in.TaskType,
+		SourceArchivePath: in.SourceArchivePath,
+		SourceArchiveName: in.SourceArchiveName,
+		UploadLoadedBytes: in.UploadLoadedBytes,
+		UploadTotalBytes:  in.UploadTotalBytes,
+		Retryable:         in.Retryable,
+		Author:            in.Author,
+		SeriesName:        in.SeriesName,
+		ComicName:         in.ComicName,
+		Summary:           in.Summary,
+		TagsRaw:           in.TagsRaw,
+		TagsNormalized:    in.TagsNormalized,
+		GenresRaw:         in.GenresRaw,
+		GenresNormalized:  in.GenresNormalized,
 	})
 	if err != nil {
 		return Task{}, err
 	}
 
 	return Task{
-		ID:           record.ID,
-		URL:          record.URL,
-		CanonicalURL: record.CanonicalURL,
-		Status:       record.Status,
-		CreatedAt:    record.CreatedAt,
-		UpdatedAt:    record.UpdatedAt,
+		ID:                record.ID,
+		URL:               record.URL,
+		CanonicalURL:      record.CanonicalURL,
+		Status:            record.Status,
+		TaskType:          record.TaskType,
+		SourceArchivePath: record.SourceArchivePath,
+		SourceArchiveName: record.SourceArchiveName,
+		UploadLoadedBytes: record.UploadLoadedBytes,
+		UploadTotalBytes:  record.UploadTotalBytes,
+		Retryable:         record.Retryable,
+		Author:            record.Author,
+		SeriesName:        record.SeriesName,
+		ComicName:         record.ComicName,
+		Summary:           record.Summary,
+		TagsRaw:           record.TagsRaw,
+		TagsNormalized:    record.TagsNormalized,
+		GenresRaw:         record.GenresRaw,
+		GenresNormalized:  record.GenresNormalized,
+		CreatedAt:         record.CreatedAt,
+		UpdatedAt:         record.UpdatedAt,
 	}, nil
 }
 
@@ -557,8 +606,22 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 				url,
 				canonical_url,
 				status,
+				task_type,
+				source_archive_path,
+				source_archive_name,
+				upload_loaded_bytes,
+				upload_total_bytes,
+				retryable,
 				error,
 				result_zip_path,
+				author,
+				series_name,
+				comic_name,
+				summary,
+				tags_raw,
+				tags_normalized,
+				genres_raw,
+				genres_normalized,
 				created_at,
 				updated_at
 			FROM v2_tasks
@@ -592,16 +655,30 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 		ctx,
 		tx,
 		`
-		SELECT
-			id,
-			url,
-			canonical_url,
-			status,
-			error,
-			result_zip_path,
-			created_at,
-			updated_at
-		FROM v2_tasks
+			SELECT
+				id,
+				url,
+				canonical_url,
+				status,
+				task_type,
+				source_archive_path,
+				source_archive_name,
+				upload_loaded_bytes,
+				upload_total_bytes,
+				retryable,
+				error,
+				result_zip_path,
+				author,
+				series_name,
+				comic_name,
+				summary,
+				tags_raw,
+				tags_normalized,
+				genres_raw,
+				genres_normalized,
+				created_at,
+				updated_at
+			FROM v2_tasks
 		WHERE
 			status = ANY($1)
 			AND canonical_url = $2
@@ -635,6 +712,12 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 			canonical_url,
 			status,
 			enqueue_token,
+			task_type,
+			source_archive_path,
+			source_archive_name,
+			upload_loaded_bytes,
+			upload_total_bytes,
+			retryable,
 			author,
 			series_name,
 			comic_name,
@@ -646,7 +729,7 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 			created_at,
 			updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
 		)
 		`,
 		taskID,
@@ -654,6 +737,12 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 		canonicalURL,
 		TaskStatusQueued,
 		enqueueToken,
+		stringPtr(taskTypeURL),
+		in.SourceArchivePath,
+		in.SourceArchiveName,
+		in.UploadLoadedBytes,
+		in.UploadTotalBytes,
+		in.Retryable,
 		in.Author,
 		in.SeriesName,
 		in.ComicName,
@@ -675,12 +764,21 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 	return LegacyClaimTaskResult{
 		Decision: LegacyClaimTaskDecisionCreated,
 		Task: Task{
-			ID:           taskID,
-			URL:          rawURL,
-			CanonicalURL: stringPtr(canonicalURL),
-			Status:       TaskStatusQueued,
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			ID:               taskID,
+			URL:              rawURL,
+			CanonicalURL:     stringPtr(canonicalURL),
+			Status:           TaskStatusQueued,
+			TaskType:         stringPtr(taskTypeURL),
+			Author:           in.Author,
+			SeriesName:       in.SeriesName,
+			ComicName:        in.ComicName,
+			Summary:          in.Summary,
+			TagsRaw:          in.TagsRaw,
+			TagsNormalized:   in.TagsNormalized,
+			GenresRaw:        in.GenresRaw,
+			GenresNormalized: in.GenresNormalized,
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		},
 		EnqueueToken: enqueueToken,
 	}, nil
@@ -714,8 +812,22 @@ func (s *PostgresTaskStore) ListTasks(ctx context.Context, in ListTasksQuery) (L
 			url,
 			canonical_url,
 			status,
+			task_type,
+			source_archive_path,
+			source_archive_name,
+			upload_loaded_bytes,
+			upload_total_bytes,
+			retryable,
 			error,
 			result_zip_path,
+			author,
+			series_name,
+			comic_name,
+			summary,
+			tags_raw,
+			tags_normalized,
+			genres_raw,
+			genres_normalized,
 			created_at,
 			updated_at
 		FROM v2_tasks
@@ -734,17 +846,8 @@ func (s *PostgresTaskStore) ListTasks(ctx context.Context, in ListTasksQuery) (L
 
 	tasks := make([]Task, 0, perPage)
 	for rows.Next() {
-		var row Task
-		if err := rows.Scan(
-			&row.ID,
-			&row.URL,
-			&row.CanonicalURL,
-			&row.Status,
-			&row.Error,
-			&row.ResultZipPath,
-			&row.CreatedAt,
-			&row.UpdatedAt,
-		); err != nil {
+		row, err := scanTaskRow(rows)
+		if err != nil {
 			return ListTasksResult{}, err
 		}
 		tasks = append(tasks, row)
@@ -780,8 +883,22 @@ func (s *PostgresTaskStore) GetTask(ctx context.Context, taskID string) (*Task, 
 			url,
 			canonical_url,
 			status,
+			task_type,
+			source_archive_path,
+			source_archive_name,
+			upload_loaded_bytes,
+			upload_total_bytes,
+			retryable,
 			error,
 			result_zip_path,
+			author,
+			series_name,
+			comic_name,
+			summary,
+			tags_raw,
+			tags_normalized,
+			genres_raw,
+			genres_normalized,
 			created_at,
 			updated_at
 		FROM v2_tasks
@@ -790,17 +907,8 @@ func (s *PostgresTaskStore) GetTask(ctx context.Context, taskID string) (*Task, 
 		strings.TrimSpace(taskID),
 	)
 
-	var task Task
-	if err := row.Scan(
-		&task.ID,
-		&task.URL,
-		&task.CanonicalURL,
-		&task.Status,
-		&task.Error,
-		&task.ResultZipPath,
-		&task.CreatedAt,
-		&task.UpdatedAt,
-	); err != nil {
+	task, err := scanTaskRow(row)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -945,29 +1053,6 @@ func normalizeCanonicalURL(url string, canonicalURL *string) string {
 	return normalized
 }
 
-func querySingleTask(ctx context.Context, queryer interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, sql string, args ...any) (*Task, error) {
-	row := queryer.QueryRow(ctx, sql, args...)
-	var task Task
-	if err := row.Scan(
-		&task.ID,
-		&task.URL,
-		&task.CanonicalURL,
-		&task.Status,
-		&task.Error,
-		&task.ResultZipPath,
-		&task.CreatedAt,
-		&task.UpdatedAt,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &task, nil
-}
-
 func buildDashboardSummary(statusCounts map[string]int) DashboardSummary {
 	safeCount := func(status string) int {
 		value := statusCounts[strings.ToUpper(strings.TrimSpace(status))]
@@ -977,6 +1062,7 @@ func buildDashboardSummary(statusCounts map[string]int) DashboardSummary {
 		return value
 	}
 
+	uploading := safeCount(TaskStatusUploading)
 	queued := safeCount(TaskStatusQueued)
 	running := safeCount(TaskStatusRunning)
 	cancelRequested := safeCount(TaskStatusCancelRequested)
@@ -984,8 +1070,8 @@ func buildDashboardSummary(statusCounts map[string]int) DashboardSummary {
 	failed := safeCount(TaskStatusFailed)
 	canceled := safeCount(TaskStatusCanceled)
 
-	total := queued + running + cancelRequested + success + failed + canceled
-	active := queued + running + cancelRequested
+	total := uploading + queued + running + cancelRequested + success + failed + canceled
+	active := uploading + queued + running + cancelRequested
 	finished := success + failed + canceled
 	successRate := 0.0
 	if finished > 0 {

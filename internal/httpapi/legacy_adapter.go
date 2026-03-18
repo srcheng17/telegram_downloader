@@ -372,6 +372,7 @@ func (a *LegacyAdapter) buildSummary(ctx context.Context) (domain.Summary, error
 	}
 
 	pending := safeCount(counts[httpv2.TaskStatusQueued])
+	uploading := safeCount(counts[httpv2.TaskStatusUploading])
 	inProgress := safeCount(counts[httpv2.TaskStatusRunning])
 	cancelRequested := safeCount(counts[httpv2.TaskStatusCancelRequested])
 	success := safeCount(counts[httpv2.TaskStatusSuccess])
@@ -379,6 +380,7 @@ func (a *LegacyAdapter) buildSummary(ctx context.Context) (domain.Summary, error
 	canceled := safeCount(counts[httpv2.TaskStatusCanceled])
 
 	return buildSummaryFromCounts(map[string]int{
+		domain.StatusUploading:       uploading,
 		domain.StatusPending:         pending,
 		domain.StatusInProgress:      inProgress,
 		domain.StatusCancelRequested: cancelRequested,
@@ -616,6 +618,7 @@ func (a *LegacyAdapter) getStatusCounts(ctx context.Context) (map[string]int, er
 	}
 
 	counts := map[string]int{
+		httpv2.TaskStatusUploading:       0,
 		httpv2.TaskStatusQueued:          0,
 		httpv2.TaskStatusRunning:         0,
 		httpv2.TaskStatusCancelRequested: 0,
@@ -624,6 +627,7 @@ func (a *LegacyAdapter) getStatusCounts(ctx context.Context) (map[string]int, er
 		httpv2.TaskStatusCanceled:        0,
 	}
 	statuses := []string{
+		httpv2.TaskStatusUploading,
 		httpv2.TaskStatusQueued,
 		httpv2.TaskStatusRunning,
 		httpv2.TaskStatusCancelRequested,
@@ -720,6 +724,8 @@ func (a *LegacyAdapter) listMatchingTasks(ctx context.Context, status string, ca
 
 func mapLegacyStatusToV2(status string) string {
 	switch strings.TrimSpace(status) {
+	case domain.StatusUploading:
+		return httpv2.TaskStatusUploading
 	case domain.StatusPending:
 		return httpv2.TaskStatusQueued
 	case domain.StatusInProgress:
@@ -739,6 +745,8 @@ func mapLegacyStatusToV2(status string) string {
 
 func mapV2StatusToLegacy(status string) string {
 	switch httpv2.NormalizeTaskStatus(status) {
+	case httpv2.TaskStatusUploading:
+		return domain.StatusUploading
 	case httpv2.TaskStatusQueued:
 		return domain.StatusPending
 	case httpv2.TaskStatusRunning:
@@ -759,24 +767,29 @@ func mapV2StatusToLegacy(status string) string {
 func mapV2TaskToLegacyLog(task httpv2.Task) domain.TaskLog {
 	startTime := float64(task.CreatedAt.UnixNano()) / float64(time.Second)
 	return domain.TaskLog{
-		ID:               strings.TrimSpace(task.ID),
-		URL:              strings.TrimSpace(task.URL),
-		CanonicalURL:     task.CanonicalURL,
-		Status:           mapV2StatusToLegacy(task.Status),
-		StartTime:        startTime,
-		Error:            task.Error,
-		Progress:         0,
-		TotalImages:      0,
-		ImageConcurrency: 0,
-		ResultZipPath:    task.ResultZipPath,
-		Author:           nil,
-		SeriesName:       nil,
-		ComicName:        nil,
-		Summary:          nil,
-		TagsRaw:          nil,
-		TagsNormalized:   nil,
-		GenresRaw:        nil,
-		GenresNormalized: nil,
+		ID:                strings.TrimSpace(task.ID),
+		URL:               strings.TrimSpace(task.URL),
+		CanonicalURL:      task.CanonicalURL,
+		Status:            mapV2StatusToLegacy(task.Status),
+		TaskType:          task.TaskType,
+		SourceArchiveName: task.SourceArchiveName,
+		UploadLoadedBytes: task.UploadLoadedBytes,
+		UploadTotalBytes:  task.UploadTotalBytes,
+		Retryable:         task.Retryable,
+		StartTime:         startTime,
+		Error:             task.Error,
+		Progress:          0,
+		TotalImages:       0,
+		ImageConcurrency:  0,
+		ResultZipPath:     task.ResultZipPath,
+		Author:            task.Author,
+		SeriesName:        task.SeriesName,
+		ComicName:         task.ComicName,
+		Summary:           task.Summary,
+		TagsRaw:           task.TagsRaw,
+		TagsNormalized:    task.TagsNormalized,
+		GenresRaw:         task.GenresRaw,
+		GenresNormalized:  task.GenresNormalized,
 	}
 }
 
