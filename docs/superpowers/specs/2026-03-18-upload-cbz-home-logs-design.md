@@ -490,12 +490,23 @@ Komga 根目录固定为：
 1. URL 提交
 2. 上传提交
 
-上传提交建议走专门上传入口，而不是强行复用 `application/x-www-form-urlencoded` 的 `/download`：
+URL 提交可继续保留现有 `/download`，由首页在 `URL 下载` 模式下直接复用。
 
-- `POST /api/tasks/upload`
-  - `multipart/form-data`
+上传提交不能做成“单个 multipart 请求同时创建任务并上传完整文件”的单步接口，因为那样前端在上传完成前拿不到 `task_id`，就无法满足以下需求：
+
+- 上传中这条任务已出现在日志页
+- 日志页轮询能看到上传字节进度
+- 上传过程中可以取消
+
+因此上传提交流程必须采用 **两阶段接口**。
+
+### 阶段 A：创建上传任务
+
+- `POST /api/tasks/upload/init`
+  - `application/json`
   - 包含：
-    - `archive`
+    - `file_name`
+    - `file_size`
     - `author`
     - `series_name`
     - `comic_name`
@@ -503,7 +514,26 @@ Komga 根目录固定为：
     - `tags`
     - `genres`
 
-URL 提交可继续保留现有 `/download`，由首页根据模式选择对应入口。这样可以最小化对现有 URL 提交流程的破坏。
+返回：
+
+- `task_id`
+- `upload_url`
+- `logs_url`
+
+服务端在这个阶段就创建正式任务，并将状态置为 `UPLOADING`。
+
+### 阶段 B：上传文件内容
+
+- `PUT /api/tasks/{task_id}/upload-source`
+  - 请求体为文件二进制流或 `multipart/form-data`
+
+前端在拿到 `task_id` 后再开始真正上传文件，并在上传过程中：
+
+- 通过 `XMLHttpRequest` 或等价能力上报上传进度
+- 允许手动 abort 当前上传请求
+- 同时让日志页按 `task_id` 轮询并显示上传中的正式任务
+
+上传完成后，服务端再将任务推进到 `QUEUED` / `RUNNING`。
 
 ## 元数据历史接口
 
@@ -558,7 +588,7 @@ URL 提交可继续保留现有 `/download`，由首页根据模式选择对应�
 需要扩展或新增模块能力：
 
 - 模式切换控制
-- 上传文件选择与提交
+- 上传任务初始化、文件上传、进度与 abort 控制
 - 元数据历史列表加载与回填
 - 折叠提示交互
 - 作者 / 标签 / 类型前端归一化
