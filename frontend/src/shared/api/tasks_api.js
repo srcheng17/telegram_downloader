@@ -39,6 +39,17 @@ export function createTasksApi(fetchImpl = fetch) {
                 body: JSON.stringify(payload),
             });
         },
+        putJson(url, payload, options = {}) {
+            return requestJson(url, {
+                method: 'PUT',
+                ...options,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(options.headers || {}),
+                },
+                body: JSON.stringify(payload),
+            });
+        },
         postForm(url, formPayload, options = {}) {
             return requestJson(url, {
                 method: 'POST',

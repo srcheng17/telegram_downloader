@@ -6,7 +6,7 @@
 <p class="settings-impact-note" role="note">
     设置项为全局生效：点击 <strong>保存设置</strong> 后，仅影响后续新建任务，正在运行的任务会保持原值。
 </p>
-<form action="/settings" method="post" class="settings-form">
+<form action="/settings" method="post" class="settings-form" id="settings-form">
     <div class="form-group settings-grid-item">
         <label for="task_concurrency">任务并发数（同时运行任务数）</label>
         <input type="number" id="task_concurrency" name="task_concurrency" value="{{ .Settings.TaskConcurrency }}" min="1" max="10">
@@ -51,4 +51,5 @@
     </div>
     <button type="submit">保存设置</button>
 </form>
+<div id="settings-feedback" class="inline-feedback" role="status" aria-live="polite"></div>
 {{ end }}

@@ -325,11 +325,11 @@ func updateV2TaskStatusWithExecutor(
 			result_zip_path = $5,
 			claimed_by = COALESCE($6, claimed_by),
 			source_archive_path = CASE
-				WHEN $7 THEN NULL
-				WHEN $8 IS NOT NULL THEN $8
+				WHEN $7::boolean THEN NULL::text
+				WHEN $8::text IS NOT NULL THEN $8::text
 				ELSE source_archive_path
 			END,
-			retryable = COALESCE($9, retryable),
+			retryable = COALESCE($9::boolean, retryable),
 			heartbeat_at = CASE
 				WHEN $3 IN ('RUNNING', 'SUCCESS', 'FAILED', 'CANCELED') THEN NOW()
 				ELSE heartbeat_at

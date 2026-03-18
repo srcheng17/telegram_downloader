@@ -24,6 +24,7 @@ test('设置页保存后会在会话内保持核心运行参数', async ({ page 
   await page.locator('#image_concurrency').fill('7');
   await page.locator('#timeout').fill('45');
   await page.locator('#retries').fill('6');
+  await page.locator('input[name="download_action_mode"][value="komga_copy"]').check();
 
   await page.getByRole('button', { name: '保存设置' }).click();
 
@@ -31,10 +32,12 @@ test('设置页保存后会在会话内保持核心运行参数', async ({ page 
   await expect(page.locator('#image_concurrency')).toHaveValue('7');
   await expect(page.locator('#timeout')).toHaveValue('45');
   await expect(page.locator('#retries')).toHaveValue('6');
+  await expect(page.locator('input[name="download_action_mode"][value="komga_copy"]')).toBeChecked();
 
   await page.goto('/');
   await page.goto('/settings');
   await expect(page.locator('#image_concurrency')).toHaveValue('7');
   await expect(page.locator('#timeout')).toHaveValue('45');
   await expect(page.locator('#retries')).toHaveValue('6');
+  await expect(page.locator('input[name="download_action_mode"][value="komga_copy"]')).toBeChecked();
 });
