@@ -120,6 +120,10 @@ type fakeLegacyV2Store struct {
 	createTask  httpv2.Task
 	createErr   error
 
+	createUploadCalls []httpv2.CreateTaskInput
+	createUploadTask  httpv2.Task
+	createUploadErr   error
+
 	listCalls  []httpv2.ListTasksQuery
 	listResult httpv2.ListTasksResult
 	listErr    error
@@ -128,6 +132,7 @@ type fakeLegacyV2Store struct {
 	getTask  *httpv2.Task
 	getTasks []*httpv2.Task
 	getErr   error
+	tasks    map[string]httpv2.Task
 
 	cancelCalls []cancelTaskCall
 	cancelErr   error
@@ -137,6 +142,23 @@ type fakeLegacyV2Store struct {
 	markFailedErr   error
 
 	statusCounts map[string]int
+
+	uploadProgressCalls        []uploadProgressCall
+	markUploadQueuedCalls      []markUploadQueuedCall
+	metadataHistoryInsertCalls []httpv2.MetadataHistoryEntry
+	metadataHistoryEntries     []httpv2.MetadataHistoryEntry
+}
+
+type uploadProgressCall struct {
+	taskID      string
+	loadedBytes int64
+	totalBytes  int64
+}
+
+type markUploadQueuedCall struct {
+	taskID     string
+	path       string
+	totalBytes int64
 }
 
 func (f *fakeLegacyV2Store) CreateTask(_ context.Context, in httpv2.CreateTaskInput) (httpv2.Task, error) {
@@ -157,6 +179,35 @@ func (f *fakeLegacyV2Store) CreateTask(_ context.Context, in httpv2.CreateTaskIn
 	}, nil
 }
 
+func (f *fakeLegacyV2Store) CreateUploadTask(_ context.Context, in httpv2.CreateTaskInput) (httpv2.Task, error) {
+	f.createUploadCalls = append(f.createUploadCalls, in)
+	if f.createUploadErr != nil {
+		return httpv2.Task{}, f.createUploadErr
+	}
+	if strings.TrimSpace(f.createUploadTask.ID) != "" {
+		return f.createUploadTask, nil
+	}
+	return httpv2.Task{
+		ID:                in.ID,
+		URL:               in.URL,
+		CanonicalURL:      in.CanonicalURL,
+		Status:            httpv2.TaskStatusUploading,
+		TaskType:          stringPtr("upload"),
+		SourceArchiveName: in.SourceArchiveName,
+		UploadTotalBytes:  in.UploadTotalBytes,
+		Author:            in.Author,
+		SeriesName:        in.SeriesName,
+		ComicName:         in.ComicName,
+		Summary:           in.Summary,
+		TagsRaw:           in.TagsRaw,
+		TagsNormalized:    in.TagsNormalized,
+		GenresRaw:         in.GenresRaw,
+		GenresNormalized:  in.GenresNormalized,
+		CreatedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+	}, nil
+}
+
 func (f *fakeLegacyV2Store) ListTasks(_ context.Context, in httpv2.ListTasksQuery) (httpv2.ListTasksResult, error) {
 	f.listCalls = append(f.listCalls, in)
 	if f.listErr != nil {
@@ -169,6 +220,13 @@ func (f *fakeLegacyV2Store) GetTask(_ context.Context, taskID string) (*httpv2.T
 	f.getCalls = append(f.getCalls, taskID)
 	if f.getErr != nil {
 		return nil, f.getErr
+	}
+	if f.tasks != nil {
+		task, ok := f.tasks[taskID]
+		if ok {
+			copied := task
+			return &copied, nil
+		}
 	}
 	if len(f.getTasks) > 0 {
 		index := len(f.getCalls) - 1
@@ -196,6 +254,39 @@ func (f *fakeLegacyV2Store) CancelTask(_ context.Context, taskID, fromStatus str
 func (f *fakeLegacyV2Store) MarkTaskFailed(_ context.Context, taskID, message string) error {
 	f.markFailedCalls = append(f.markFailedCalls, markFailedCall{taskID: taskID, message: message})
 	return f.markFailedErr
+}
+
+func (f *fakeLegacyV2Store) UpdateUploadProgress(_ context.Context, taskID string, loadedBytes, totalBytes int64) error {
+	f.uploadProgressCalls = append(f.uploadProgressCalls, uploadProgressCall{
+		taskID: taskID, loadedBytes: loadedBytes, totalBytes: totalBytes,
+	})
+	return nil
+}
+
+func (f *fakeLegacyV2Store) MarkUploadTaskQueued(_ context.Context, taskID, path string, totalBytes int64) error {
+	f.markUploadQueuedCalls = append(f.markUploadQueuedCalls, markUploadQueuedCall{
+		taskID: taskID, path: path, totalBytes: totalBytes,
+	})
+	if f.tasks == nil {
+		f.tasks = map[string]httpv2.Task{}
+	}
+	if task, ok := f.tasks[taskID]; ok {
+		task.Status = httpv2.TaskStatusQueued
+		task.SourceArchivePath = stringPtr(path)
+		task.UploadLoadedBytes = totalBytes
+		task.UploadTotalBytes = totalBytes
+		f.tasks[taskID] = task
+	}
+	return nil
+}
+
+func (f *fakeLegacyV2Store) InsertMetadataHistory(_ context.Context, entry httpv2.MetadataHistoryEntry) error {
+	f.metadataHistoryInsertCalls = append(f.metadataHistoryInsertCalls, entry)
+	return nil
+}
+
+func (f *fakeLegacyV2Store) ListMetadataHistory(_ context.Context, _ int) ([]httpv2.MetadataHistoryEntry, error) {
+	return append([]httpv2.MetadataHistoryEntry(nil), f.metadataHistoryEntries...), nil
 }
 
 func (f *fakeLegacyV2Store) GetTaskStatusCounts(_ context.Context) (map[string]int, error) {
@@ -667,7 +758,7 @@ func TestDownloadCreatesTaskAndSubmitsJob(t *testing.T) {
 	}
 }
 
-func TestDownloadNormalizesAuthorByCommaOnly(t *testing.T) {
+func TestDownloadNormalizesAuthorByCommaAndHash(t *testing.T) {
 	repo := &fakeTaskReader{}
 	repo.claimResponses = []domain.ClaimDownloadTaskResult{
 		{
@@ -703,8 +794,8 @@ func TestDownloadNormalizesAuthorByCommaOnly(t *testing.T) {
 	if repo.claimCalls[0].Task.Author == nil {
 		t.Fatalf("expected author metadata to be forwarded")
 	}
-	if *repo.claimCalls[0].Task.Author != "Jane Doe #1,John Smith,Alice  Bob" {
-		t.Fatalf("expected author to normalize only comma delimiters, got %q", *repo.claimCalls[0].Task.Author)
+	if *repo.claimCalls[0].Task.Author != "Jane Doe,1,John Smith,Alice  Bob" {
+		t.Fatalf("expected author to normalize comma and hash delimiters, got %q", *repo.claimCalls[0].Task.Author)
 	}
 }
 

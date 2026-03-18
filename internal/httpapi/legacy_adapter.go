@@ -31,10 +31,15 @@ var (
 
 type LegacyV2TaskStore interface {
 	CreateTask(ctx context.Context, in httpv2.CreateTaskInput) (httpv2.Task, error)
+	CreateUploadTask(ctx context.Context, in httpv2.CreateTaskInput) (httpv2.Task, error)
 	ListTasks(ctx context.Context, in httpv2.ListTasksQuery) (httpv2.ListTasksResult, error)
 	GetTask(ctx context.Context, taskID string) (*httpv2.Task, error)
 	CancelTask(ctx context.Context, taskID, fromStatus string) error
 	MarkTaskFailed(ctx context.Context, taskID, message string) error
+	UpdateUploadProgress(ctx context.Context, taskID string, loadedBytes, totalBytes int64) error
+	MarkUploadTaskQueued(ctx context.Context, taskID, sourceArchivePath string, totalBytes int64) error
+	InsertMetadataHistory(ctx context.Context, entry httpv2.MetadataHistoryEntry) error
+	ListMetadataHistory(ctx context.Context, limit int) ([]httpv2.MetadataHistoryEntry, error)
 }
 
 type legacyAtomicClaimStore interface {

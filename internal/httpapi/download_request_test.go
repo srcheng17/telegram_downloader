@@ -58,3 +58,26 @@ func TestExtractDownloadRequestFromJSON(t *testing.T) {
 		t.Fatalf("expected genres normalization, got %#v", metadata.genresNormalized)
 	}
 }
+
+func TestExtractDownloadRequestNormalizesAuthorHashSeparators(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/download",
+		strings.NewReader(`{"url":"https://telegra.ph/hash","author":"作者A # 作者B ＃ 作者A","tags":"剧情 # 动作， 热血","genres":"青年 ＃ 悬疑"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	_, _, metadata, err := extractDownloadRequest(req)
+	if err != nil {
+		t.Fatalf("extract json request: %v", err)
+	}
+	if metadata.author == nil || *metadata.author != "作者A,作者B" {
+		t.Fatalf("expected author hash normalization, got %#v", metadata.author)
+	}
+	if metadata.tagsNormalized == nil || *metadata.tagsNormalized != "剧情,动作,热血" {
+		t.Fatalf("expected tags hash normalization, got %#v", metadata.tagsNormalized)
+	}
+	if metadata.genresNormalized == nil || *metadata.genresNormalized != "青年,悬疑" {
+		t.Fatalf("expected genres hash normalization, got %#v", metadata.genresNormalized)
+	}
+}

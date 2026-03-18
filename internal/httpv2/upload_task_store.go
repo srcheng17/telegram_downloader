@@ -3,9 +3,12 @@ package httpv2
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
 )
 
 const (
@@ -60,6 +63,33 @@ func normalizeTaskType(value *string) string {
 	}
 }
 
+func (s *PostgresTaskStore) CreateUploadTask(ctx context.Context, in CreateTaskInput) (Task, error) {
+	taskType := stringPtr(taskTypeUpload)
+	in.TaskType = taskType
+	in.Retryable = false
+	if strings.TrimSpace(in.URL) == "" {
+		in.URL = ""
+	}
+	if in.CanonicalURL == nil || strings.TrimSpace(*in.CanonicalURL) == "" {
+		canonicalURL := "upload:" + strings.TrimSpace(in.ID)
+		in.CanonicalURL = &canonicalURL
+	}
+
+	task, err := s.CreateTask(ctx, in)
+	if err != nil {
+		return Task{}, err
+	}
+	if s.writer == nil {
+		return Task{}, errors.New("v2 task writer is not configured")
+	}
+	if err := s.writer.UpdateTaskStatus(ctx, task.ID, TaskStatusQueued, TaskStatusUploading, postgres.StatusPatch{}); err != nil {
+		return Task{}, err
+	}
+	task.Status = TaskStatusUploading
+	task.TaskType = stringPtr(taskTypeUpload)
+	return task, nil
+}
+
 func (s *PostgresTaskStore) UpdateUploadProgress(ctx context.Context, taskID string, loadedBytes, totalBytes int64) error {
 	if s == nil || s.db == nil {
 		return errors.New("v2 task database is not configured")
@@ -79,6 +109,40 @@ func (s *PostgresTaskStore) UpdateUploadProgress(ctx context.Context, taskID str
 		maxInt64(totalBytes, 0),
 	)
 	return err
+}
+
+func (s *PostgresTaskStore) MarkUploadTaskQueued(ctx context.Context, taskID, sourceArchivePath string, totalBytes int64) error {
+	if s == nil || s.db == nil {
+		return errors.New("v2 task database is not configured")
+	}
+	tag, err := s.db.Exec(
+		ctx,
+		`
+		UPDATE v2_tasks
+		SET
+			status = $2,
+			source_archive_path = $3,
+			upload_loaded_bytes = $4,
+			upload_total_bytes = $4,
+			retryable = FALSE,
+			updated_at = NOW()
+		WHERE
+			id = $1
+			AND status = $5
+		`,
+		strings.TrimSpace(taskID),
+		TaskStatusQueued,
+		strings.TrimSpace(sourceArchivePath),
+		maxInt64(totalBytes, 0),
+		TaskStatusUploading,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("%w: id=%s from=%s to=%s", postgres.ErrV2TaskStatusMismatchOrNotFound, strings.TrimSpace(taskID), TaskStatusUploading, TaskStatusQueued)
+	}
+	return nil
 }
 
 func maxInt64(value, minimum int64) int64 {
