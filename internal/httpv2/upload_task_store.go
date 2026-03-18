@@ -145,6 +145,45 @@ func (s *PostgresTaskStore) MarkUploadTaskQueued(ctx context.Context, taskID, so
 	return nil
 }
 
+func (s *PostgresTaskStore) RetryUploadTask(ctx context.Context, taskID, enqueueToken string) error {
+	if s == nil || s.db == nil {
+		return errors.New("v2 task database is not configured")
+	}
+	tag, err := s.db.Exec(
+		ctx,
+		`
+		UPDATE v2_tasks
+		SET
+			status = $2,
+			enqueue_token = $3,
+			error = NULL,
+			result_zip_path = NULL,
+			retryable = FALSE,
+			claimed_by = NULL,
+			updated_at = NOW()
+		WHERE
+			id = $1
+			AND status = $4
+			AND task_type = $5
+			AND retryable = TRUE
+			AND source_archive_path IS NOT NULL
+			AND source_archive_path != ''
+		`,
+		strings.TrimSpace(taskID),
+		TaskStatusQueued,
+		strings.TrimSpace(enqueueToken),
+		TaskStatusFailed,
+		taskTypeUpload,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("%w: id=%s from=%s to=%s", postgres.ErrV2TaskStatusMismatchOrNotFound, strings.TrimSpace(taskID), TaskStatusFailed, TaskStatusQueued)
+	}
+	return nil
+}
+
 func maxInt64(value, minimum int64) int64 {
 	if value < minimum {
 		return minimum

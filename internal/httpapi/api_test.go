@@ -145,6 +145,7 @@ type fakeLegacyV2Store struct {
 
 	uploadProgressCalls        []uploadProgressCall
 	markUploadQueuedCalls      []markUploadQueuedCall
+	retryUploadCalls           []retryUploadCall
 	metadataHistoryInsertCalls []httpv2.MetadataHistoryEntry
 	metadataHistoryEntries     []httpv2.MetadataHistoryEntry
 }
@@ -159,6 +160,11 @@ type markUploadQueuedCall struct {
 	taskID     string
 	path       string
 	totalBytes int64
+}
+
+type retryUploadCall struct {
+	taskID       string
+	enqueueToken string
 }
 
 func (f *fakeLegacyV2Store) CreateTask(_ context.Context, in httpv2.CreateTaskInput) (httpv2.Task, error) {
@@ -275,6 +281,22 @@ func (f *fakeLegacyV2Store) MarkUploadTaskQueued(_ context.Context, taskID, path
 		task.SourceArchivePath = stringPtr(path)
 		task.UploadLoadedBytes = totalBytes
 		task.UploadTotalBytes = totalBytes
+		f.tasks[taskID] = task
+	}
+	return nil
+}
+
+func (f *fakeLegacyV2Store) RetryUploadTask(_ context.Context, taskID, enqueueToken string) error {
+	f.retryUploadCalls = append(f.retryUploadCalls, retryUploadCall{
+		taskID:       taskID,
+		enqueueToken: enqueueToken,
+	})
+	if f.tasks == nil {
+		f.tasks = map[string]httpv2.Task{}
+	}
+	if task, ok := f.tasks[taskID]; ok {
+		task.Status = httpv2.TaskStatusQueued
+		task.Retryable = false
 		f.tasks[taskID] = task
 	}
 	return nil

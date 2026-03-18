@@ -38,6 +38,7 @@ type LegacyV2TaskStore interface {
 	MarkTaskFailed(ctx context.Context, taskID, message string) error
 	UpdateUploadProgress(ctx context.Context, taskID string, loadedBytes, totalBytes int64) error
 	MarkUploadTaskQueued(ctx context.Context, taskID, sourceArchivePath string, totalBytes int64) error
+	RetryUploadTask(ctx context.Context, taskID, enqueueToken string) error
 	InsertMetadataHistory(ctx context.Context, entry httpv2.MetadataHistoryEntry) error
 	ListMetadataHistory(ctx context.Context, limit int) ([]httpv2.MetadataHistoryEntry, error)
 }
