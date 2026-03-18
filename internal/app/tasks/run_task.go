@@ -21,18 +21,21 @@ const (
 )
 
 type RunTaskSnapshot struct {
-	ID               string
-	URL              string
-	Status           string
-	EnqueueToken     string
-	Author           *string
-	SeriesName       *string
-	ComicName        *string
-	Summary          *string
-	TagsRaw          *string
-	TagsNormalized   *string
-	GenresRaw        *string
-	GenresNormalized *string
+	ID                string
+	URL               string
+	Status            string
+	EnqueueToken      string
+	TaskType          *string
+	SourceArchivePath *string
+	SourceArchiveName *string
+	Author            *string
+	SeriesName        *string
+	ComicName         *string
+	Summary           *string
+	TagsRaw           *string
+	TagsNormalized    *string
+	GenresRaw         *string
+	GenresNormalized  *string
 }
 
 type RunTaskRepo interface {
@@ -117,11 +120,17 @@ func (u *RunTaskUseCase) ExecuteAttempt(ctx context.Context, taskID, token strin
 			return nil
 		}
 	case StatusCancelRequested:
-		return u.transitionCancelRequested(taskID, map[string]any{"stage": "preflight"})
+		return u.transitionCancelRequested(snapshot, taskID, map[string]any{"stage": "preflight"})
 	default:
 		return nil
 	}
-	if strings.TrimSpace(snapshot.URL) == "" {
+	sourceLocation := strings.TrimSpace(snapshot.URL)
+	if isUploadTask(snapshot.TaskType) {
+		sourceLocation = valueOrEmptyRunTask(snapshot.SourceArchivePath)
+		if strings.TrimSpace(sourceLocation) == "" {
+			return fmt.Errorf("task %s has empty source archive path", taskID)
+		}
+	} else if strings.TrimSpace(snapshot.URL) == "" {
 		return fmt.Errorf("task %s has empty url", taskID)
 	}
 
@@ -142,7 +151,7 @@ func (u *RunTaskUseCase) ExecuteAttempt(ctx context.Context, taskID, token strin
 					return checkErr
 				}
 				if cancelRequested {
-					return u.transitionCancelRequested(taskID, map[string]any{"stage": "queued_to_running_mismatch"})
+					return u.transitionCancelRequested(snapshot, taskID, map[string]any{"stage": "queued_to_running_mismatch"})
 				}
 				return nil
 			}
@@ -165,13 +174,13 @@ func (u *RunTaskUseCase) ExecuteAttempt(ctx context.Context, taskID, token strin
 		artifactPath, runErr := u.downloader.DownloadAndPackage(
 			downloadCtx,
 			taskID,
-			snapshot.URL,
+			sourceLocation,
 			taskMetadataFromRunTaskSnapshot(snapshot),
 		)
 		stopMonitor()
 
 		if cancelRequested.Load() {
-			return u.transitionCancelRequested(taskID, map[string]any{"attempt": attempt, "stage": "monitor"})
+			return u.transitionCancelRequested(snapshot, taskID, map[string]any{"attempt": attempt, "stage": "monitor"})
 		}
 
 		if runErr != nil && errors.Is(runErr, context.Canceled) && ctx.Err() != nil {
@@ -183,7 +192,7 @@ func (u *RunTaskUseCase) ExecuteAttempt(ctx context.Context, taskID, token strin
 				taskID,
 				StatusRunning,
 				StatusSuccess,
-				postgres.StatusPatch{ResultZipPath: trimmedStringPtr(artifactPath)},
+				buildSuccessStatusPatch(snapshot, artifactPath),
 				map[string]any{
 					"artifact_path": strings.TrimSpace(artifactPath),
 					"attempt":       attempt,
@@ -201,7 +210,7 @@ func (u *RunTaskUseCase) ExecuteAttempt(ctx context.Context, taskID, token strin
 				return checkErr
 			}
 			if cancelRequestedByStatus {
-				return u.transitionCancelRequested(taskID, map[string]any{"attempt": attempt, "stage": "error"})
+				return u.transitionCancelRequested(snapshot, taskID, map[string]any{"attempt": attempt, "stage": "error"})
 			}
 		}
 
@@ -217,7 +226,7 @@ func (u *RunTaskUseCase) ExecuteAttempt(ctx context.Context, taskID, token strin
 			taskID,
 			StatusRunning,
 			StatusFailed,
-			postgres.StatusPatch{Error: &errMessage},
+			buildFailureStatusPatch(snapshot, errMessage),
 			map[string]any{"attempt": attempt},
 		)
 		if terminalErr != nil && enteredRunning {
@@ -337,13 +346,13 @@ func (u *RunTaskUseCase) isTaskCancelRequested(ctx context.Context, taskID strin
 	return strings.TrimSpace(snapshot.Status) == StatusCancelRequested, nil
 }
 
-func (u *RunTaskUseCase) transitionCancelRequested(taskID string, payload map[string]any) error {
+func (u *RunTaskUseCase) transitionCancelRequested(snapshot RunTaskSnapshot, taskID string, payload map[string]any) error {
 	reason := "Cancellation requested by user."
 	err := u.transitionTerminal(
 		taskID,
 		StatusCancelRequested,
 		StatusCanceled,
-		postgres.StatusPatch{Error: &reason},
+		buildCanceledStatusPatch(snapshot, reason),
 		payload,
 	)
 	if err == nil {
@@ -448,6 +457,48 @@ func taskMetadataFromRunTaskSnapshot(snapshot RunTaskSnapshot) downloader.TaskMe
 			valueOrEmptyRunTask(snapshot.GenresRaw),
 		),
 	}
+}
+
+func isUploadTask(taskType *string) bool {
+	if taskType == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(*taskType), "upload")
+}
+
+func boolPtr(value bool) *bool {
+	copied := value
+	return &copied
+}
+
+func buildSuccessStatusPatch(snapshot RunTaskSnapshot, artifactPath string) postgres.StatusPatch {
+	patch := postgres.StatusPatch{
+		ResultZipPath: trimmedStringPtr(artifactPath),
+		Retryable:     boolPtr(false),
+	}
+	if isUploadTask(snapshot.TaskType) {
+		patch.ClearSourceArchivePath = true
+	}
+	return patch
+}
+
+func buildFailureStatusPatch(snapshot RunTaskSnapshot, errMessage string) postgres.StatusPatch {
+	patch := postgres.StatusPatch{Error: &errMessage}
+	if isUploadTask(snapshot.TaskType) {
+		patch.Retryable = boolPtr(true)
+	}
+	return patch
+}
+
+func buildCanceledStatusPatch(snapshot RunTaskSnapshot, reason string) postgres.StatusPatch {
+	patch := postgres.StatusPatch{
+		Error:     &reason,
+		Retryable: boolPtr(false),
+	}
+	if isUploadTask(snapshot.TaskType) {
+		patch.ClearSourceArchivePath = true
+	}
+	return patch
 }
 
 func valueOrEmptyRunTask(value *string) string {

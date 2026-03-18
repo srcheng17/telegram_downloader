@@ -370,8 +370,8 @@ func (f *fakeV2RepoDB) Exec(_ context.Context, query string, args ...any) (pgcon
 			return pgconn.NewCommandTag("UPDATE 1"), nil
 		}
 
-		if len(args) != 6 {
-			return pgconn.CommandTag{}, fmt.Errorf("expected 6 update args, got %d", len(args))
+		if len(args) != 9 {
+			return pgconn.CommandTag{}, fmt.Errorf("expected 9 update args, got %d", len(args))
 		}
 		taskID := args[0].(string)
 		fromStatus := args[1].(string)
@@ -387,6 +387,14 @@ func (f *fakeV2RepoDB) Exec(_ context.Context, query string, args ...any) (pgcon
 		task.resultZipPath = cloneV2String(args[4].(*string))
 		if args[5].(*string) != nil {
 			task.claimedBy = cloneV2String(args[5].(*string))
+		}
+		if args[6].(bool) {
+			task.sourceArchivePath = nil
+		} else if args[7].(*string) != nil {
+			task.sourceArchivePath = cloneV2String(args[7].(*string))
+		}
+		if args[8].(*bool) != nil {
+			task.retryable = *args[8].(*bool)
 		}
 		now := time.Now().UTC()
 		task.updatedAt = now

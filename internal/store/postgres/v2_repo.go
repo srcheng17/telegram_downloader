@@ -61,9 +61,12 @@ type TaskRecord struct {
 }
 
 type StatusPatch struct {
-	Error         *string
-	ResultZipPath *string
-	ClaimedBy     *string
+	Error                  *string
+	ResultZipPath          *string
+	ClaimedBy              *string
+	SourceArchivePath      *string
+	ClearSourceArchivePath bool
+	Retryable              *bool
 }
 
 type TaskEvent struct {
@@ -321,6 +324,12 @@ func updateV2TaskStatusWithExecutor(
 			error = $4,
 			result_zip_path = $5,
 			claimed_by = COALESCE($6, claimed_by),
+			source_archive_path = CASE
+				WHEN $7 THEN NULL
+				WHEN $8 IS NOT NULL THEN $8
+				ELSE source_archive_path
+			END,
+			retryable = COALESCE($9, retryable),
 			heartbeat_at = CASE
 				WHEN $3 IN ('RUNNING', 'SUCCESS', 'FAILED', 'CANCELED') THEN NOW()
 				ELSE heartbeat_at
@@ -344,6 +353,9 @@ func updateV2TaskStatusWithExecutor(
 		patch.Error,
 		patch.ResultZipPath,
 		patch.ClaimedBy,
+		patch.ClearSourceArchivePath,
+		patch.SourceArchivePath,
+		patch.Retryable,
 	)
 	if err != nil {
 		return err
