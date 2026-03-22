@@ -54,6 +54,40 @@ func TestRetryUploadTaskRequeuesFailedTaskWithoutCreatingNewID(t *testing.T) {
 	}
 }
 
+func TestRetryUrlTaskRequeuesFailedTaskWithoutCreatingNewID(t *testing.T) {
+	store := &fakeLegacyV2Store{
+		getTask: &httpv2.Task{
+			ID:        "task-url-retry",
+			Status:    httpv2.TaskStatusFailed,
+			TaskType:  stringPtr("url"),
+			URL:       "https://telegra.ph/retry-me",
+			Retryable: true,
+		},
+	}
+	queue := &fakeLegacyV2Queue{}
+	handler := NewRouterWithOptions(&fakeTaskReader{}, RouterOptions{
+		V2TaskStore: store,
+		V2TaskQueue: queue,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/task-url-retry/retry", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(store.retryUploadCalls) != 1 {
+		t.Fatalf("expected one retry call, got %d", len(store.retryUploadCalls))
+	}
+	if store.retryUploadCalls[0].taskID != "task-url-retry" {
+		t.Fatalf("unexpected retried task id %#v", store.retryUploadCalls[0])
+	}
+	if len(queue.calls) != 1 || queue.calls[0].TaskID != "task-url-retry" {
+		t.Fatalf("expected re-enqueue of task-url-retry, got %#v", queue.calls)
+	}
+}
+
 func TestCopyToKomgaCopiesArtifactIntoSeriesFolder(t *testing.T) {
 	downloadRoot := t.TempDir()
 	komgaRoot := t.TempDir()

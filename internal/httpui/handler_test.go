@@ -137,13 +137,16 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	assertContains(t, body, `hx-target="#content"`)
 	assertContains(t, body, `hx-push-url="true"`)
 	assertContains(t, body, "最近 20 条填写的元数据")
+	assertContains(t, body, `id="metadata-history-collapsible"`)
+	assertContains(t, body, "点击最近记录回填元数据")
 	assertContains(t, body, "URL 下载")
 	assertContains(t, body, "上传压缩包")
 	assertContains(t, body, `id="archive_file"`)
-	assertContains(t, body, "支持 ZIP、RAR、7Z。")
-	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、半角 # 与全角 ＃ 分隔多个作者")
-	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个标签")
-	assertContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个类型")
+	assertNotContains(t, body, "支持 ZIP、RAR、7Z。")
+	assertNotContains(t, body, "支持英文逗号 (,)、中文逗号（，）、半角 # 与全角 ＃ 分隔多个作者")
+	assertNotContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个标签")
+	assertNotContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个类型")
+	assertNotContains(t, body, "field-hint-toggle")
 }
 
 func TestHTMXRequestReturnsPageFragment(t *testing.T) {

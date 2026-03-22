@@ -31,12 +31,19 @@ func (a *API) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
 		return
 	}
-	if task.TaskType == nil || !strings.EqualFold(strings.TrimSpace(*task.TaskType), "upload") {
-		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Only failed upload tasks can be retried.", nil)
-		return
+	taskType := ""
+	if task.TaskType != nil {
+		taskType = strings.ToLower(strings.TrimSpace(*task.TaskType))
 	}
-	if strings.TrimSpace(task.Status) != "FAILED" || !task.Retryable || task.SourceArchivePath == nil || strings.TrimSpace(*task.SourceArchivePath) == "" {
-		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Only failed upload tasks can be retried.", nil)
+	canRetry := strings.TrimSpace(task.Status) == "FAILED" && task.Retryable
+	if taskType == "upload" {
+		canRetry = canRetry && task.SourceArchivePath != nil && strings.TrimSpace(*task.SourceArchivePath) != ""
+	}
+	if taskType == "url" {
+		canRetry = canRetry && strings.TrimSpace(task.URL) != ""
+	}
+	if !canRetry {
+		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Only failed retryable tasks can be retried.", nil)
 		return
 	}
 

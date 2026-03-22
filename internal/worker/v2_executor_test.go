@@ -189,6 +189,9 @@ func TestExecutorMarksFailedAfterRetryExhausted(t *testing.T) {
 	if failed.patch.Error == nil || !strings.Contains(*failed.patch.Error, "temporary upstream failure") {
 		t.Fatalf("expected failed patch error to contain retry cause, got %#v", failed.patch.Error)
 	}
+	if failed.patch.Retryable == nil || !*failed.patch.Retryable {
+		t.Fatalf("expected failed patch retryable=true, got %#v", failed.patch.Retryable)
+	}
 	if failed.patch.ResultZipPath != nil {
 		t.Fatalf("expected failed result path nil, got %#v", failed.patch.ResultZipPath)
 	}
