@@ -45,15 +45,15 @@
             </article>
         </div>
     </details>
-    <section class="metadata-history-panel" aria-labelledby="metadata-history-title">
+    <details id="metadata-history-collapsible" class="summary-collapsible metadata-history-panel">
+        <summary class="summary-toggle collapsible-summary">最近 20 条填写的元数据</summary>
         <div class="metadata-history-header">
-            <h3 id="metadata-history-title">最近 20 条填写的元数据</h3>
-            <p class="field-help metadata-history-help">点击记录可回填首页元数据；URL 记录会一并恢复链接，上传记录会切回上传模式但不会恢复本地文件。</p>
+            <h3 id="metadata-history-title" class="sr-only">点击最近记录回填元数据</h3>
         </div>
         <ul id="metadata-history-list" class="metadata-history-list" aria-live="polite">
             <li class="metadata-history-empty">暂无最近填写记录。</li>
         </ul>
-    </section>
+    </details>
     <form id="download-form" action="/download" method="post" novalidate>
         <div class="form-group input-mode-group">
             <span class="input-mode-title">任务来源</span>
@@ -77,17 +77,12 @@
         <div id="archive-input-group" class="form-group is-hidden" aria-hidden="true">
             <label for="archive_file">压缩包文件 <span class="required-mark" aria-hidden="true">*</span></label>
             <input type="file" id="archive_file" name="archive_file" accept=".zip,.rar,.7z" disabled>
-            <p class="field-help">支持 ZIP、RAR、7Z。上传任务会先进入日志，再显示上传进度与后续处理状态。</p>
         </div>
 
         <div class="home-metadata-grid">
             <div class="form-group">
-                <div class="field-label-row">
-                    <label for="author">作者</label>
-                    <button type="button" class="field-hint-toggle" data-field-hint-target="author-hint">说明</button>
-                </div>
+                <label for="author">作者</label>
                 <input type="text" id="author" name="author" placeholder="例如：张三">
-                <p id="author-hint" class="field-help is-hidden" aria-hidden="true">支持英文逗号 (,)、中文逗号（，）、半角 # 与全角 ＃ 分隔多个作者，自动清理多余空格。</p>
             </div>
             <div class="form-group">
                 <label for="series_name">漫画系列名</label>
@@ -102,20 +97,12 @@
                 <textarea id="summary" name="summary" rows="3" placeholder="可填写作品简介或补充信息"></textarea>
             </div>
             <div class="form-group home-metadata-full">
-                <div class="field-label-row">
-                    <label for="tags">标签</label>
-                    <button type="button" class="field-hint-toggle" data-field-hint-target="tags-hint">说明</button>
-                </div>
+                <label for="tags">标签</label>
                 <input type="text" id="tags" name="tags" placeholder="例如：科幻,冒险，连载">
-                <p id="tags-hint" class="field-help is-hidden" aria-hidden="true">支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个标签，自动清理多余空格。</p>
             </div>
             <div class="form-group home-metadata-full">
-                <div class="field-label-row">
-                    <label for="genres">类型</label>
-                    <button type="button" class="field-hint-toggle" data-field-hint-target="genres-hint">说明</button>
-                </div>
+                <label for="genres">类型</label>
                 <input type="text" id="genres" name="genres" placeholder="例如：青年,悬疑，热血">
-                <p id="genres-hint" class="field-help is-hidden" aria-hidden="true">支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个类型，自动清理多余空格。</p>
             </div>
         </div>
 
@@ -124,7 +111,6 @@
                 <input type="checkbox" id="force_redownload" name="force" value="1">
                 <span>强制重新抓取</span>
             </label>
-            <p class="field-help">启用后将忽略已缓存结果，直接重新抓取并生成新文件。</p>
         </div>
         <button type="submit">开始下载</button>
     </form>

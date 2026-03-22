@@ -65,6 +65,7 @@ func TestBuildUIConfigInjectsSettingsStore(t *testing.T) {
 }
 
 func TestBuildLegacyRouterOptionsInjectsV2Dependencies(t *testing.T) {
+	t.Setenv("KOMGA_LIBRARY_ROOT", "")
 	cfg := config.Config{
 		UpstreamBaseURL:  "http://python.local",
 		InternalToken:    "secret-token",
@@ -105,8 +106,21 @@ func TestBuildLegacyRouterOptionsInjectsV2Dependencies(t *testing.T) {
 	if got.ImageConcurrency != cfg.ImageConcurrency {
 		t.Fatalf("expected image_concurrency=%d, got %d", cfg.ImageConcurrency, got.ImageConcurrency)
 	}
+	if got.KomgaRootDir != "/app/komga/myReadingManga" {
+		t.Fatalf("expected default komga root dir /app/komga/myReadingManga, got %q", got.KomgaRootDir)
+	}
 	if !got.DisableRootRoutes {
 		t.Fatalf("expected DisableRootRoutes=true")
+	}
+}
+
+func TestBuildLegacyRouterOptionsUsesKomgaRootDirFromEnv(t *testing.T) {
+	t.Setenv("KOMGA_LIBRARY_ROOT", "/app/custom-komga")
+
+	got := buildLegacyRouterOptions(config.Config{}, &fakeDownloadQueueForLegacyRouterOptions{}, httpv2.NewPostgresTaskStore(nil), httpv2.NewV2TaskQueue(nil))
+
+	if got.KomgaRootDir != "/app/custom-komga" {
+		t.Fatalf("expected komga root from env, got %q", got.KomgaRootDir)
 	}
 }
 

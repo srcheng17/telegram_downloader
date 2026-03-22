@@ -2,7 +2,7 @@ import { createTasksApi } from '../shared/api/tasks_api.js';
 import { normalizeHeadResult } from './download_preflight.js';
 import { hideErrorModal as hideLogsErrorModal, showErrorModal as showLogsErrorModal } from './error_modal.js';
 import { applyStatusCatalog as normalizeStatusCatalog } from './status_filters.js';
-import { buildStatusBadgeModel, formatProgressValue, getTaskTypeLabel } from './table_render.js';
+import { buildStatusBadgeModel, formatProgressValue, getTaskTypeLabel, shouldShowRetryAction } from './table_render.js';
 import { requestRetryTask, runSuccessTaskAction } from './task_actions.js';
 import {
     fallbackStatusLabel as fallbackSharedStatusLabel,
@@ -476,12 +476,7 @@ export function createLogsModule(win, doc) {
         const statusMeta = getStatusMeta(status);
         const canCancel = Boolean(statusMeta && statusMeta.can_cancel && log.id);
         const canDownload = Boolean(statusMeta && statusMeta.can_download && log.id);
-        const canRetry = Boolean(
-            String(log && log.task_type || '').trim().toLowerCase() === 'upload' &&
-            status === 'FAILED' &&
-            log.retryable &&
-            log.id,
-        );
+        const canRetry = shouldShowRetryAction(log);
 
         if (canCancel) {
             const button = doc.createElement('button');

@@ -26,3 +26,8 @@ export function formatProgressValue(log) {
     }
     return Number(task.total_images || 0) > 0 ? `${Number(task.progress || 0)} / ${Number(task.total_images || 0)}` : '暂无';
 }
+
+export function shouldShowRetryAction(log) {
+    const task = log && typeof log === 'object' ? log : {};
+    return Boolean(task.id && normalizeStatusCode(task.status) === 'FAILED' && task.retryable);
+}

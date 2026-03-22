@@ -483,11 +483,10 @@ func buildSuccessStatusPatch(snapshot RunTaskSnapshot, artifactPath string) post
 }
 
 func buildFailureStatusPatch(snapshot RunTaskSnapshot, errMessage string) postgres.StatusPatch {
-	patch := postgres.StatusPatch{Error: &errMessage}
-	if isUploadTask(snapshot.TaskType) {
-		patch.Retryable = boolPtr(true)
+	return postgres.StatusPatch{
+		Error:     &errMessage,
+		Retryable: boolPtr(true),
 	}
-	return patch
 }
 
 func buildCanceledStatusPatch(snapshot RunTaskSnapshot, reason string) postgres.StatusPatch {
