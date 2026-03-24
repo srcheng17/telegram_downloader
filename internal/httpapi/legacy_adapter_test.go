@@ -202,6 +202,43 @@ func TestLegacyAdapterReadLogsPreservesUrlProgressFields(t *testing.T) {
 	}
 }
 
+func TestLegacyAdapterReadLogsMarksCanceledUrlTaskRetryableWhenUrlStillPresent(t *testing.T) {
+	store := &fakeLegacyV2Store{
+		listResult: httpv2.ListTasksResult{
+			Tasks: []httpv2.Task{
+				{
+					ID:        "task-v2-url-canceled",
+					URL:       "https://telegra.ph/canceled-retry",
+					Status:    httpv2.TaskStatusCanceled,
+					TaskType:  stringPtr("url"),
+					Retryable: false,
+					CreatedAt: time.Unix(1700001300, 0).UTC(),
+					UpdatedAt: time.Unix(1700001301, 0).UTC(),
+				},
+			},
+			Total:      1,
+			Page:       1,
+			PerPage:    25,
+			TotalPages: 1,
+		},
+		statusCounts: map[string]int{
+			httpv2.TaskStatusCanceled: 1,
+		},
+	}
+	adapter := NewLegacyAdapter(store, nil, nil)
+
+	response, err := adapter.ReadLogs(context.Background(), domain.LogQuery{Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("read logs: %v", err)
+	}
+	if len(response.Logs) != 1 {
+		t.Fatalf("expected one log row, got %d", len(response.Logs))
+	}
+	if !response.Logs[0].Retryable {
+		t.Fatalf("expected canceled url task to be marked retryable in logs")
+	}
+}
+
 func TestLegacyAdapterCreateOrReuseDownloadTaskPrefersAtomicClaimPath(t *testing.T) {
 	store := &fakeLegacyAtomicClaimStore{
 		claimResult: httpv2.LegacyClaimTaskResult{

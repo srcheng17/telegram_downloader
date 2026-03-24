@@ -119,6 +119,20 @@ func TestRetryCanceledTaskRequeuesTaskWithoutCreatingNewID(t *testing.T) {
 	}
 }
 
+func TestCanRetryTaskAllowsHistoricalCanceledUrlTaskWithoutRetryableFlag(t *testing.T) {
+    task := &httpv2.Task{
+        ID:       "historical-canceled-url",
+        Status:   httpv2.TaskStatusCanceled,
+        TaskType: stringPtr("url"),
+        URL:      "https://telegra.ph/history-cancel",
+        Retryable: false,
+    }
+
+    if !canRetryTask(task) {
+        t.Fatalf("expected historical canceled url task to be retryable")
+    }
+}
+
 func TestCopyToKomgaCopiesArtifactIntoSeriesFolder(t *testing.T) {
 	downloadRoot := t.TempDir()
 	komgaRoot := t.TempDir()
