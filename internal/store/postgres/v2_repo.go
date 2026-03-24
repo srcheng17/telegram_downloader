@@ -20,6 +20,8 @@ type CreateTaskInput struct {
 	URL               string
 	CanonicalURL      *string
 	EnqueueToken      string
+	Progress          int
+	TotalImages       int
 	TaskType          *string
 	SourceArchivePath *string
 	SourceArchiveName *string
@@ -42,6 +44,8 @@ type TaskRecord struct {
 	CanonicalURL      *string
 	Status            string
 	EnqueueToken      string
+	Progress          int
+	TotalImages       int
 	TaskType          *string
 	SourceArchivePath *string
 	SourceArchiveName *string
@@ -89,6 +93,7 @@ type TransitionTaskWithEventInput struct {
 type V2TaskRepo interface {
 	CreateTask(ctx context.Context, in CreateTaskInput) (TaskRecord, error)
 	UpdateTaskStatus(ctx context.Context, id string, from, to string, patch StatusPatch) error
+	UpdateTaskProgress(ctx context.Context, id string, progress, totalImages int) error
 	UpdateTaskHeartbeat(ctx context.Context, id, worker string) error
 	AppendTaskEvent(ctx context.Context, event TaskEvent) error
 	TransitionTaskWithEvent(ctx context.Context, in TransitionTaskWithEventInput) error
@@ -119,6 +124,8 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 		CanonicalURL:      stringPtr(canonicalURL),
 		Status:            statusQueued,
 		EnqueueToken:      strings.TrimSpace(in.EnqueueToken),
+		Progress:          normalizeNonNegativeInt(in.Progress),
+		TotalImages:       normalizeNonNegativeInt(in.TotalImages),
 		TaskType:          stringPtr(normalizeCreateTaskType(in.TaskType)),
 		SourceArchivePath: copyOptionalText(in.SourceArchivePath),
 		SourceArchiveName: copyOptionalText(in.SourceArchiveName),
@@ -148,6 +155,8 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 			canonical_url,
 			status,
 			enqueue_token,
+			progress,
+			total_images,
 			task_type,
 			source_archive_path,
 			source_archive_name,
@@ -165,7 +174,7 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 			created_at,
 			updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
 		)
 		`,
 		record.ID,
@@ -173,6 +182,8 @@ func (r *PostgresV2TaskRepo) CreateTask(ctx context.Context, in CreateTaskInput)
 		canonicalURL,
 		record.Status,
 		record.EnqueueToken,
+		record.Progress,
+		record.TotalImages,
 		record.TaskType,
 		record.SourceArchivePath,
 		record.SourceArchiveName,
@@ -214,6 +225,31 @@ func normalizeNonNegativeInt64(value int64) int64 {
 		return 0
 	}
 	return value
+}
+
+func normalizeNonNegativeInt(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func (r *PostgresV2TaskRepo) UpdateTaskProgress(ctx context.Context, id string, progress, totalImages int) error {
+	_, err := r.db.Exec(
+		ctx,
+		`
+		UPDATE v2_tasks
+		SET
+			progress = $2,
+			total_images = $3,
+			updated_at = NOW()
+		WHERE id = $1
+		`,
+		strings.TrimSpace(id),
+		normalizeNonNegativeInt(progress),
+		normalizeNonNegativeInt(totalImages),
+	)
+	return err
 }
 
 func (r *PostgresV2TaskRepo) UpdateTaskStatus(ctx context.Context, id string, from, to string, patch StatusPatch) error {

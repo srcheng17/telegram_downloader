@@ -55,6 +55,8 @@ type CreateTaskInput struct {
 	URL               string
 	CanonicalURL      *string
 	EnqueueToken      string
+	Progress          int
+	TotalImages       int
 	TaskType          *string
 	SourceArchivePath *string
 	SourceArchiveName *string
@@ -76,6 +78,8 @@ type Task struct {
 	URL               string    `json:"url"`
 	CanonicalURL      *string   `json:"canonical_url,omitempty"`
 	Status            string    `json:"status"`
+	Progress          int       `json:"progress,omitempty"`
+	TotalImages       int       `json:"total_images,omitempty"`
 	TaskType          *string   `json:"task_type,omitempty"`
 	SourceArchivePath *string   `json:"-"`
 	SourceArchiveName *string   `json:"source_archive_name,omitempty"`
@@ -117,6 +121,8 @@ type LegacyClaimTaskInput struct {
 	CanonicalURL      *string
 	EnqueueToken      string
 	ReuseSuccess      bool
+	Progress          int
+	TotalImages       int
 	TaskType          *string
 	SourceArchivePath *string
 	SourceArchiveName *string
@@ -518,6 +524,8 @@ func (s *PostgresTaskStore) CreateTask(ctx context.Context, in CreateTaskInput) 
 		URL:               strings.TrimSpace(in.URL),
 		CanonicalURL:      in.CanonicalURL,
 		EnqueueToken:      strings.TrimSpace(in.EnqueueToken),
+		Progress:          in.Progress,
+		TotalImages:       in.TotalImages,
 		TaskType:          in.TaskType,
 		SourceArchivePath: in.SourceArchivePath,
 		SourceArchiveName: in.SourceArchiveName,
@@ -542,6 +550,8 @@ func (s *PostgresTaskStore) CreateTask(ctx context.Context, in CreateTaskInput) 
 		URL:               record.URL,
 		CanonicalURL:      record.CanonicalURL,
 		Status:            record.Status,
+		Progress:          record.Progress,
+		TotalImages:       record.TotalImages,
 		TaskType:          record.TaskType,
 		SourceArchivePath: record.SourceArchivePath,
 		SourceArchiveName: record.SourceArchiveName,
@@ -606,6 +616,8 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 				url,
 				canonical_url,
 				status,
+				progress,
+				total_images,
 				task_type,
 				source_archive_path,
 				source_archive_name,
@@ -660,6 +672,8 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 				url,
 				canonical_url,
 				status,
+				progress,
+				total_images,
 				task_type,
 				source_archive_path,
 				source_archive_name,
@@ -711,6 +725,8 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 			url,
 			canonical_url,
 			status,
+			progress,
+			total_images,
 			enqueue_token,
 			task_type,
 			source_archive_path,
@@ -729,13 +745,15 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 			created_at,
 			updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
 		)
 		`,
 		taskID,
 		rawURL,
 		canonicalURL,
 		TaskStatusQueued,
+		in.Progress,
+		in.TotalImages,
 		enqueueToken,
 		stringPtr(taskTypeURL),
 		in.SourceArchivePath,
@@ -768,6 +786,8 @@ func (s *PostgresTaskStore) ClaimTaskForLegacy(ctx context.Context, in LegacyCla
 			URL:              rawURL,
 			CanonicalURL:     stringPtr(canonicalURL),
 			Status:           TaskStatusQueued,
+			Progress:         in.Progress,
+			TotalImages:      in.TotalImages,
 			TaskType:         stringPtr(taskTypeURL),
 			Author:           in.Author,
 			SeriesName:       in.SeriesName,
@@ -812,6 +832,8 @@ func (s *PostgresTaskStore) ListTasks(ctx context.Context, in ListTasksQuery) (L
 			url,
 			canonical_url,
 			status,
+			progress,
+			total_images,
 			task_type,
 			source_archive_path,
 			source_archive_name,
@@ -883,6 +905,8 @@ func (s *PostgresTaskStore) GetTask(ctx context.Context, taskID string) (*Task, 
 			url,
 			canonical_url,
 			status,
+			progress,
+			total_images,
 			task_type,
 			source_archive_path,
 			source_archive_name,

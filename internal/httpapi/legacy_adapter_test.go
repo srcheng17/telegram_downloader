@@ -164,6 +164,44 @@ func TestLegacyAdapterReadLogsPreservesUploadTaskFields(t *testing.T) {
 	}
 }
 
+func TestLegacyAdapterReadLogsPreservesUrlProgressFields(t *testing.T) {
+	store := &fakeLegacyV2Store{
+		listResult: httpv2.ListTasksResult{
+			Tasks: []httpv2.Task{
+				{
+					ID:          "task-v2-url-progress",
+					URL:         "https://telegra.ph/url-progress",
+					Status:      httpv2.TaskStatusRunning,
+					TaskType:    stringPtr("url"),
+					Progress:    5,
+					TotalImages: 26,
+					CreatedAt:   time.Unix(1700001200, 0).UTC(),
+					UpdatedAt:   time.Unix(1700001202, 0).UTC(),
+				},
+			},
+			Total:      1,
+			Page:       1,
+			PerPage:    25,
+			TotalPages: 1,
+		},
+		statusCounts: map[string]int{
+			httpv2.TaskStatusRunning: 1,
+		},
+	}
+	adapter := NewLegacyAdapter(store, nil, nil)
+
+	response, err := adapter.ReadLogs(context.Background(), domain.LogQuery{Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("read logs: %v", err)
+	}
+	if len(response.Logs) != 1 {
+		t.Fatalf("expected one log row, got %d", len(response.Logs))
+	}
+	if response.Logs[0].Progress != 5 || response.Logs[0].TotalImages != 26 {
+		t.Fatalf("expected progress 5/26, got %d/%d", response.Logs[0].Progress, response.Logs[0].TotalImages)
+	}
+}
+
 func TestLegacyAdapterCreateOrReuseDownloadTaskPrefersAtomicClaimPath(t *testing.T) {
 	store := &fakeLegacyAtomicClaimStore{
 		claimResult: httpv2.LegacyClaimTaskResult{

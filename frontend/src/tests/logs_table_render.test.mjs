@@ -30,3 +30,20 @@ test('shouldShowRetryAction returns true for failed retryable url tasks', () => 
     true,
   );
 });
+
+test('shouldShowRetryAction returns true for canceled retryable tasks', () => {
+  assert.equal(
+    shouldShowRetryAction({ task_type: 'url', status: 'CANCELED', retryable: true, id: 'task-url-canceled' }),
+    true,
+  );
+});
+
+test('formatProgressValue renders preparing state for running url tasks before totals exist', () => {
+  const value = formatProgressValue({
+    task_type: 'url',
+    status: 'IN_PROGRESS',
+    progress: 0,
+    total_images: 0,
+  });
+  assert.equal(value, '准备中');
+});

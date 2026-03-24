@@ -113,7 +113,7 @@ func main() {
 	v2Executor := worker.NewV2Executor(worker.V2ExecutorConfig{
 		Repo:           v2Repo,
 		Worker:         consumerName,
-		Download:       &worker.V2ServiceDownloader{Service: downloadService, DownloadRoot: downloadRoot},
+		Download:       &worker.V2ServiceDownloader{Service: downloadService, DownloadRoot: downloadRoot, ProgressReporter: v2Repo},
 		TransientRetry: cfg.DownloadRetries,
 	})
 	if err := ensureV2ConsumerGroup(ctx, redisClient, cfg.V2StreamName, cfg.ConsumerGroup); err != nil {

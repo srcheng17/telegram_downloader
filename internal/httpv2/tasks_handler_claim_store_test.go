@@ -345,17 +345,17 @@ func (f *fakeLegacyClaimTx) Exec(_ context.Context, query string, args ...any) (
 		f.lockCanonicalURL = canonicalURL
 		return pgconn.NewCommandTag("SELECT 1"), nil
 	case strings.Contains(query, "INSERT INTO v2_tasks"):
-		if len(args) != 21 {
-			return pgconn.CommandTag{}, fmt.Errorf("expected twenty-one insert args, got %d", len(args))
+		if len(args) != 23 {
+			return pgconn.CommandTag{}, fmt.Errorf("expected twenty-three insert args, got %d", len(args))
 		}
 
-		createdAt, ok := args[19].(time.Time)
+		createdAt, ok := args[21].(time.Time)
 		if !ok {
-			return pgconn.CommandTag{}, fmt.Errorf("expected created_at type time.Time, got %T", args[19])
+			return pgconn.CommandTag{}, fmt.Errorf("expected created_at type time.Time, got %T", args[21])
 		}
-		updatedAt, ok := args[20].(time.Time)
+		updatedAt, ok := args[22].(time.Time)
 		if !ok {
-			return pgconn.CommandTag{}, fmt.Errorf("expected updated_at type time.Time, got %T", args[20])
+			return pgconn.CommandTag{}, fmt.Errorf("expected updated_at type time.Time, got %T", args[22])
 		}
 
 		f.insertedRows = append(f.insertedRows, fakeLegacyClaimInsertRow{
@@ -363,15 +363,15 @@ func (f *fakeLegacyClaimTx) Exec(_ context.Context, query string, args ...any) (
 			url:              args[1].(string),
 			canonicalURL:     args[2].(string),
 			status:           args[3].(string),
-			enqueueToken:     args[4].(string),
-			author:           cloneLegacyClaimString(args[11].(*string)),
-			seriesName:       cloneLegacyClaimString(args[12].(*string)),
-			comicName:        cloneLegacyClaimString(args[13].(*string)),
-			summary:          cloneLegacyClaimString(args[14].(*string)),
-			tagsRaw:          cloneLegacyClaimString(args[15].(*string)),
-			tagsNormalized:   cloneLegacyClaimString(args[16].(*string)),
-			genresRaw:        cloneLegacyClaimString(args[17].(*string)),
-			genresNormalized: cloneLegacyClaimString(args[18].(*string)),
+			enqueueToken:     args[6].(string),
+			author:           cloneLegacyClaimString(args[13].(*string)),
+			seriesName:       cloneLegacyClaimString(args[14].(*string)),
+			comicName:        cloneLegacyClaimString(args[15].(*string)),
+			summary:          cloneLegacyClaimString(args[16].(*string)),
+			tagsRaw:          cloneLegacyClaimString(args[17].(*string)),
+			tagsNormalized:   cloneLegacyClaimString(args[18].(*string)),
+			genresRaw:        cloneLegacyClaimString(args[19].(*string)),
+			genresNormalized: cloneLegacyClaimString(args[20].(*string)),
 			createdAt:        createdAt,
 			updatedAt:        updatedAt,
 		})
@@ -420,32 +420,34 @@ func (f fakeLegacyClaimRow) Scan(dest ...any) error {
 	if f.task == nil {
 		return pgx.ErrNoRows
 	}
-	if len(dest) != 22 {
-		return fmt.Errorf("expected twenty-two scan destinations, got %d", len(dest))
+	if len(dest) != 24 {
+		return fmt.Errorf("expected twenty-four scan destinations, got %d", len(dest))
 	}
 
 	*dest[0].(*string) = f.task.ID
 	*dest[1].(*string) = f.task.URL
 	*dest[2].(**string) = cloneLegacyClaimString(f.task.CanonicalURL)
 	*dest[3].(*string) = f.task.Status
-	*dest[4].(**string) = cloneLegacyClaimString(f.task.TaskType)
-	*dest[5].(**string) = cloneLegacyClaimString(f.task.SourceArchivePath)
-	*dest[6].(**string) = cloneLegacyClaimString(f.task.SourceArchiveName)
-	*dest[7].(*int64) = f.task.UploadLoadedBytes
-	*dest[8].(*int64) = f.task.UploadTotalBytes
-	*dest[9].(*bool) = f.task.Retryable
-	*dest[10].(**string) = cloneLegacyClaimString(f.task.Error)
-	*dest[11].(**string) = cloneLegacyClaimString(f.task.ResultZipPath)
-	*dest[12].(**string) = cloneLegacyClaimString(f.task.Author)
-	*dest[13].(**string) = cloneLegacyClaimString(f.task.SeriesName)
-	*dest[14].(**string) = cloneLegacyClaimString(f.task.ComicName)
-	*dest[15].(**string) = cloneLegacyClaimString(f.task.Summary)
-	*dest[16].(**string) = cloneLegacyClaimString(f.task.TagsRaw)
-	*dest[17].(**string) = cloneLegacyClaimString(f.task.TagsNormalized)
-	*dest[18].(**string) = cloneLegacyClaimString(f.task.GenresRaw)
-	*dest[19].(**string) = cloneLegacyClaimString(f.task.GenresNormalized)
-	*dest[20].(*time.Time) = f.task.CreatedAt
-	*dest[21].(*time.Time) = f.task.UpdatedAt
+	*dest[4].(*int) = f.task.Progress
+	*dest[5].(*int) = f.task.TotalImages
+	*dest[6].(**string) = cloneLegacyClaimString(f.task.TaskType)
+	*dest[7].(**string) = cloneLegacyClaimString(f.task.SourceArchivePath)
+	*dest[8].(**string) = cloneLegacyClaimString(f.task.SourceArchiveName)
+	*dest[9].(*int64) = f.task.UploadLoadedBytes
+	*dest[10].(*int64) = f.task.UploadTotalBytes
+	*dest[11].(*bool) = f.task.Retryable
+	*dest[12].(**string) = cloneLegacyClaimString(f.task.Error)
+	*dest[13].(**string) = cloneLegacyClaimString(f.task.ResultZipPath)
+	*dest[14].(**string) = cloneLegacyClaimString(f.task.Author)
+	*dest[15].(**string) = cloneLegacyClaimString(f.task.SeriesName)
+	*dest[16].(**string) = cloneLegacyClaimString(f.task.ComicName)
+	*dest[17].(**string) = cloneLegacyClaimString(f.task.Summary)
+	*dest[18].(**string) = cloneLegacyClaimString(f.task.TagsRaw)
+	*dest[19].(**string) = cloneLegacyClaimString(f.task.TagsNormalized)
+	*dest[20].(**string) = cloneLegacyClaimString(f.task.GenresRaw)
+	*dest[21].(**string) = cloneLegacyClaimString(f.task.GenresNormalized)
+	*dest[22].(*time.Time) = f.task.CreatedAt
+	*dest[23].(*time.Time) = f.task.UpdatedAt
 	return nil
 }
 

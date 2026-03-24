@@ -225,6 +225,27 @@ func TestUpdateTaskHeartbeatTouchesRunningTask(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskProgressPersistsValues(t *testing.T) {
+	db := newFakeV2RepoDB()
+	db.tasks["task-v2-progress"] = fakeV2Task{
+		id:        "task-v2-progress",
+		url:       "https://telegra.ph/demo",
+		status:    "RUNNING",
+		createdAt: time.Now().UTC(),
+		updatedAt: time.Now().UTC(),
+	}
+	repo := &PostgresV2TaskRepo{db: db}
+
+	if err := repo.UpdateTaskProgress(context.Background(), "task-v2-progress", 7, 26); err != nil {
+		t.Fatalf("update task progress: %v", err)
+	}
+
+	persisted := db.tasks["task-v2-progress"]
+	if persisted.progress != 7 || persisted.totalImages != 26 {
+		t.Fatalf("expected progress 7/26, got %d/%d", persisted.progress, persisted.totalImages)
+	}
+}
+
 func TestUpdateTaskStatusIncrementsRetryCountOnRunningFailure(t *testing.T) {
 	db := newFakeV2RepoDB()
 	db.tasks["task-v2-retry"] = fakeV2Task{
@@ -273,6 +294,8 @@ type fakeV2Task struct {
 	sourceArchiveName *string
 	uploadLoadedBytes int64
 	uploadTotalBytes  int64
+	progress          int
+	totalImages       int
 	retryable         bool
 	author            *string
 	seriesName        *string
@@ -310,8 +333,8 @@ func newFakeV2RepoDB() *fakeV2RepoDB {
 func (f *fakeV2RepoDB) Exec(_ context.Context, query string, args ...any) (pgconn.CommandTag, error) {
 	switch {
 	case strings.Contains(query, "INSERT INTO v2_tasks"):
-		if len(args) != 21 {
-			return pgconn.CommandTag{}, fmt.Errorf("expected 21 create task args, got %d", len(args))
+		if len(args) != 23 {
+			return pgconn.CommandTag{}, fmt.Errorf("expected 23 create task args, got %d", len(args))
 		}
 		f.tasks[args[0].(string)] = fakeV2Task{
 			id:                args[0].(string),
@@ -319,22 +342,24 @@ func (f *fakeV2RepoDB) Exec(_ context.Context, query string, args ...any) (pgcon
 			canonicalURL:      args[2].(string),
 			status:            args[3].(string),
 			enqueueToken:      args[4].(string),
-			taskType:          cloneV2String(args[5].(*string)),
-			sourceArchivePath: cloneV2String(args[6].(*string)),
-			sourceArchiveName: cloneV2String(args[7].(*string)),
-			uploadLoadedBytes: args[8].(int64),
-			uploadTotalBytes:  args[9].(int64),
-			retryable:         args[10].(bool),
-			author:            cloneV2String(args[11].(*string)),
-			seriesName:        cloneV2String(args[12].(*string)),
-			comicName:         cloneV2String(args[13].(*string)),
-			summary:           cloneV2String(args[14].(*string)),
-			tagsRaw:           cloneV2String(args[15].(*string)),
-			tagsNormalized:    cloneV2String(args[16].(*string)),
-			genresRaw:         cloneV2String(args[17].(*string)),
-			genresNormalized:  cloneV2String(args[18].(*string)),
-			createdAt:         args[19].(time.Time),
-			updatedAt:         args[20].(time.Time),
+			progress:          args[5].(int),
+			totalImages:       args[6].(int),
+			taskType:          cloneV2String(args[7].(*string)),
+			sourceArchivePath: cloneV2String(args[8].(*string)),
+			sourceArchiveName: cloneV2String(args[9].(*string)),
+			uploadLoadedBytes: args[10].(int64),
+			uploadTotalBytes:  args[11].(int64),
+			retryable:         args[12].(bool),
+			author:            cloneV2String(args[13].(*string)),
+			seriesName:        cloneV2String(args[14].(*string)),
+			comicName:         cloneV2String(args[15].(*string)),
+			summary:           cloneV2String(args[16].(*string)),
+			tagsRaw:           cloneV2String(args[17].(*string)),
+			tagsNormalized:    cloneV2String(args[18].(*string)),
+			genresRaw:         cloneV2String(args[19].(*string)),
+			genresNormalized:  cloneV2String(args[20].(*string)),
+			createdAt:         args[21].(time.Time),
+			updatedAt:         args[22].(time.Time),
 		}
 		return pgconn.NewCommandTag("INSERT 0 1"), nil
 	case strings.Contains(query, "INSERT INTO v2_task_events"):
@@ -366,6 +391,21 @@ func (f *fakeV2RepoDB) Exec(_ context.Context, query string, args ...any) (pgcon
 			now := time.Now().UTC()
 			task.heartbeatAt = &now
 			task.updatedAt = now
+			f.tasks[taskID] = task
+			return pgconn.NewCommandTag("UPDATE 1"), nil
+		}
+		if strings.Contains(query, "progress = $2") {
+			if len(args) != 3 {
+				return pgconn.CommandTag{}, fmt.Errorf("expected 3 progress args, got %d", len(args))
+			}
+			taskID := args[0].(string)
+			task, ok := f.tasks[taskID]
+			if !ok {
+				return pgconn.NewCommandTag("UPDATE 0"), nil
+			}
+			task.progress = args[1].(int)
+			task.totalImages = args[2].(int)
+			task.updatedAt = time.Now().UTC()
 			f.tasks[taskID] = task
 			return pgconn.NewCommandTag("UPDATE 1"), nil
 		}

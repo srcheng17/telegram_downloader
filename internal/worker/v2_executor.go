@@ -51,6 +51,7 @@ type V2TaskSnapshot struct {
 type V2ExecutionRepo interface {
 	GetTaskForExecution(ctx context.Context, taskID string) (V2TaskSnapshot, error)
 	UpdateTaskHeartbeat(ctx context.Context, taskID, worker string) error
+	UpdateTaskProgress(ctx context.Context, taskID string, progress, totalImages int) error
 	TransitionTaskWithEvent(ctx context.Context, in postgres.TransitionTaskWithEventInput) error
 }
 
@@ -357,6 +358,13 @@ func (a runTaskRepoAdapter) UpdateTaskHeartbeat(ctx context.Context, taskID, wor
 	return a.repo.UpdateTaskHeartbeat(ctx, taskID, worker)
 }
 
+func (a runTaskRepoAdapter) UpdateTaskProgress(ctx context.Context, taskID string, progress, totalImages int) error {
+	if a.repo == nil {
+		return errors.New("v2 executor requires repository")
+	}
+	return a.repo.UpdateTaskProgress(ctx, taskID, progress, totalImages)
+}
+
 func (a runTaskRepoAdapter) TransitionTaskWithEvent(ctx context.Context, in postgres.TransitionTaskWithEventInput) error {
 	if a.repo == nil {
 		return errors.New("v2 executor requires repository")
@@ -466,10 +474,18 @@ func (r *V2PostgresExecutionRepo) UpdateTaskHeartbeat(ctx context.Context, taskI
 	return r.Writer.UpdateTaskHeartbeat(ctx, strings.TrimSpace(taskID), strings.TrimSpace(worker))
 }
 
+func (r *V2PostgresExecutionRepo) UpdateTaskProgress(ctx context.Context, taskID string, progress, totalImages int) error {
+	if r == nil || r.Writer == nil {
+		return errors.New("v2 execution repo writer is not configured")
+	}
+	return r.Writer.UpdateTaskProgress(ctx, strings.TrimSpace(taskID), progress, totalImages)
+}
+
 type V2ServiceDownloader struct {
-	Service      *downloader.Service
-	DownloadRoot string
-	Extractor    *taskarchive.Extractor
+	Service          *downloader.Service
+	DownloadRoot     string
+	Extractor        *taskarchive.Extractor
+	ProgressReporter V2ExecutionRepo
 }
 
 func (d *V2ServiceDownloader) DownloadAndPackage(
@@ -496,7 +512,16 @@ func (d *V2ServiceDownloader) DownloadAndPackage(
 
 	var images []domain.DownloadedImage
 	if isRemotePageSource(source) {
-		result, err := d.Service.Download(ctx, source)
+		serviceCopy := *d.Service
+		if d.ProgressReporter != nil {
+			serviceCopy.OnTotalImagesDiscovered = func(total int) {
+				_ = d.ProgressReporter.UpdateTaskProgress(ctx, taskID, 0, total)
+			}
+			serviceCopy.OnImageDownloaded = func(downloaded, total int) {
+				_ = d.ProgressReporter.UpdateTaskProgress(ctx, taskID, downloaded, total)
+			}
+		}
+		result, err := serviceCopy.Download(ctx, source)
 		if err != nil {
 			return "", err
 		}

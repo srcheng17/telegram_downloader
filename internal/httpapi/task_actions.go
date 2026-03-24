@@ -35,7 +35,8 @@ func (a *API) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
 	if task.TaskType != nil {
 		taskType = strings.ToLower(strings.TrimSpace(*task.TaskType))
 	}
-	canRetry := strings.TrimSpace(task.Status) == "FAILED" && task.Retryable
+	taskStatus := strings.TrimSpace(task.Status)
+	canRetry := (taskStatus == "FAILED" || taskStatus == "CANCELED") && task.Retryable
 	if taskType == "upload" {
 		canRetry = canRetry && task.SourceArchivePath != nil && strings.TrimSpace(*task.SourceArchivePath) != ""
 	}
