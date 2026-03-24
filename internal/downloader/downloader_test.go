@@ -124,6 +124,54 @@ func TestDownloadReturnsPartialFailureWhenAnyImageFails(t *testing.T) {
 	}
 }
 
+func TestDownloadReportsTotalAndPerImageProgress(t *testing.T) {
+	var totalImages int
+	var downloaded []int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			_, _ = fmt.Fprint(w, `<html><body><img src="/1.jpg"><img src="/2.jpg"></body></html>`)
+		case "/1.jpg", "/2.jpg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := Service{
+		HTTPClient: server.Client(),
+		OnTotalImagesDiscovered: func(total int) {
+			totalImages = total
+		},
+		OnImageDownloaded: func(done, total int) {
+			downloaded = append(downloaded, done)
+			if total != 2 {
+				t.Fatalf("expected callback total=2, got %d", total)
+			}
+		},
+	}
+
+	result, err := service.Download(context.Background(), server.URL+"/page")
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	if totalImages != 2 {
+		t.Fatalf("expected total images callback=2, got %d", totalImages)
+	}
+	if len(downloaded) != 2 {
+		t.Fatalf("expected two progress callbacks, got %d", len(downloaded))
+	}
+	if downloaded[0] != 1 || downloaded[1] != 2 {
+		t.Fatalf("expected downloaded sequence [1 2], got %#v", downloaded)
+	}
+	if result.DownloadedImages != 2 {
+		t.Fatalf("expected downloaded_images=2, got %d", result.DownloadedImages)
+	}
+}
+
 func TestDownloadUsesFallbackCandidateWhenPrimaryFails(t *testing.T) {
 	var primaryRequests atomic.Int32
 	var fallbackRequests atomic.Int32

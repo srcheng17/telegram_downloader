@@ -709,6 +709,8 @@ type v2ExecutorTaskRecord struct {
 	url               string
 	status            string
 	enqueueToken      string
+	progress          int
+	totalImages       int
 	taskType          *string
 	sourceArchivePath *string
 	sourceArchiveName *string
@@ -801,6 +803,17 @@ func (f *fakeV2ExecutorRepo) UpdateTaskHeartbeat(_ context.Context, taskID, work
 		task.status = "CANCEL_REQUESTED"
 		f.tasks[taskID] = task
 	}
+	return nil
+}
+
+func (f *fakeV2ExecutorRepo) UpdateTaskProgress(_ context.Context, taskID string, progress, totalImages int) error {
+	task, ok := f.tasks[taskID]
+	if !ok {
+		return errors.New("task not found")
+	}
+	task.progress = progress
+	task.totalImages = totalImages
+	f.tasks[taskID] = task
 	return nil
 }
 

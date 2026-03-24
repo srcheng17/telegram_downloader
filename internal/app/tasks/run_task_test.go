@@ -119,3 +119,13 @@ func TestRunTaskUploadUsesSourceArchivePathAndClearsItOnSuccess(t *testing.T) {
 		t.Fatalf("expected success patch retryable=false, got %#v", repo.transitions[1].Patch.Retryable)
 	}
 }
+
+func TestBuildCanceledStatusPatchKeepsTaskRetryable(t *testing.T) {
+	patch := buildCanceledStatusPatch(RunTaskSnapshot{TaskType: strPtr("upload")}, "Cancellation requested by user.")
+	if patch.Retryable == nil || !*patch.Retryable {
+		t.Fatalf("expected canceled patch retryable=true, got %#v", patch.Retryable)
+	}
+	if patch.ClearSourceArchivePath {
+		t.Fatalf("expected canceled patch not to clear source archive path")
+	}
+}

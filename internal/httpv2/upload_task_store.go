@@ -27,6 +27,8 @@ func scanTaskRow(scanner taskRowScanner) (Task, error) {
 		&task.URL,
 		&task.CanonicalURL,
 		&task.Status,
+		&task.Progress,
+		&task.TotalImages,
 		&task.TaskType,
 		&task.SourceArchivePath,
 		&task.SourceArchiveName,
@@ -111,6 +113,27 @@ func (s *PostgresTaskStore) UpdateUploadProgress(ctx context.Context, taskID str
 	return err
 }
 
+func (s *PostgresTaskStore) UpdateTaskProgress(ctx context.Context, taskID string, progress, totalImages int) error {
+	if s == nil || s.db == nil {
+		return errors.New("v2 task database is not configured")
+	}
+	_, err := s.db.Exec(
+		ctx,
+		`
+		UPDATE v2_tasks
+		SET
+			progress = $2,
+			total_images = $3,
+			updated_at = NOW()
+		WHERE id = $1
+		`,
+		strings.TrimSpace(taskID),
+		maxInt(progress, 0),
+		maxInt(totalImages, 0),
+	)
+	return err
+}
+
 func (s *PostgresTaskStore) MarkUploadTaskQueued(ctx context.Context, taskID, sourceArchivePath string, totalBytes int64) error {
 	if s == nil || s.db == nil {
 		return errors.New("v2 task database is not configured")
@@ -158,12 +181,14 @@ func (s *PostgresTaskStore) RetryUploadTask(ctx context.Context, taskID, enqueue
 			enqueue_token = $3,
 			error = NULL,
 			result_zip_path = NULL,
+			progress = 0,
+			total_images = 0,
 			retryable = FALSE,
 			claimed_by = NULL,
 			updated_at = NOW()
 		WHERE
 			id = $1
-			AND status = $4
+			AND status IN ($4, $7)
 			AND retryable = TRUE
 			AND (
 				(task_type = $5 AND source_archive_path IS NOT NULL AND source_archive_path != '')
@@ -177,6 +202,7 @@ func (s *PostgresTaskStore) RetryUploadTask(ctx context.Context, taskID, enqueue
 		TaskStatusFailed,
 		taskTypeUpload,
 		taskTypeURL,
+		TaskStatusCanceled,
 	)
 	if err != nil {
 		return err
@@ -188,6 +214,13 @@ func (s *PostgresTaskStore) RetryUploadTask(ctx context.Context, taskID, enqueue
 }
 
 func maxInt64(value, minimum int64) int64 {
+	if value < minimum {
+		return minimum
+	}
+	return value
+}
+
+func maxInt(value, minimum int) int {
 	if value < minimum {
 		return minimum
 	}

@@ -492,10 +492,7 @@ func buildFailureStatusPatch(snapshot RunTaskSnapshot, errMessage string) postgr
 func buildCanceledStatusPatch(snapshot RunTaskSnapshot, reason string) postgres.StatusPatch {
 	patch := postgres.StatusPatch{
 		Error:     &reason,
-		Retryable: boolPtr(false),
-	}
-	if isUploadTask(snapshot.TaskType) {
-		patch.ClearSourceArchivePath = true
+		Retryable: boolPtr(true),
 	}
 	return patch
 }

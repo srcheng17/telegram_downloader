@@ -14,24 +14,26 @@ func (f fakeTaskScanRow) Scan(dest ...any) error {
 	*dest[1].(*string) = f.values[1].(string)
 	*dest[2].(**string) = optionalTaskString(f.values[2])
 	*dest[3].(*string) = f.values[3].(string)
-	*dest[4].(**string) = optionalTaskString(f.values[4])
-	*dest[5].(**string) = optionalTaskString(f.values[5])
+	*dest[4].(*int) = f.values[4].(int)
+	*dest[5].(*int) = f.values[5].(int)
 	*dest[6].(**string) = optionalTaskString(f.values[6])
-	*dest[7].(*int64) = f.values[7].(int64)
-	*dest[8].(*int64) = f.values[8].(int64)
-	*dest[9].(*bool) = f.values[9].(bool)
-	*dest[10].(**string) = optionalTaskString(f.values[10])
-	*dest[11].(**string) = optionalTaskString(f.values[11])
+	*dest[7].(**string) = optionalTaskString(f.values[7])
+	*dest[8].(**string) = optionalTaskString(f.values[8])
+	*dest[9].(*int64) = f.values[9].(int64)
+	*dest[10].(*int64) = f.values[10].(int64)
+	*dest[11].(*bool) = f.values[11].(bool)
 	*dest[12].(**string) = optionalTaskString(f.values[12])
 	*dest[13].(**string) = optionalTaskString(f.values[13])
 	*dest[14].(**string) = optionalTaskString(f.values[14])
 	*dest[15].(**string) = optionalTaskString(f.values[15])
 	*dest[16].(**string) = optionalTaskString(f.values[16])
 	*dest[17].(**string) = optionalTaskString(f.values[17])
-	*dest[18].(**string) = cloneTaskString(f.values[18].(*string))
-	*dest[19].(**string) = cloneTaskString(f.values[19].(*string))
-	*dest[20].(*time.Time) = f.values[20].(time.Time)
-	*dest[21].(*time.Time) = f.values[21].(time.Time)
+	*dest[18].(**string) = optionalTaskString(f.values[18])
+	*dest[19].(**string) = optionalTaskString(f.values[19])
+	*dest[20].(**string) = cloneTaskString(f.values[20].(*string))
+	*dest[21].(**string) = cloneTaskString(f.values[21].(*string))
+	*dest[22].(*time.Time) = f.values[22].(time.Time)
+	*dest[23].(*time.Time) = f.values[23].(time.Time)
 	return nil
 }
 
@@ -43,6 +45,8 @@ func TestScanTaskRowPreservesUploadFields(t *testing.T) {
 			"",
 			stringPtr(""),
 			TaskStatusUploading,
+			3,
+			9,
 			stringPtr("upload"),
 			stringPtr("/tmp/source/demo.7z"),
 			stringPtr("demo.7z"),
@@ -73,6 +77,9 @@ func TestScanTaskRowPreservesUploadFields(t *testing.T) {
 	}
 	if task.SourceArchiveName == nil || *task.SourceArchiveName != "demo.7z" {
 		t.Fatalf("expected source_archive_name demo.7z, got %#v", task.SourceArchiveName)
+	}
+	if task.Progress != 3 || task.TotalImages != 9 {
+		t.Fatalf("expected progress 3/9, got %d/%d", task.Progress, task.TotalImages)
 	}
 	if task.SourceArchivePath == nil || *task.SourceArchivePath != "/tmp/source/demo.7z" {
 		t.Fatalf("expected source_archive_path preserved, got %#v", task.SourceArchivePath)

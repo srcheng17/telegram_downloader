@@ -25,12 +25,14 @@ const (
 )
 
 type Service struct {
-	HTTPClient       *http.Client
-	DownloadRetries  int
-	ImageConcurrency int
-	MaxImages        int
-	MaxImageBytes    int64
-	MaxTotalBytes    int64
+	HTTPClient              *http.Client
+	DownloadRetries         int
+	ImageConcurrency        int
+	MaxImages               int
+	MaxImageBytes           int64
+	MaxTotalBytes           int64
+	OnTotalImagesDiscovered func(total int)
+	OnImageDownloaded       func(downloaded, total int)
 }
 
 type LimitKind string
@@ -142,6 +144,9 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 		Images:      make([]domain.DownloadedImage, 0, len(imageSlots)),
 		TotalImages: len(imageSlots),
 	}
+	if s.OnTotalImagesDiscovered != nil {
+		s.OnTotalImagesDiscovered(len(imageSlots))
+	}
 
 	if len(imageSlots) == 0 {
 		return result, errors.New("no images found on page")
@@ -241,6 +246,11 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 
 		successByIndex[item.index] = item.image
 		successMarker[item.index] = true
+		if s.OnImageDownloaded != nil {
+			completed := result.DownloadedImages + 1
+			s.OnImageDownloaded(completed, len(imageSlots))
+		}
+		result.DownloadedImages++
 	}
 
 	for i := range successMarker {
@@ -249,7 +259,9 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 		}
 		result.Images = append(result.Images, successByIndex[i])
 	}
-	result.DownloadedImages = len(result.Images)
+	if result.DownloadedImages == 0 {
+		result.DownloadedImages = len(result.Images)
+	}
 	result.TotalBytes = totalBytes
 
 	if limitErr != nil {

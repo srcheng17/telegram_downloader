@@ -24,10 +24,14 @@ export function formatProgressValue(log) {
             return '处理中';
         }
     }
+    if (normalizeStatusCode(task.status) === 'IN_PROGRESS' && Number(task.total_images || 0) === 0) {
+        return '准备中';
+    }
     return Number(task.total_images || 0) > 0 ? `${Number(task.progress || 0)} / ${Number(task.total_images || 0)}` : '暂无';
 }
 
 export function shouldShowRetryAction(log) {
     const task = log && typeof log === 'object' ? log : {};
-    return Boolean(task.id && normalizeStatusCode(task.status) === 'FAILED' && task.retryable);
+    const status = normalizeStatusCode(task.status);
+    return Boolean(task.id && (status === 'FAILED' || status === 'CANCELED') && task.retryable);
 }

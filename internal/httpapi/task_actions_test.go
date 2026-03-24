@@ -88,6 +88,37 @@ func TestRetryUrlTaskRequeuesFailedTaskWithoutCreatingNewID(t *testing.T) {
 	}
 }
 
+func TestRetryCanceledTaskRequeuesTaskWithoutCreatingNewID(t *testing.T) {
+	store := &fakeLegacyV2Store{
+		getTask: &httpv2.Task{
+			ID:        "task-canceled-retry",
+			Status:    httpv2.TaskStatusCanceled,
+			TaskType:  stringPtr("url"),
+			URL:       "https://telegra.ph/retry-after-cancel",
+			Retryable: true,
+		},
+	}
+	queue := &fakeLegacyV2Queue{}
+	handler := NewRouterWithOptions(&fakeTaskReader{}, RouterOptions{
+		V2TaskStore: store,
+		V2TaskQueue: queue,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/task-canceled-retry/retry", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(store.retryUploadCalls) != 1 || store.retryUploadCalls[0].taskID != "task-canceled-retry" {
+		t.Fatalf("expected canceled task retry call, got %#v", store.retryUploadCalls)
+	}
+	if len(queue.calls) != 1 || queue.calls[0].TaskID != "task-canceled-retry" {
+		t.Fatalf("expected canceled task to be re-enqueued, got %#v", queue.calls)
+	}
+}
+
 func TestCopyToKomgaCopiesArtifactIntoSeriesFolder(t *testing.T) {
 	downloadRoot := t.TempDir()
 	komgaRoot := t.TempDir()
