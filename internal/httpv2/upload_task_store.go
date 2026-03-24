@@ -189,9 +189,8 @@ func (s *PostgresTaskStore) RetryUploadTask(ctx context.Context, taskID, enqueue
 		WHERE
 			id = $1
 			AND status IN ($4, $7)
-			AND retryable = TRUE
 			AND (
-				(task_type = $5 AND source_archive_path IS NOT NULL AND source_archive_path != '')
+				(task_type = $5 AND retryable = TRUE AND source_archive_path IS NOT NULL AND source_archive_path != '')
 				OR
 				(task_type = $6 AND url IS NOT NULL AND url != '')
 			)
