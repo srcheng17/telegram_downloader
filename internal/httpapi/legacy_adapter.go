@@ -783,7 +783,7 @@ func mapV2TaskToLegacyLog(task httpv2.Task) domain.TaskLog {
 		SourceArchiveName: task.SourceArchiveName,
 		UploadLoadedBytes: task.UploadLoadedBytes,
 		UploadTotalBytes:  task.UploadTotalBytes,
-		Retryable:         task.Retryable,
+		Retryable:         canRetryTask(&task),
 		StartTime:         startTime,
 		Error:             task.Error,
 		ImageConcurrency:  0,

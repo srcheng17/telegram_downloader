@@ -31,19 +31,7 @@ func (a *API) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
 		return
 	}
-	taskType := ""
-	if task.TaskType != nil {
-		taskType = strings.ToLower(strings.TrimSpace(*task.TaskType))
-	}
-	taskStatus := strings.TrimSpace(task.Status)
-	canRetry := (taskStatus == "FAILED" || taskStatus == "CANCELED") && task.Retryable
-	if taskType == "upload" {
-		canRetry = canRetry && task.SourceArchivePath != nil && strings.TrimSpace(*task.SourceArchivePath) != ""
-	}
-	if taskType == "url" {
-		canRetry = canRetry && strings.TrimSpace(task.URL) != ""
-	}
-	if !canRetry {
+	if !canRetryTask(task) {
 		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Only failed retryable tasks can be retried.", nil)
 		return
 	}
@@ -65,6 +53,26 @@ func (a *API) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
 		"task_id": taskID,
 		"status":  "QUEUED",
 	})
+}
+
+func canRetryTask(task *httpv2.Task) bool {
+	if task == nil {
+		return false
+	}
+	taskType := ""
+	if task.TaskType != nil {
+		taskType = strings.ToLower(strings.TrimSpace(*task.TaskType))
+	}
+	taskStatus := strings.TrimSpace(task.Status)
+	if taskStatus != "FAILED" && taskStatus != "CANCELED" {
+		return false
+	}
+	switch taskType {
+	case "upload":
+		return task.SourceArchivePath != nil && strings.TrimSpace(*task.SourceArchivePath) != ""
+	default:
+		return strings.TrimSpace(task.URL) != ""
+	}
 }
 
 func (a *API) handleTaskCopyToKomga(w http.ResponseWriter, r *http.Request) {
