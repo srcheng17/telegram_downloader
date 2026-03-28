@@ -3,11 +3,8 @@ package tasks
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 const defaultCompensationTimeout = 3 * time.Second
@@ -87,52 +84,14 @@ func NewService(store TaskStore, queue TaskQueue) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
-	if s == nil || s.Store == nil || s.Queue == nil {
-		return CreateResult{}, errors.New("task service dependencies are not configured")
-	}
-
-	url := strings.TrimSpace(in.URL)
-	if url == "" {
-		return CreateResult{}, errors.New("url is required")
-	}
-
-	canonicalURL := normalizeCanonicalURL(url, in.CanonicalURL)
-	createInput := CreateTaskInput{
-		ID:           uuid.NewString(),
-		URL:          url,
-		CanonicalURL: stringPtr(canonicalURL),
-		EnqueueToken: uuid.NewString(),
-	}
-
-	task, err := s.Store.CreateTask(ctx, createInput)
-	if err != nil {
-		return CreateResult{}, err
-	}
-	status := normalizeStatus(task.Status)
-	if status == "" {
-		status = StatusQueued
-	}
-
-	if err := s.Queue.Enqueue(ctx, QueueMessage{TaskID: task.ID, Token: createInput.EnqueueToken}); err != nil {
-		compensationCtx, compensationCancel := context.WithTimeout(context.Background(), s.compensationTimeout())
-		defer compensationCancel()
-		_ = s.Store.MarkTaskFailed(compensationCtx, task.ID, fmt.Sprintf("enqueue failed: %v", err))
-		return CreateResult{}, err
-	}
-
-	return CreateResult{TaskID: task.ID, Status: status}, nil
+	createService := NewCreateService(s.Store, s.Queue)
+	createService.CompensationTimeout = s.CompensationTimeout
+	return createService.Create(ctx, in)
 }
 
 func (s *Service) Cancel(ctx context.Context, taskID string) (CancelResult, error) {
 	cancelService := NewCancelService(cancelStoreAdapter{store: s.Store})
 	return cancelService.Cancel(ctx, taskID)
-}
-
-func (s *Service) compensationTimeout() time.Duration {
-	if s.CompensationTimeout <= 0 {
-		return defaultCompensationTimeout
-	}
-	return s.CompensationTimeout
 }
 
 func normalizeStatus(status string) string {
