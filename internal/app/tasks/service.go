@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	taskdomain "github.com/ryancheng/telegram-downloader/internal/domain/task"
 )
 
 const defaultCompensationTimeout = 3 * time.Second
@@ -125,54 +124,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, err
 }
 
 func (s *Service) Cancel(ctx context.Context, taskID string) (CancelResult, error) {
-	if s == nil || s.Store == nil {
-		return CancelResult{}, errors.New("task service store is not configured")
-	}
-
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return CancelResult{}, errors.New("task id is required")
-	}
-
-	task, err := s.Store.GetTask(ctx, taskID)
-	if err != nil {
-		return CancelResult{}, err
-	}
-	if task == nil {
-		return CancelResult{}, ErrTaskNotFound
-	}
-
-	status := normalizeStatus(task.Status)
-	switch status {
-	case StatusCanceled:
-		return CancelResult{TaskID: taskID, Status: StatusCanceled}, nil
-	case StatusCancelRequested:
-		return CancelResult{TaskID: taskID, Status: StatusCancelRequested}, nil
-	case StatusSuccess, StatusFailed:
-		return CancelResult{}, ErrTaskNotCancelable
-	}
-	if !taskdomain.CanCancel(status) {
-		return CancelResult{}, ErrTaskNotCancelable
-	}
-
-	if err := s.Store.CancelTask(ctx, taskID, status); err != nil {
-		if errors.Is(err, ErrTaskStatusConflict) {
-			latestTask, latestErr := s.Store.GetTask(ctx, taskID)
-			if latestErr != nil {
-				return CancelResult{}, latestErr
-			}
-			if latestTask != nil {
-				latestStatus := normalizeStatus(latestTask.Status)
-				if latestStatus == StatusCanceled || latestStatus == StatusCancelRequested {
-					return CancelResult{TaskID: taskID, Status: latestStatus}, nil
-				}
-			}
-			return CancelResult{}, ErrTaskStatusConflict
-		}
-		return CancelResult{}, err
-	}
-
-	return CancelResult{TaskID: taskID, Status: StatusCancelRequested}, nil
+	cancelService := NewCancelService(cancelStoreAdapter{store: s.Store})
+	return cancelService.Cancel(ctx, taskID)
 }
 
 func (s *Service) compensationTimeout() time.Duration {
@@ -199,4 +152,23 @@ func normalizeCanonicalURL(url string, canonicalURL *string) string {
 
 func stringPtr(value string) *string {
 	return &value
+}
+
+type cancelStoreAdapter struct {
+	store TaskStore
+}
+
+func (a cancelStoreAdapter) GetTaskForCancel(ctx context.Context, taskID string) (*CancelTaskRecord, error) {
+	task, err := a.store.GetTask(ctx, taskID)
+	if err != nil || task == nil {
+		return nil, err
+	}
+	return &CancelTaskRecord{
+		ID:     task.ID,
+		Status: task.Status,
+	}, nil
+}
+
+func (a cancelStoreAdapter) CancelTask(ctx context.Context, taskID, fromStatus string) error {
+	return a.store.CancelTask(ctx, taskID, fromStatus)
 }
