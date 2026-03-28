@@ -1,5 +1,6 @@
 import { createTasksApi } from '../shared/api/tasks_api.js';
 import { createHomeApi } from './api.js';
+import { resetHomeActionButtons, showHomeActionButtons } from './action_buttons.js';
 import { applyInputMode, getSelectedMode } from './input_mode.js';
 import { renderMetadataHistory, applyHistoryEntryToForm } from './metadata_history.js';
 import { collectFormPayload, collectMetadataPayload } from './state.js';
@@ -61,107 +62,8 @@ export function createHomeModule(win, doc) {
         }
     }
 
-    function setActionButton(button, options) {
-        if (!button) {
-            return false;
-        }
-
-        const resolvedOptions = options && typeof options === 'object' ? options : {};
-        const isVisible = Boolean(resolvedOptions.visible);
-        if (!isVisible) {
-            button.classList.add('is-hidden');
-            button.onclick = null;
-            button.disabled = false;
-            return false;
-        }
-
-        if (resolvedOptions.label) {
-            button.textContent = resolvedOptions.label;
-        }
-
-        button.disabled = false;
-        button.classList.remove('is-hidden');
-
-        if (typeof resolvedOptions.onClick === 'function') {
-            button.onclick = resolvedOptions.onClick;
-            return true;
-        }
-
-        const targetUrl = resolvedOptions.url ? String(resolvedOptions.url).trim() : '';
-        if (!targetUrl) {
-            button.classList.add('is-hidden');
-            button.onclick = null;
-            return false;
-        }
-
-        button.onclick = () => {
-            win.location.href = targetUrl;
-        };
-        return true;
-    }
-
     function clearPendingDuplicate() {
         state.pendingDuplicate = null;
-    }
-
-    function resetActionButtons() {
-        const actions = doc.getElementById('download-actions');
-        const logsButton = doc.getElementById('download-action-logs');
-        const downloadButton = doc.getElementById('download-action-download');
-        const forceButton = doc.getElementById('download-action-force');
-        const useExistingButton = doc.getElementById('download-action-use-existing');
-
-        setActionButton(logsButton, { visible: false });
-        setActionButton(downloadButton, { visible: false });
-        setActionButton(forceButton, { visible: false });
-        setActionButton(useExistingButton, { visible: false });
-
-        if (!actions) {
-            return;
-        }
-        actions.classList.add('is-hidden');
-        actions.setAttribute('aria-hidden', 'true');
-    }
-
-    function showActionButtons(options) {
-        const actions = doc.getElementById('download-actions');
-        if (!actions) {
-            return;
-        }
-        const resolved = options && typeof options === 'object' ? options : {};
-        const logsButton = doc.getElementById('download-action-logs');
-        const downloadButton = doc.getElementById('download-action-download');
-        const forceButton = doc.getElementById('download-action-force');
-        const useExistingButton = doc.getElementById('download-action-use-existing');
-
-        const hasLogs = setActionButton(logsButton, {
-            visible: Boolean(resolved.logsUrl),
-            url: resolved.logsUrl,
-            label: '查看日志',
-        });
-        const hasDownload = setActionButton(downloadButton, {
-            visible: Boolean(resolved.downloadUrl),
-            url: resolved.downloadUrl,
-            label: resolved.downloadLabel || '立即下载',
-        });
-        const hasForce = setActionButton(forceButton, {
-            visible: typeof resolved.onForce === 'function',
-            onClick: resolved.onForce,
-            label: '生成新的CBZ',
-        });
-        const hasUseExisting = setActionButton(useExistingButton, {
-            visible: typeof resolved.onUseExisting === 'function',
-            onClick: resolved.onUseExisting,
-            label: '取消并下载已有文件',
-        });
-
-        if (hasLogs || hasDownload || hasForce || hasUseExisting) {
-            actions.classList.remove('is-hidden');
-            actions.setAttribute('aria-hidden', 'false');
-            return;
-        }
-        actions.classList.add('is-hidden');
-        actions.setAttribute('aria-hidden', 'true');
     }
 
     function setSubmitting(isSubmitting, label = '提交中...') {
@@ -188,11 +90,11 @@ export function createHomeModule(win, doc) {
         }
 
         showFeedback('已取消创建新任务，可直接下载已有文件。', 'info');
-        showActionButtons({
+        showHomeActionButtons(doc, {
             downloadUrl: duplicateState.downloadUrl,
             downloadLabel: '下载已有文件',
             logsUrl: duplicateState.logsUrl,
-        });
+        }, win);
         clearPendingDuplicate();
     }
 
@@ -215,20 +117,20 @@ export function createHomeModule(win, doc) {
             const { response, payload } = await postDownloadRequest(retryPayload);
             if (!response.ok || !payload || payload.ok !== true) {
                 showFeedback(buildRequestErrorMessage(payload, response.status), 'error');
-                showActionButtons({
+                showHomeActionButtons(doc, {
                     onForce: submitForceDuplicate,
                     onUseExisting: showExistingDownloadEntry,
-                });
+                }, win);
                 return;
             }
             handleDownloadSuccess(payload, duplicateState.basePayload);
         } catch (error) {
             console.error('Failed to resubmit forced download:', error);
             showFeedback('网络异常，请稍后重试。', 'error');
-            showActionButtons({
+            showHomeActionButtons(doc, {
                 onForce: submitForceDuplicate,
                 onUseExisting: showExistingDownloadEntry,
-            });
+            }, win);
         } finally {
             setSubmitting(false);
         }
@@ -240,10 +142,10 @@ export function createHomeModule(win, doc) {
         showFeedback(resolution.feedback.message, resolution.feedback.kind);
 
         if (resolution.kind === 'duplicate_confirm') {
-            showActionButtons({
+            showHomeActionButtons(doc, {
                 onForce: submitForceDuplicate,
                 onUseExisting: showExistingDownloadEntry,
-            });
+            }, win);
             return;
         }
 
@@ -251,7 +153,7 @@ export function createHomeModule(win, doc) {
             fetchSummary();
         }
 
-        showActionButtons({ logsUrl: resolution.actions.logsUrl || '/logs' });
+        showHomeActionButtons(doc, { logsUrl: resolution.actions.logsUrl || '/logs' }, win);
     }
 
     async function fetchSummary() {
@@ -339,7 +241,7 @@ export function createHomeModule(win, doc) {
                 onInit(payload) {
                     initPayload = payload;
                     showFeedback('上传任务已创建，正在上传压缩包...', 'info');
-                    showActionButtons({ logsUrl: payload.logs_url || '/logs' });
+                    showHomeActionButtons(doc, { logsUrl: payload.logs_url || '/logs' }, win);
                 },
                 onProgress(snapshot) {
                     showFeedback(`正在上传 ${snapshot.fileName}（${snapshot.loadedBytes} / ${snapshot.totalBytes}）`, 'info');
@@ -348,14 +250,14 @@ export function createHomeModule(win, doc) {
             });
             showFeedback('任务已加入队列。', 'success');
             fetchSummary();
-            showActionButtons({ logsUrl: (initPayload && initPayload.logs_url) || (result.uploadPayload && result.uploadPayload.logs_url) || '/logs' });
+            showHomeActionButtons(doc, { logsUrl: (initPayload && initPayload.logs_url) || (result.uploadPayload && result.uploadPayload.logs_url) || '/logs' }, win);
         } catch (error) {
             console.error('Failed to submit upload task:', error);
             showFeedback(error && error.message ? error.message : '上传失败，请稍后重试。', 'error');
             if (initPayload) {
-                showActionButtons({ logsUrl: initPayload.logs_url || '/logs' });
+                showHomeActionButtons(doc, { logsUrl: initPayload.logs_url || '/logs' }, win);
             } else {
-                resetActionButtons();
+                resetHomeActionButtons(doc, win);
             }
         } finally {
             setSubmitting(false);
@@ -366,7 +268,7 @@ export function createHomeModule(win, doc) {
         event.preventDefault();
 
         const form = event.currentTarget;
-        resetActionButtons();
+        resetHomeActionButtons(doc, win);
         clearPendingDuplicate();
 
         const mode = getSelectedMode(doc);
@@ -396,7 +298,7 @@ export function createHomeModule(win, doc) {
         } catch (error) {
             console.error('Failed to submit download:', error);
             showFeedback('网络异常，请稍后重试。', 'error');
-            resetActionButtons();
+            resetHomeActionButtons(doc, win);
         } finally {
             setSubmitting(false);
         }
@@ -446,7 +348,7 @@ export function createHomeModule(win, doc) {
             applyInputMode(doc, getSelectedMode(doc));
             state.hintCleanup = bindFieldHintToggles(doc);
             fetchMetadataHistory();
-            resetActionButtons();
+            resetHomeActionButtons(doc, win);
             clearPendingDuplicate();
             setSubmitting(false);
         } else {
@@ -504,7 +406,7 @@ export function createHomeModule(win, doc) {
         }
 
         startupRecoveryBanner.hide();
-        resetActionButtons();
+        resetHomeActionButtons(doc, win);
         clearPendingDuplicate();
         clearTimers();
     }
