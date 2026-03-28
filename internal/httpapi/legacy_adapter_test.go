@@ -153,8 +153,8 @@ func TestLegacyAdapterReadLogsPreservesUploadTaskFields(t *testing.T) {
 	if logItem.UploadLoadedBytes != 12 || logItem.UploadTotalBytes != 40 {
 		t.Fatalf("expected upload bytes 12/40, got %d/%d", logItem.UploadLoadedBytes, logItem.UploadTotalBytes)
 	}
-	if !logItem.Retryable {
-		t.Fatalf("expected retryable=true")
+	if logItem.Retryable {
+		t.Fatalf("expected uploading task to remain non-retryable in logs")
 	}
 	if logItem.Author == nil || *logItem.Author != "作者A" {
 		t.Fatalf("expected author preserved, got %#v", logItem.Author)
@@ -199,6 +199,44 @@ func TestLegacyAdapterReadLogsPreservesUrlProgressFields(t *testing.T) {
 	}
 	if response.Logs[0].Progress != 5 || response.Logs[0].TotalImages != 26 {
 		t.Fatalf("expected progress 5/26, got %d/%d", response.Logs[0].Progress, response.Logs[0].TotalImages)
+	}
+}
+
+func TestLegacyAdapterReadLogsMarksFailedUploadTaskRetryableWhenSourceArchiveStillExists(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "retry-source.zip")
+	store := &fakeLegacyV2Store{
+		listResult: httpv2.ListTasksResult{
+			Tasks: []httpv2.Task{
+				{
+					ID:                "task-v2-upload-failed",
+					Status:            httpv2.TaskStatusFailed,
+					TaskType:          stringPtr("upload"),
+					SourceArchiveName: stringPtr("retry-source.zip"),
+					SourceArchivePath: stringPtr(archivePath),
+					CreatedAt:         time.Unix(1700001250, 0).UTC(),
+					UpdatedAt:         time.Unix(1700001251, 0).UTC(),
+				},
+			},
+			Total:      1,
+			Page:       1,
+			PerPage:    25,
+			TotalPages: 1,
+		},
+		statusCounts: map[string]int{
+			httpv2.TaskStatusFailed: 1,
+		},
+	}
+	adapter := NewLegacyAdapter(store, nil, nil)
+
+	response, err := adapter.ReadLogs(context.Background(), domain.LogQuery{Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("read logs: %v", err)
+	}
+	if len(response.Logs) != 1 {
+		t.Fatalf("expected one log row, got %d", len(response.Logs))
+	}
+	if !response.Logs[0].Retryable {
+		t.Fatalf("expected failed upload task with source archive path to be retryable in logs")
 	}
 }
 
