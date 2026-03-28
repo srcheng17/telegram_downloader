@@ -2,7 +2,8 @@ import { createTasksApi } from '../shared/api/tasks_api.js';
 import { normalizeHeadResult } from './download_preflight.js';
 import { hideErrorModal as hideLogsErrorModal, showErrorModal as showLogsErrorModal } from './error_modal.js';
 import { applyStatusCatalog as normalizeStatusCatalog } from './status_filters.js';
-import { buildStatusBadgeModel, formatProgressValue, getTaskTypeLabel, shouldShowRetryAction } from './table_render.js';
+import { buildStatusBadgeModel } from './table_render.js';
+import { mapTaskToLogViewModel } from './view_model.js';
 import { requestRetryTask, runSuccessTaskAction } from './task_actions.js';
 import {
     fallbackStatusLabel as fallbackSharedStatusLabel,
@@ -250,9 +251,10 @@ export function createLogsModule(win, doc) {
     }
 
     function createTaskTypeCell(log) {
+        const view = mapTaskToLogViewModel(log);
         const cell = doc.createElement('td');
         const value = createValueContainer();
-        appendTextValue(value, getTaskTypeLabel(log));
+        appendTextValue(value, view.taskTypeLabel);
         cell.appendChild(value);
         return cell;
     }
@@ -469,21 +471,22 @@ export function createLogsModule(win, doc) {
     }
 
     function createActionCell(log) {
+        const view = mapTaskToLogViewModel(log);
         const cell = doc.createElement('td');
         cell.className = 'log-action-cell';
         const value = createValueContainer();
-        const status = normalizeStatusCode(log.status);
+        const status = view.status;
         const statusMeta = getStatusMeta(status);
-        const canCancel = Boolean(statusMeta && statusMeta.can_cancel && log.id);
-        const canDownload = Boolean(statusMeta && statusMeta.can_download && log.id);
-        const canRetry = shouldShowRetryAction(log);
+        const canCancel = Boolean(statusMeta && statusMeta.can_cancel && view.id);
+        const canDownload = Boolean(statusMeta && statusMeta.can_download && view.id);
+        const canRetry = view.canRetry;
 
         if (canCancel) {
             const button = doc.createElement('button');
             button.type = 'button';
             button.className = 'btn-cancel';
             button.textContent = '取消';
-            button.onclick = () => requestCancel(log.id, button);
+            button.onclick = () => requestCancel(view.id, button);
             value.appendChild(button);
             cell.appendChild(value);
             return cell;
@@ -494,7 +497,7 @@ export function createLogsModule(win, doc) {
             button.type = 'button';
             button.className = 'btn-secondary';
             button.textContent = '重试';
-            button.onclick = () => requestRetry(log.id, button);
+            button.onclick = () => requestRetry(view.id, button);
             value.appendChild(button);
             cell.appendChild(value);
             return cell;
@@ -505,7 +508,7 @@ export function createLogsModule(win, doc) {
             button.type = 'button';
             button.className = 'btn-download';
             button.textContent = '下载';
-            button.onclick = () => requestDownload(log.id, button);
+            button.onclick = () => requestDownload(view.id, button);
             value.appendChild(button);
             cell.appendChild(value);
             return cell;
@@ -536,14 +539,15 @@ export function createLogsModule(win, doc) {
 
         const fragment = doc.createDocumentFragment();
         logs.forEach((log) => {
+            const view = mapTaskToLogViewModel(log);
             const row = doc.createElement('tr');
-            row.appendChild(createCell(log.id || ''));
+            row.appendChild(createCell(view.id));
             row.appendChild(createTaskTypeCell(log));
-            row.appendChild(createLinkCell(log.url || ''));
-            row.appendChild(createStatusCell(log.status));
-            row.appendChild(createCell(formatProgressValue(log)));
-            row.appendChild(createCell(new Date((log.start_time || 0) * 1000).toLocaleString()));
-            row.appendChild(createErrorCell(log.error || ''));
+            row.appendChild(createLinkCell(view.url));
+            row.appendChild(createStatusCell(view.status));
+            row.appendChild(createCell(view.progressText));
+            row.appendChild(createCell(view.startTimeLabel));
+            row.appendChild(createErrorCell(view.errorText));
             row.appendChild(createActionCell(log));
             fragment.appendChild(row);
         });

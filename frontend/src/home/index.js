@@ -1,7 +1,9 @@
 import { createTasksApi } from '../shared/api/tasks_api.js';
+import { createHomeApi } from './api.js';
 import { buildDuplicateActions } from './form_submission.js';
 import { applyInputMode, getSelectedMode } from './input_mode.js';
 import { renderMetadataHistory, applyHistoryEntryToForm } from './metadata_history.js';
+import { collectFormPayload, collectMetadataPayload } from './state.js';
 import { submitArchive } from './upload_submission.js';
 import { bindFieldHintToggles } from './field_hints.js';
 import { renderSummary, syncSummaryCollapseMode } from './summary_panel.js';
@@ -25,6 +27,7 @@ export function createHomeModule(win, doc) {
     win.__telegraphHomeState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
     const api = createTasksApi((url, options) => win.fetch(url, options));
+    const homeApi = createHomeApi(api);
     const startupRecoveryBanner = createStartupRecoveryBannerController(win, doc, STARTUP_RECOVERY_SESSION_KEY_PREFIX);
 
     function extractPayloadMessage(payload) {
@@ -170,62 +173,12 @@ export function createHomeModule(win, doc) {
         button.textContent = isSubmitting ? label : '开始下载';
     }
 
-    function readForceValue(form) {
-        if (!form) {
-            return null;
-        }
-        const forceControl = form.querySelector('[name="force"]');
-        if (!forceControl) {
-            return null;
-        }
-
-        if (forceControl.matches('input[type="checkbox"]')) {
-            return forceControl.checked ? 'true' : 'false';
-        }
-        if (forceControl.matches('input[type="radio"]')) {
-            const checkedRadio = form.querySelector('input[name="force"]:checked');
-            return checkedRadio ? String(checkedRadio.value || '').trim() : '';
-        }
-        return String(forceControl.value || '').trim();
-    }
-
-    function readOptionalField(form, fieldName) {
-        if (!form || !fieldName) {
-            return '';
-        }
-        const input = form.querySelector(`[name="${fieldName}"]`);
-        return input ? String(input.value || '').trim() : '';
-    }
-
-    function collectMetadataPayload(form) {
-        return {
-            author: readOptionalField(form, 'author'),
-            series_name: readOptionalField(form, 'series_name'),
-            comic_name: readOptionalField(form, 'comic_name'),
-            summary: readOptionalField(form, 'summary'),
-            tags: readOptionalField(form, 'tags'),
-            genres: readOptionalField(form, 'genres'),
-        };
-    }
-
-    function collectFormPayload(form) {
-        const payload = {
-            url: readOptionalField(form, 'url'),
-            ...collectMetadataPayload(form),
-        };
-        const forceValue = readForceValue(form);
-        if (forceValue !== null) {
-            payload.force = forceValue;
-        }
-        return payload;
-    }
-
     function buildRequestErrorMessage(payload, statusCode) {
         return extractPayloadMessage(payload) || `请求失败（${statusCode}）`;
     }
 
     async function postDownloadRequest(formPayload) {
-        return api.postForm('/download', formPayload);
+        return homeApi.postDownload(formPayload);
     }
 
     function showExistingDownloadEntry() {
@@ -316,7 +269,7 @@ export function createHomeModule(win, doc) {
         const controller = new AbortController();
         state.inflightSummaryController = controller;
         try {
-            const { response, payload } = await api.getJson('/api/summary', {
+            const { response, payload } = await homeApi.getSummary({
                 cache: 'no-store',
                 signal: controller.signal,
             });
@@ -348,7 +301,7 @@ export function createHomeModule(win, doc) {
 
     async function fetchMetadataHistory() {
         try {
-            const { response, payload } = await api.getMetadataHistory(20);
+            const { response, payload } = await homeApi.getMetadataHistory();
             if (!response.ok || !Array.isArray(payload)) {
                 return;
             }

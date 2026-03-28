@@ -1,21 +1,6 @@
 import { createTasksApi } from './shared/api/tasks_api.js';
-
-function readSelectedDownloadActionMode(form) {
-    if (!form || typeof form.querySelector !== 'function') {
-        return 'browser';
-    }
-    const checked = form.querySelector('input[name="download_action_mode"]:checked');
-    return checked ? String(checked.value || '').trim() || 'browser' : 'browser';
-}
-
-function setSelectedDownloadActionMode(form, mode) {
-    if (!form || typeof form.querySelectorAll !== 'function') {
-        return;
-    }
-    form.querySelectorAll('input[name="download_action_mode"]').forEach((radio) => {
-        radio.checked = String(radio.value || '').trim() === String(mode || '').trim();
-    });
-}
+import { createSettingsApi } from './settings/api.js';
+import { applySettingsSnapshot, buildSettingsPayload } from './settings/state.js';
 
 function showSettingsFeedback(doc, message, kind) {
     const feedback = doc.getElementById('settings-feedback');
@@ -32,40 +17,9 @@ function showSettingsFeedback(doc, message, kind) {
     }
 }
 
-function buildSettingsPayload(form) {
-    return {
-        timeout: Number(form.querySelector('#timeout')?.value || 0),
-        retries: Number(form.querySelector('#retries')?.value || 0),
-        image_concurrency: Number(form.querySelector('#image_concurrency')?.value || 0),
-        download_action_mode: readSelectedDownloadActionMode(form),
-    };
-}
-
-function applySettingsSnapshot(win, form, snapshot) {
-    if (!snapshot || typeof snapshot !== 'object') {
-        return;
-    }
-    const timeoutInput = form.querySelector('#timeout');
-    const retriesInput = form.querySelector('#retries');
-    const imageConcurrencyInput = form.querySelector('#image_concurrency');
-    if (timeoutInput) {
-        timeoutInput.value = String(snapshot.timeout ?? timeoutInput.value ?? '');
-    }
-    if (retriesInput) {
-        retriesInput.value = String(snapshot.retries ?? retriesInput.value ?? '');
-    }
-    if (imageConcurrencyInput) {
-        imageConcurrencyInput.value = String(snapshot.image_concurrency ?? imageConcurrencyInput.value ?? '');
-    }
-    setSelectedDownloadActionMode(form, snapshot.download_action_mode || 'browser');
-    win.__telegraphSettingsState = {
-        ...(win.__telegraphSettingsState || {}),
-        downloadActionMode: snapshot.download_action_mode || 'browser',
-    };
-}
-
 export function createSettingsModule(win = window, doc = document) {
     const api = createTasksApi((url, options) => win.fetch(url, options));
+    const settingsApi = createSettingsApi(api);
     const state = win.__telegraphSettingsModuleState || {
         form: null,
         submitHandler: null,
@@ -74,7 +28,7 @@ export function createSettingsModule(win = window, doc = document) {
 
     async function hydrateSettings(form) {
         try {
-            const { response, payload } = await api.getJson('/v2/settings', { cache: 'no-store' });
+            const { response, payload } = await settingsApi.getSettings();
             if (!response.ok || !payload) {
                 return;
             }
@@ -90,9 +44,7 @@ export function createSettingsModule(win = window, doc = document) {
         const payload = buildSettingsPayload(form);
         showSettingsFeedback(doc, '正在保存设置...', 'info');
         try {
-            const { response, payload: result } = await api.putJson('/v2/settings', payload, {
-                headers: { Accept: 'application/json' },
-            });
+            const { response, payload: result } = await settingsApi.saveSettings(payload);
             if (!response.ok || !result) {
                 showSettingsFeedback(doc, `保存失败（${response.status}）`, 'error');
                 return;

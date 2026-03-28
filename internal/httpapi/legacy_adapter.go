@@ -302,58 +302,8 @@ func (a *LegacyAdapter) ReadLogs(ctx context.Context, query domain.LogQuery) (do
 		return domain.LogsResponse{}, errors.New("legacy adapter log dependencies are not configured")
 	}
 
-	page := clampInt(query.Page, 1, math.MaxInt)
-	perPage := clampInt(query.PerPage, 1, domain.MaxLogsPerPage)
-	v2Status := mapLegacyStatusToV2(query.Status)
-
-	listResult, err := a.store.ListTasks(ctx, httpv2.ListTasksQuery{
-		Page:    page,
-		PerPage: perPage,
-		Status:  v2Status,
-		Query:   strings.TrimSpace(query.Keyword),
-	})
-	if err != nil {
-		return domain.LogsResponse{}, err
-	}
-
-	if listResult.Page <= 0 {
-		listResult.Page = page
-	}
-	if listResult.PerPage <= 0 {
-		listResult.PerPage = perPage
-	}
-	if listResult.TotalPages <= 0 && listResult.Total > 0 && listResult.PerPage > 0 {
-		listResult.TotalPages = int(math.Ceil(float64(listResult.Total) / float64(listResult.PerPage)))
-	}
-	if listResult.Tasks == nil {
-		listResult.Tasks = make([]httpv2.Task, 0)
-	}
-
-	logs := make([]domain.TaskLog, 0, len(listResult.Tasks))
-	for _, task := range listResult.Tasks {
-		logs = append(logs, mapV2TaskToLegacyLog(task))
-	}
-
-	summary, err := a.BuildSummary(ctx)
-	if err != nil {
-		return domain.LogsResponse{}, err
-	}
-
-	response := domain.LogsResponse{
-		Logs:           logs,
-		Total:          listResult.Total,
-		Page:           listResult.Page,
-		PerPage:        listResult.PerPage,
-		TotalPages:     listResult.TotalPages,
-		HasActiveTasks: summary.ActiveTasks > 0,
-		Filters: domain.LogFilters{
-			Status: query.Status,
-			Query:  query.Keyword,
-		},
-		StatusCatalog: domain.CopyStatusCatalog(),
-		Summary:       summary,
-	}
-	return response, nil
+	service := apptasks.NewListLogsService(legacyLogsStoreAdapter{adapter: a})
+	return service.List(ctx, query)
 }
 
 func (a *LegacyAdapter) BuildSummary(ctx context.Context) (domain.Summary, error) {
@@ -797,6 +747,63 @@ func mapV2TaskToLegacyLog(task httpv2.Task) domain.TaskLog {
 		GenresRaw:         task.GenresRaw,
 		GenresNormalized:  task.GenresNormalized,
 	}
+}
+
+type legacyLogsStoreAdapter struct {
+	adapter *LegacyAdapter
+}
+
+func (a legacyLogsStoreAdapter) ListLogs(ctx context.Context, query domain.LogQuery) (domain.LogListResult, error) {
+	if a.adapter == nil || a.adapter.store == nil {
+		return domain.LogListResult{}, errors.New("legacy logs store adapter is not configured")
+	}
+
+	page := clampInt(query.Page, 1, math.MaxInt)
+	perPage := clampInt(query.PerPage, 1, domain.MaxLogsPerPage)
+	v2Status := mapLegacyStatusToV2(query.Status)
+
+	listResult, err := a.adapter.store.ListTasks(ctx, httpv2.ListTasksQuery{
+		Page:    page,
+		PerPage: perPage,
+		Status:  v2Status,
+		Query:   strings.TrimSpace(query.Keyword),
+	})
+	if err != nil {
+		return domain.LogListResult{}, err
+	}
+
+	if listResult.Page <= 0 {
+		listResult.Page = page
+	}
+	if listResult.PerPage <= 0 {
+		listResult.PerPage = perPage
+	}
+	if listResult.TotalPages <= 0 && listResult.Total > 0 && listResult.PerPage > 0 {
+		listResult.TotalPages = int(math.Ceil(float64(listResult.Total) / float64(listResult.PerPage)))
+	}
+	if listResult.Tasks == nil {
+		listResult.Tasks = make([]httpv2.Task, 0)
+	}
+
+	logs := make([]domain.TaskLog, 0, len(listResult.Tasks))
+	for _, task := range listResult.Tasks {
+		logs = append(logs, mapV2TaskToLegacyLog(task))
+	}
+
+	return domain.LogListResult{
+		Logs:       logs,
+		Total:      listResult.Total,
+		Page:       listResult.Page,
+		PerPage:    listResult.PerPage,
+		TotalPages: listResult.TotalPages,
+	}, nil
+}
+
+func (a legacyLogsStoreAdapter) BuildSummary(ctx context.Context) (domain.Summary, error) {
+	if a.adapter == nil {
+		return domain.Summary{}, errors.New("legacy logs store adapter is not configured")
+	}
+	return a.adapter.BuildSummary(ctx)
 }
 
 func taskCanonicalURL(task httpv2.Task) string {

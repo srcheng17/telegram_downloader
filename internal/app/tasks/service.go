@@ -3,11 +3,8 @@ package tasks
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 const defaultCompensationTimeout = 3 * time.Second
@@ -87,95 +84,14 @@ func NewService(store TaskStore, queue TaskQueue) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
-	if s == nil || s.Store == nil || s.Queue == nil {
-		return CreateResult{}, errors.New("task service dependencies are not configured")
-	}
-
-	url := strings.TrimSpace(in.URL)
-	if url == "" {
-		return CreateResult{}, errors.New("url is required")
-	}
-
-	canonicalURL := normalizeCanonicalURL(url, in.CanonicalURL)
-	createInput := CreateTaskInput{
-		ID:           uuid.NewString(),
-		URL:          url,
-		CanonicalURL: stringPtr(canonicalURL),
-		EnqueueToken: uuid.NewString(),
-	}
-
-	task, err := s.Store.CreateTask(ctx, createInput)
-	if err != nil {
-		return CreateResult{}, err
-	}
-	status := normalizeStatus(task.Status)
-	if status == "" {
-		status = StatusQueued
-	}
-
-	if err := s.Queue.Enqueue(ctx, QueueMessage{TaskID: task.ID, Token: createInput.EnqueueToken}); err != nil {
-		compensationCtx, compensationCancel := context.WithTimeout(context.Background(), s.compensationTimeout())
-		defer compensationCancel()
-		_ = s.Store.MarkTaskFailed(compensationCtx, task.ID, fmt.Sprintf("enqueue failed: %v", err))
-		return CreateResult{}, err
-	}
-
-	return CreateResult{TaskID: task.ID, Status: status}, nil
+	createService := NewCreateService(s.Store, s.Queue)
+	createService.CompensationTimeout = s.CompensationTimeout
+	return createService.Create(ctx, in)
 }
 
 func (s *Service) Cancel(ctx context.Context, taskID string) (CancelResult, error) {
-	if s == nil || s.Store == nil {
-		return CancelResult{}, errors.New("task service store is not configured")
-	}
-
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return CancelResult{}, errors.New("task id is required")
-	}
-
-	task, err := s.Store.GetTask(ctx, taskID)
-	if err != nil {
-		return CancelResult{}, err
-	}
-	if task == nil {
-		return CancelResult{}, ErrTaskNotFound
-	}
-
-	status := normalizeStatus(task.Status)
-	switch status {
-	case StatusCanceled:
-		return CancelResult{TaskID: taskID, Status: StatusCanceled}, nil
-	case StatusCancelRequested:
-		return CancelResult{TaskID: taskID, Status: StatusCancelRequested}, nil
-	case StatusSuccess, StatusFailed:
-		return CancelResult{}, ErrTaskNotCancelable
-	}
-
-	if err := s.Store.CancelTask(ctx, taskID, status); err != nil {
-		if errors.Is(err, ErrTaskStatusConflict) {
-			latestTask, latestErr := s.Store.GetTask(ctx, taskID)
-			if latestErr != nil {
-				return CancelResult{}, latestErr
-			}
-			if latestTask != nil {
-				latestStatus := normalizeStatus(latestTask.Status)
-				if latestStatus == StatusCanceled || latestStatus == StatusCancelRequested {
-					return CancelResult{TaskID: taskID, Status: latestStatus}, nil
-				}
-			}
-			return CancelResult{}, ErrTaskStatusConflict
-		}
-		return CancelResult{}, err
-	}
-
-	return CancelResult{TaskID: taskID, Status: StatusCancelRequested}, nil
-}
-
-func (s *Service) compensationTimeout() time.Duration {
-	if s.CompensationTimeout <= 0 {
-		return defaultCompensationTimeout
-	}
-	return s.CompensationTimeout
+	cancelService := NewCancelService(cancelStoreAdapter{store: s.Store})
+	return cancelService.Cancel(ctx, taskID)
 }
 
 func normalizeStatus(status string) string {
@@ -195,4 +111,23 @@ func normalizeCanonicalURL(url string, canonicalURL *string) string {
 
 func stringPtr(value string) *string {
 	return &value
+}
+
+type cancelStoreAdapter struct {
+	store TaskStore
+}
+
+func (a cancelStoreAdapter) GetTaskForCancel(ctx context.Context, taskID string) (*CancelTaskRecord, error) {
+	task, err := a.store.GetTask(ctx, taskID)
+	if err != nil || task == nil {
+		return nil, err
+	}
+	return &CancelTaskRecord{
+		ID:     task.ID,
+		Status: task.Status,
+	}, nil
+}
+
+func (a cancelStoreAdapter) CancelTask(ctx context.Context, taskID, fromStatus string) error {
+	return a.store.CancelTask(ctx, taskID, fromStatus)
 }

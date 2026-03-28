@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	apptasks "github.com/ryancheng/telegram-downloader/internal/app/tasks"
+	taskdomain "github.com/ryancheng/telegram-downloader/internal/domain/task"
 	"github.com/ryancheng/telegram-downloader/internal/httpv2"
 )
 
@@ -22,36 +24,29 @@ func (a *API) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Task not found.", nil)
 		return
 	}
-	task, err := a.v2TaskStore.GetTask(r.Context(), taskID)
+	retryService := apptasks.NewRetryService(
+		retryTaskStoreAdapter{store: a.v2TaskStore},
+		retryTaskQueueAdapter{queue: a.v2TaskQueue},
+	)
+	retryService.TokenGenerator = uuid.NewString
+
+	result, err := retryService.Retry(r.Context(), taskID)
 	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	if task == nil {
-		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
-		return
-	}
-	if !canRetryTask(task) {
-		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Only failed retryable tasks can be retried.", nil)
+		switch {
+		case errors.Is(err, apptasks.ErrTaskNotFound):
+			writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
+		case errors.Is(err, apptasks.ErrTaskNotRetryable):
+			writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Only failed retryable tasks can be retried.", nil)
+		default:
+			writeInternalError(w, err)
+		}
 		return
 	}
 
-	enqueueToken := uuid.NewString()
-	if err := a.v2TaskStore.RetryUploadTask(r.Context(), taskID, enqueueToken); err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	if err := a.v2TaskQueue.Enqueue(r.Context(), httpv2.TaskQueueMessage{
-		TaskID: taskID,
-		Token:  enqueueToken,
-	}); err != nil {
-		writeInternalError(w, err)
-		return
-	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"ok":      true,
-		"task_id": taskID,
-		"status":  "QUEUED",
+		"task_id": result.TaskID,
+		"status":  result.Status,
 	})
 }
 
@@ -63,16 +58,75 @@ func canRetryTask(task *httpv2.Task) bool {
 	if task.TaskType != nil {
 		taskType = strings.ToLower(strings.TrimSpace(*task.TaskType))
 	}
-	taskStatus := strings.TrimSpace(task.Status)
-	if taskStatus != "FAILED" && taskStatus != "CANCELED" {
-		return false
+	return taskdomain.CanRetry(
+		taskType,
+		task.Status,
+		strings.TrimSpace(task.URL) != "",
+		task.SourceArchivePath != nil && strings.TrimSpace(*task.SourceArchivePath) != "",
+	)
+}
+
+type retryTaskStoreAdapter struct {
+	store LegacyV2TaskStore
+}
+
+func (a retryTaskStoreAdapter) GetTaskForRetry(ctx context.Context, taskID string) (*apptasks.RetryTaskRecord, error) {
+	task, err := a.store.GetTask(ctx, taskID)
+	if err != nil || task == nil {
+		return nil, err
 	}
-	switch taskType {
-	case "upload":
-		return task.SourceArchivePath != nil && strings.TrimSpace(*task.SourceArchivePath) != ""
-	default:
-		return strings.TrimSpace(task.URL) != ""
+	return &apptasks.RetryTaskRecord{
+		ID:                strings.TrimSpace(task.ID),
+		Status:            task.Status,
+		TaskType:          stringValue(task.TaskType),
+		URL:               task.URL,
+		SourceArchivePath: task.SourceArchivePath,
+	}, nil
+}
+
+func (a retryTaskStoreAdapter) RetryTask(ctx context.Context, taskID, enqueueToken string) error {
+	return a.store.RetryUploadTask(ctx, taskID, enqueueToken)
+}
+
+type retryTaskQueueAdapter struct {
+	queue LegacyV2TaskQueue
+}
+
+func (a retryTaskQueueAdapter) Enqueue(ctx context.Context, msg apptasks.QueueMessage) error {
+	return a.queue.Enqueue(ctx, httpv2.TaskQueueMessage{
+		TaskID: msg.TaskID,
+		Token:  msg.Token,
+	})
+}
+
+type copyTaskStoreAdapter struct {
+	store LegacyV2TaskStore
+}
+
+func (a copyTaskStoreAdapter) GetTaskForCopy(ctx context.Context, taskID string) (*apptasks.CopyTaskRecord, error) {
+	task, err := a.store.GetTask(ctx, taskID)
+	if err != nil || task == nil {
+		return nil, err
 	}
+	return &apptasks.CopyTaskRecord{
+		ID:            strings.TrimSpace(task.ID),
+		Status:        task.Status,
+		ResultZipPath: task.ResultZipPath,
+		SeriesName:    task.SeriesName,
+	}, nil
+}
+
+type copyArtifactDescriberAdapter struct {
+	artifacts LegacyV2ArtifactService
+}
+
+func (a copyArtifactDescriberAdapter) DescribeArtifact(resultPath string) (apptasks.ArtifactDescriptor, error) {
+	artifact, err := a.artifacts.OpenArtifact(resultPath)
+	if err != nil {
+		return apptasks.ArtifactDescriptor{}, ErrLegacyAdapterArtifactUnavailable
+	}
+	defer artifact.Close()
+	return apptasks.ArtifactDescriptor{FileName: artifact.FileName}, nil
 }
 
 func (a *API) handleTaskCopyToKomga(w http.ResponseWriter, r *http.Request) {
@@ -85,37 +139,29 @@ func (a *API) handleTaskCopyToKomga(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Task not found.", nil)
 		return
 	}
-	task, err := a.v2TaskStore.GetTask(r.Context(), taskID)
+	copyService := apptasks.NewCopyResultService(
+		copyTaskStoreAdapter{store: a.v2TaskStore},
+		copyArtifactDescriberAdapter{artifacts: a.v2ArtifactService},
+		apptasks.NewKomgaCopier(apptasks.KomgaCopyConfig{Root: a.komgaRootDirOrDefault()}),
+	)
+	result, err := copyService.CopyToKomga(r.Context(), taskID)
 	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	if task == nil {
-		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
-		return
-	}
-	if strings.TrimSpace(task.Status) != "SUCCESS" || task.ResultZipPath == nil || strings.TrimSpace(*task.ResultZipPath) == "" {
-		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.", nil)
-		return
-	}
-
-	artifact, err := a.v2ArtifactService.OpenArtifact(*task.ResultZipPath)
-	if err != nil {
-		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
-		return
-	}
-	defer artifact.Close()
-
-	copier := apptasks.NewKomgaCopier(apptasks.KomgaCopyConfig{Root: a.komgaRootDirOrDefault()})
-	targetPath, err := copier.CopyFromPath(*task.ResultZipPath, artifact.FileName, stringValue(task.SeriesName))
-	if err != nil {
-		writeInternalError(w, err)
+		switch {
+		case errors.Is(err, apptasks.ErrTaskNotFound):
+			writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
+		case errors.Is(err, apptasks.ErrTaskResultNotReady):
+			writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.", nil)
+		case errors.Is(err, ErrLegacyAdapterArtifactUnavailable):
+			writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
+		default:
+			writeInternalError(w, err)
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":          true,
-		"task_id":     taskID,
-		"target_path": targetPath,
+		"task_id":     result.TaskID,
+		"target_path": result.TargetPath,
 	})
 }
 

@@ -1,17 +1,13 @@
 package tasks
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
+
+	domainkomga "github.com/ryancheng/telegram-downloader/internal/domain/komga"
 )
-
-const defaultKomgaFallbackDir = "tanbokon"
-
-var invalidKomgaPathCharsPattern = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1F]`)
 
 type KomgaCopyConfig struct {
 	Root string
@@ -26,16 +22,11 @@ func NewKomgaCopier(cfg KomgaCopyConfig) *KomgaCopier {
 }
 
 func (c *KomgaCopier) TargetPath(fileName, seriesName string) (string, error) {
-	root := strings.TrimSpace(c.root)
-	if root == "" {
-		return "", fmt.Errorf("komga root is required")
+	targetPath, err := domainkomga.BuildTargetPath(c.root, fileName, seriesName)
+	if err != nil {
+		return "", err
 	}
-	baseName := strings.TrimSpace(filepath.Base(fileName))
-	if baseName == "" || baseName == "." || baseName == string(filepath.Separator) {
-		return "", fmt.Errorf("artifact file name is required")
-	}
-	subdir := targetSubdir(seriesName)
-	return filepath.Join(root, subdir, baseName), nil
+	return targetPath, nil
 }
 
 func (c *KomgaCopier) CopyFromPath(sourcePath, fileName, seriesName string) (string, error) {
@@ -77,26 +68,4 @@ func (c *KomgaCopier) CopyFromPath(sourcePath, fileName, seriesName string) (str
 	}
 	cleanup = false
 	return targetPath, nil
-}
-
-func targetSubdir(seriesName string) string {
-	safeSeries := sanitizeKomgaPathSegment(seriesName)
-	if safeSeries != "" {
-		return safeSeries
-	}
-	return defaultKomgaFallbackDir
-}
-
-func sanitizeKomgaPathSegment(value string) string {
-	normalized := strings.TrimSpace(value)
-	if normalized == "" {
-		return ""
-	}
-	normalized = invalidKomgaPathCharsPattern.ReplaceAllString(normalized, " ")
-	normalized = strings.Join(strings.Fields(normalized), " ")
-	normalized = strings.Trim(normalized, " .")
-	if normalized == "" || normalized == "." || normalized == ".." {
-		return ""
-	}
-	return normalized
 }
