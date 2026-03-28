@@ -1,9 +1,9 @@
 import { createTasksApi } from '../shared/api/tasks_api.js';
 import { createHomeApi } from './api.js';
-import { buildDuplicateActions } from './form_submission.js';
 import { applyInputMode, getSelectedMode } from './input_mode.js';
 import { renderMetadataHistory, applyHistoryEntryToForm } from './metadata_history.js';
 import { collectFormPayload, collectMetadataPayload } from './state.js';
+import { resolveDownloadSubmission } from './submit_flow.js';
 import { submitArchive } from './upload_submission.js';
 import { bindFieldHintToggles } from './field_hints.js';
 import { renderSummary, syncSummaryCollapseMode } from './summary_panel.js';
@@ -235,16 +235,11 @@ export function createHomeModule(win, doc) {
     }
 
     function handleDownloadSuccess(payload, basePayload) {
-        if (payload.duplicate && payload.active) {
-            clearPendingDuplicate();
-            showFeedback('该链接已在下载队列中。', 'info');
-            showActionButtons({ logsUrl: payload.logs_url || '/logs' });
-            return;
-        }
+        const resolution = resolveDownloadSubmission(payload, basePayload);
+        state.pendingDuplicate = resolution.pendingDuplicate;
+        showFeedback(resolution.feedback.message, resolution.feedback.kind);
 
-        if (payload.duplicate && (payload.needs_confirmation || payload.download_url)) {
-            state.pendingDuplicate = buildDuplicateActions(payload, basePayload);
-            showFeedback('该文件已有下载，是否生成新的CBZ文件？', 'info');
+        if (resolution.kind === 'duplicate_confirm') {
             showActionButtons({
                 onForce: submitForceDuplicate,
                 onUseExisting: showExistingDownloadEntry,
@@ -252,10 +247,11 @@ export function createHomeModule(win, doc) {
             return;
         }
 
-        clearPendingDuplicate();
-        showFeedback('任务已加入队列。', 'success');
-        fetchSummary();
-        showActionButtons({ logsUrl: payload.logs_url || '/logs' });
+        if (resolution.kind === 'queued') {
+            fetchSummary();
+        }
+
+        showActionButtons({ logsUrl: resolution.actions.logsUrl || '/logs' });
     }
 
     async function fetchSummary() {
