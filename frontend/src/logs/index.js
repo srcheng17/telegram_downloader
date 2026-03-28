@@ -1,8 +1,10 @@
 import { createTasksApi } from '../shared/api/tasks_api.js';
+import { createLogsApi } from './api.js';
 import { normalizeHeadResult } from './download_preflight.js';
 import { hideErrorModal as hideLogsErrorModal, showErrorModal as showLogsErrorModal } from './error_modal.js';
 import { applyStatusCatalog as normalizeStatusCatalog } from './status_filters.js';
 import { buildStatusBadgeModel } from './table_render.js';
+import { buildLogsUrl, readLogsFiltersFromForm } from './state.js';
 import { mapTaskToLogViewModel } from './view_model.js';
 import { requestRetryTask, runSuccessTaskAction } from './task_actions.js';
 import {
@@ -51,6 +53,7 @@ export function createLogsModule(win, doc) {
     win.__telegraphLogsState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
     const api = createTasksApi((url, options) => win.fetch(url, options));
+    const logsApi = createLogsApi(api);
     function showFeedback(message, kind) {
         const feedback = doc.getElementById('logs-feedback');
         if (!feedback) {
@@ -361,9 +364,7 @@ export function createLogsModule(win, doc) {
     }
 
     async function precheckDownload(downloadUrl) {
-        const response = await api.head(downloadUrl, {
-            cache: 'no-store',
-        });
+        const response = await logsApi.head(downloadUrl);
         const normalized = await normalizeHeadResult(response);
         if (normalized.ok) {
             return { ok: true };
@@ -455,7 +456,7 @@ export function createLogsModule(win, doc) {
             return cachedMode;
         }
         try {
-            const { response, payload } = await api.getJson('/v2/settings', { cache: 'no-store' });
+            const { response, payload } = await logsApi.getSettingsMode();
             if (response.ok && payload && typeof payload.download_action_mode === 'string') {
                 const resolvedMode = String(payload.download_action_mode).trim() || 'browser';
                 win.__telegraphSettingsState = {
@@ -627,26 +628,6 @@ export function createLogsModule(win, doc) {
         }
     }
 
-    function readFiltersFromForm() {
-        const statusInput = doc.getElementById('status-filter');
-        const queryInput = doc.getElementById('query-filter');
-        state.filters.status = statusInput ? normalizeStatusCode(statusInput.value) : '';
-        state.filters.q = queryInput ? String(queryInput.value || '').trim() : '';
-    }
-
-    function buildLogsUrl(page) {
-        const params = new URLSearchParams();
-        params.set('page', String(page));
-        params.set('per_page', String(state.perPage));
-        if (state.filters.status) {
-            params.set('status', state.filters.status);
-        }
-        if (state.filters.q) {
-            params.set('q', state.filters.q);
-        }
-        return `/api/logs?${params.toString()}`;
-    }
-
     function resolveNextPollDelay(active) {
         return resolvePollDelay({
             hidden: doc.visibilityState !== 'visible',
@@ -679,10 +660,10 @@ export function createLogsModule(win, doc) {
         let shouldSchedule = true;
 
         try {
-            const { response, payload: data } = await api.getJson(buildLogsUrl(page), {
-                signal: controller.signal,
-                cache: 'no-store',
-            });
+            const { response, payload: data } = await logsApi.getLogs(
+                buildLogsUrl(state.filters, page, state.perPage),
+                { signal: controller.signal },
+            );
             if (!response.ok) {
                 const httpError = new Error(`HTTP ${response.status}`);
                 httpError.statusCode = response.status;
@@ -733,7 +714,7 @@ export function createLogsModule(win, doc) {
 
     function onFilterSubmit(event) {
         event.preventDefault();
-        readFiltersFromForm();
+        state.filters = readLogsFiltersFromForm(doc);
         state.currentPage = 1;
         showFeedback('已应用筛选条件。', 'info');
         fetchLogs(1);
