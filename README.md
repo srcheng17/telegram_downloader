@@ -80,6 +80,11 @@ tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose
 - `docs/architecture/task-lifecycle-baseline.md`：URL / 上传任务生命周期与动作路径基线
 - `docs/architecture/config-inventory.md`：环境变量、卷挂载、运行隐性知识清单
 
+## 开发约束
+
+- `docs/development/module-boundaries.md`：重构期模块边界与职责约束
+- `docs/development/testing-strategy.md`：测试分层与最低回归要求
+
 ## 前端源码与静态资源约定
 
 - `frontend/src/` 是首页、日志页、设置页和应用壳层的源码入口；Vite 从这里构建运行时 bundle。
