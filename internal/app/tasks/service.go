@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	taskdomain "github.com/ryancheng/telegram-downloader/internal/domain/task"
 )
 
 const defaultCompensationTimeout = 3 * time.Second
@@ -148,6 +149,9 @@ func (s *Service) Cancel(ctx context.Context, taskID string) (CancelResult, erro
 	case StatusCancelRequested:
 		return CancelResult{TaskID: taskID, Status: StatusCancelRequested}, nil
 	case StatusSuccess, StatusFailed:
+		return CancelResult{}, ErrTaskNotCancelable
+	}
+	if !taskdomain.CanCancel(status) {
 		return CancelResult{}, ErrTaskNotCancelable
 	}
 

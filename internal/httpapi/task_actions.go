@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	apptasks "github.com/ryancheng/telegram-downloader/internal/app/tasks"
+	taskdomain "github.com/ryancheng/telegram-downloader/internal/domain/task"
 	"github.com/ryancheng/telegram-downloader/internal/httpv2"
 )
 
@@ -63,16 +64,12 @@ func canRetryTask(task *httpv2.Task) bool {
 	if task.TaskType != nil {
 		taskType = strings.ToLower(strings.TrimSpace(*task.TaskType))
 	}
-	taskStatus := strings.TrimSpace(task.Status)
-	if taskStatus != "FAILED" && taskStatus != "CANCELED" {
-		return false
-	}
-	switch taskType {
-	case "upload":
-		return task.SourceArchivePath != nil && strings.TrimSpace(*task.SourceArchivePath) != ""
-	default:
-		return strings.TrimSpace(task.URL) != ""
-	}
+	return taskdomain.CanRetry(
+		taskType,
+		task.Status,
+		strings.TrimSpace(task.URL) != "",
+		task.SourceArchivePath != nil && strings.TrimSpace(*task.SourceArchivePath) != "",
+	)
 }
 
 func (a *API) handleTaskCopyToKomga(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +91,7 @@ func (a *API) handleTaskCopyToKomga(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
 		return
 	}
-	if strings.TrimSpace(task.Status) != "SUCCESS" || task.ResultZipPath == nil || strings.TrimSpace(*task.ResultZipPath) == "" {
+	if !taskdomain.CanAccessResult(task.Status, task.ResultZipPath != nil && strings.TrimSpace(*task.ResultZipPath) != "") {
 		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.", nil)
 		return
 	}
