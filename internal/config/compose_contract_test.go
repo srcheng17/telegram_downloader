@@ -64,6 +64,13 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	if strings.Contains(nginxText, "telegraph_python_web") {
 		t.Fatalf("nginx config must not reference python frontend upstream: %q", nginxPath)
 	}
+	if !strings.Contains(nginxText, "resolver 127.0.0.11 valid=10s ipv6=off;") {
+		t.Fatalf("nginx config must use Docker DNS resolver for dynamic upstream refresh: %q", nginxPath)
+	}
+	dynamicGoAPIUpstream := regexp.MustCompile(`(?m)^\s*server\s+go-api:5000\s+resolve;\s*$`)
+	if !dynamicGoAPIUpstream.MatchString(nginxText) {
+		t.Fatalf("nginx upstream must dynamically resolve go-api:5000 via resolve: %q", nginxPath)
+	}
 	locationRootToGo := regexp.MustCompile(`location\s*/\s*\{\s*proxy_pass\s+http://telegraph_go_api;`)
 	if !locationRootToGo.MatchString(nginxText) {
 		t.Fatalf("nginx config must route location / to telegraph_go_api: %q", nginxPath)
