@@ -5,6 +5,7 @@ import {
   canCancelTaskAction,
   canCopyToKomgaTaskAction,
   canDownloadTaskAction,
+  canRetryTaskAction,
   requestRetryTask,
   runSuccessTaskAction,
 } from '../logs/task_actions.js';
@@ -52,4 +53,40 @@ test('backend available actions take priority over legacy status heuristics', ()
   assert.equal(canDownloadTaskAction(task), true);
   assert.equal(canCopyToKomgaTaskAction(task), true);
   assert.equal(canCancelTaskAction(task), false);
+});
+
+test('legacy cancel and download actions still work without backend available actions', () => {
+  assert.equal(canCancelTaskAction({ status: 'QUEUED' }), true);
+  assert.equal(canCancelTaskAction({ status: 'UPLOADING' }), true);
+  assert.equal(canCancelTaskAction({ status: 'IN_PROGRESS' }), true);
+  assert.equal(canDownloadTaskAction({ status: 'SUCCESS' }), true);
+});
+
+test('legacy retry action still requires retryable url or source archive data', () => {
+  assert.equal(
+    canRetryTaskAction({
+      status: 'FAILED',
+      retryable: true,
+      task_type: 'url',
+      url: 'https://telegra.ph/retry-me',
+    }),
+    true,
+  );
+  assert.equal(
+    canRetryTaskAction({
+      status: 'FAILED',
+      retryable: true,
+      task_type: 'upload',
+      source_archive_path: '/tmp/source.zip',
+    }),
+    true,
+  );
+  assert.equal(
+    canRetryTaskAction({
+      status: 'FAILED',
+      retryable: true,
+      task_type: 'url',
+    }),
+    false,
+  );
 });

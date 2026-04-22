@@ -27,14 +27,21 @@ function hasBackendAction(task, action) {
 
 function hasLegacyAction(task, action) {
     const statusCode = normalizeActionName(task && task.status);
+    const taskType = normalizeActionName(task && task.task_type);
+    const hasURL = String(task && task.url ? task.url : '').trim() !== '';
+    const hasSourceArchive =
+        String(task && task.source_archive_path ? task.source_archive_path : task && task.sourceArchivePath ? task.sourceArchivePath : '').trim() !== '';
     switch (normalizeActionName(action)) {
         case 'cancel':
-            return ['created', 'ready', 'running', 'canceling'].includes(statusCode);
+            return ['created', 'ready', 'queued', 'uploading', 'running', 'in_progress', 'canceling'].includes(statusCode);
         case 'retry':
-            return Boolean(task && task.retryable && ['failed', 'canceled'].includes(statusCode));
+            if (!task || !task.retryable || !['failed', 'canceled'].includes(statusCode)) {
+                return false;
+            }
+            return taskType === 'upload' ? hasSourceArchive : hasURL;
         case 'download':
         case 'copy_to_komga':
-            return statusCode === 'succeeded';
+            return ['success', 'succeeded'].includes(statusCode);
         default:
             return false;
     }
