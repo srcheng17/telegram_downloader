@@ -69,11 +69,17 @@ func (e *Executor) ProcessOne(ctx context.Context) (bool, error) {
 			cancel()
 			return true, ctx.Err()
 		case result := <-resultCh:
+			if acknowledged, err := e.acknowledgeCancelIfRequested(ctx, task.ID, task.Attempt); err != nil || acknowledged {
+				return true, err
+			}
+
 			if result.err != nil {
-				return true, e.Service.Fail(ctx, app.FailInput{TaskID: task.ID, WorkerID: e.WorkerID, Attempt: task.Attempt, Message: result.err.Error()})
+				failErr := e.Service.Fail(ctx, app.FailInput{TaskID: task.ID, WorkerID: e.WorkerID, Attempt: task.Attempt, Message: result.err.Error()})
+				return true, e.resolveReportError(ctx, task.ID, task.Attempt, failErr)
 			}
 			name := filepath.Base(result.path)
-			return true, e.Service.Complete(ctx, app.CompleteInput{TaskID: task.ID, WorkerID: e.WorkerID, Attempt: task.Attempt, ArtifactPath: result.path, ArtifactName: name, ArtifactSize: 0})
+			completeErr := e.Service.Complete(ctx, app.CompleteInput{TaskID: task.ID, WorkerID: e.WorkerID, Attempt: task.Attempt, ArtifactPath: result.path, ArtifactName: name, ArtifactSize: 0})
+			return true, e.resolveReportError(ctx, task.ID, task.Attempt, completeErr)
 		case <-ticker.C:
 			heartbeat, err := e.Service.Heartbeat(ctx, task.ID, e.WorkerID)
 			if err != nil {
@@ -102,6 +108,32 @@ func (e *Executor) validate() error {
 		return errors.New("task core executor requires service, downloader, and worker id")
 	}
 	return nil
+}
+
+func (e *Executor) acknowledgeCancelIfRequested(ctx context.Context, taskID string, attempt int) (bool, error) {
+	heartbeat, err := e.Service.Heartbeat(ctx, taskID, e.WorkerID)
+	if err != nil {
+		return false, err
+	}
+	if !heartbeat.CancelRequested {
+		return false, nil
+	}
+	return true, e.Service.AcknowledgeCancel(ctx, taskID, e.WorkerID, attempt)
+}
+
+func (e *Executor) resolveReportError(ctx context.Context, taskID string, attempt int, reportErr error) error {
+	if reportErr == nil {
+		return nil
+	}
+	if !errors.Is(reportErr, app.ErrConflict) {
+		return reportErr
+	}
+
+	heartbeat, err := e.Service.Heartbeat(ctx, taskID, e.WorkerID)
+	if err != nil || !heartbeat.CancelRequested {
+		return reportErr
+	}
+	return e.Service.AcknowledgeCancel(ctx, taskID, e.WorkerID, attempt)
 }
 
 func (e *Executor) heartbeatEvery() time.Duration {

@@ -100,9 +100,14 @@ func main() {
 
 	taskCoreStore := pgtaskcore.NewStore(pool)
 	taskCoreService := apptaskcore.NewService(taskCoreStore, apptaskcore.Config{LeaseTTL: 30 * time.Second, MaxAttempts: 3})
+	taskCoreDownloader := workertaskcore.NewTaskDownloader(workertaskcore.TaskDownloaderConfig{
+		Tasks:        taskCoreService,
+		Service:      downloadService,
+		DownloadRoot: downloadRoot,
+	})
 	taskCoreExecutor := &workertaskcore.Executor{
 		Service:           taskCoreService,
-		Downloader:        taskDownloader,
+		Downloader:        taskCoreDownloader,
 		WorkerID:          consumerName,
 		HeartbeatInterval: 5 * time.Second,
 	}
@@ -190,16 +195,18 @@ func runTaskCoreExecutor(ctx context.Context, executor *workertaskcore.Executor)
 			if ctx.Err() != nil {
 				return nil
 			}
-			return err
+			log.Printf("task-core executor error: %v", err)
+			if err := sleepOrDone(ctx, time.Second); err != nil {
+				return nil
+			}
+			continue
 		}
 		if processed {
 			continue
 		}
 
-		select {
-		case <-ctx.Done():
+		if err := sleepOrDone(ctx, time.Second); err != nil {
 			return nil
-		case <-time.After(time.Second):
 		}
 	}
 }
@@ -220,8 +227,17 @@ func runTaskCoreRecovery(ctx context.Context, executor *workertaskcore.Executor,
 				if ctx.Err() != nil {
 					return nil
 				}
-				return err
+				log.Printf("task-core recovery error: %v", err)
 			}
 		}
+	}
+}
+
+func sleepOrDone(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
 	}
 }

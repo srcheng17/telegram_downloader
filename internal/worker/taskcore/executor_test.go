@@ -63,6 +63,74 @@ func TestExecutorAcknowledgesCancelOnHeartbeatSignal(t *testing.T) {
 	}
 }
 
+func TestExecutorAcknowledgesCancelWhenSuccessResultRacesWithCancel(t *testing.T) {
+	svc := &fakeService{
+		claim:     &app.Task{ID: "task-1", Attempt: 1},
+		heartbeat: app.HeartbeatResult{CancelRequested: true},
+	}
+	downloader := &fakeDownloader{path: "/tmp/out.cbz"}
+	executor := Executor{Service: svc, Downloader: downloader, WorkerID: "worker-a", HeartbeatInterval: time.Hour}
+
+	processed, err := executor.ProcessOne(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("ProcessOne processed=%v err=%v", processed, err)
+	}
+	if !svc.cancelAcknowledged {
+		t.Fatalf("expected cancel acknowledgement")
+	}
+	if svc.completed.TaskID != "" {
+		t.Fatalf("task should not complete after cancel race: %#v", svc.completed)
+	}
+}
+
+func TestExecutorAcknowledgesCancelWhenCompleteConflictsAfterCancel(t *testing.T) {
+	svc := &fakeService{
+		claim: &app.Task{ID: "task-1", Attempt: 1},
+		heartbeats: []app.HeartbeatResult{
+			{CancelRequested: false},
+			{CancelRequested: true},
+		},
+		completeErr: app.ErrConflict,
+	}
+	downloader := &fakeDownloader{path: "/tmp/out.cbz"}
+	executor := Executor{Service: svc, Downloader: downloader, WorkerID: "worker-a", HeartbeatInterval: time.Hour}
+
+	processed, err := executor.ProcessOne(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("ProcessOne processed=%v err=%v", processed, err)
+	}
+	if !svc.cancelAcknowledged {
+		t.Fatalf("expected cancel acknowledgement")
+	}
+	if svc.completed.TaskID != "task-1" {
+		t.Fatalf("expected Complete to race and return conflict, got %#v", svc.completed)
+	}
+}
+
+func TestExecutorAcknowledgesCancelWhenFailConflictsAfterCancel(t *testing.T) {
+	svc := &fakeService{
+		claim: &app.Task{ID: "task-1", Attempt: 1},
+		heartbeats: []app.HeartbeatResult{
+			{CancelRequested: false},
+			{CancelRequested: true},
+		},
+		failErr: app.ErrConflict,
+	}
+	downloader := &fakeDownloader{err: errors.New("download failed")}
+	executor := Executor{Service: svc, Downloader: downloader, WorkerID: "worker-a", HeartbeatInterval: time.Hour}
+
+	processed, err := executor.ProcessOne(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("ProcessOne processed=%v err=%v", processed, err)
+	}
+	if !svc.cancelAcknowledged {
+		t.Fatalf("expected cancel acknowledgement")
+	}
+	if svc.failed.TaskID != "task-1" {
+		t.Fatalf("expected Fail to race and return conflict, got %#v", svc.failed)
+	}
+}
+
 func TestExecutorRejectsClaimedTaskMissingRequiredFields(t *testing.T) {
 	svc := &fakeService{claim: &app.Task{Attempt: 1}}
 	downloader := &fakeDownloader{path: "/tmp/out.cbz"}
@@ -94,6 +162,9 @@ func TestExecutorDoesNothingWhenNoTaskClaimed(t *testing.T) {
 type fakeService struct {
 	claim              *app.Task
 	heartbeat          app.HeartbeatResult
+	heartbeats         []app.HeartbeatResult
+	completeErr        error
+	failErr            error
 	completed          app.CompleteInput
 	failed             app.FailInput
 	cancelAcknowledged bool
@@ -107,17 +178,22 @@ func (s *fakeService) ClaimNext(ctx context.Context, workerID string) (app.Claim
 }
 
 func (s *fakeService) Heartbeat(ctx context.Context, taskID string, workerID string) (app.HeartbeatResult, error) {
+	if len(s.heartbeats) > 0 {
+		heartbeat := s.heartbeats[0]
+		s.heartbeats = s.heartbeats[1:]
+		return heartbeat, nil
+	}
 	return s.heartbeat, nil
 }
 
 func (s *fakeService) Complete(ctx context.Context, in app.CompleteInput) error {
 	s.completed = in
-	return nil
+	return s.completeErr
 }
 
 func (s *fakeService) Fail(ctx context.Context, in app.FailInput) error {
 	s.failed = in
-	return nil
+	return s.failErr
 }
 
 func (s *fakeService) AcknowledgeCancel(ctx context.Context, taskID string, workerID string, attempt int) error {
