@@ -228,11 +228,141 @@ func TestRetryResetsFailedAndCanceledTasksToReady(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsMalformedInputs(t *testing.T) {
+	t.Parallel()
+
+	repo := newMemoryRepo()
+	svc := NewService(repo, Config{LeaseTTL: time.Minute, MaxAttempts: 3})
+	ctx := context.Background()
+
+	if _, err := svc.InitUploadTask(ctx, InitUploadInput{ID: "66666666-6666-6666-6666-666666666661"}); err != nil {
+		t.Fatalf("InitUploadTask: %v", err)
+	}
+	_, _ = svc.CreateURLTask(ctx, CreateURLInput{ID: "66666666-6666-6666-6666-666666666662", URL: "https://telegra.ph/validation"})
+	claimed, err := svc.ClaimNext(ctx, "worker-v")
+	if err != nil {
+		t.Fatalf("ClaimNext: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "negative upload size", run: func() error {
+			_, err := svc.AttachUploadSource(ctx, AttachUploadSourceInput{TaskID: "66666666-6666-6666-6666-666666666661", Name: "source.zip", Path: "/tmp/source.zip", Size: -1})
+			return err
+		}},
+		{name: "blank cancel task id", run: func() error {
+			_, err := svc.RequestCancel(ctx, " \t")
+			return err
+		}},
+		{name: "blank retry task id", run: func() error {
+			_, err := svc.Retry(ctx, "\n")
+			return err
+		}},
+		{name: "blank heartbeat worker id", run: func() error {
+			_, err := svc.Heartbeat(ctx, claimed.Task.ID, " ")
+			return err
+		}},
+		{name: "blank progress task id", run: func() error {
+			return svc.ReportProgress(ctx, " ", domain.NewProgress(domain.PhaseDownloading, 1, 2, domain.UnitImages, "downloading"))
+		}},
+		{name: "complete invalid attempt", run: func() error {
+			return svc.Complete(ctx, CompleteInput{TaskID: claimed.Task.ID, WorkerID: "worker-v", Attempt: 0, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz"})
+		}},
+		{name: "complete blank worker", run: func() error {
+			return svc.Complete(ctx, CompleteInput{TaskID: claimed.Task.ID, WorkerID: " ", Attempt: 1, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz"})
+		}},
+		{name: "fail blank task", run: func() error {
+			return svc.Fail(ctx, FailInput{TaskID: " ", WorkerID: "worker-v", Attempt: 1})
+		}},
+		{name: "fail invalid attempt", run: func() error {
+			return svc.Fail(ctx, FailInput{TaskID: claimed.Task.ID, WorkerID: "worker-v", Attempt: 0})
+		}},
+		{name: "ack blank worker", run: func() error {
+			return svc.AcknowledgeCancel(ctx, claimed.Task.ID, " ", 1)
+		}},
+		{name: "ack invalid attempt", run: func() error {
+			return svc.AcknowledgeCancel(ctx, claimed.Task.ID, "worker-v", 0)
+		}},
+		{name: "get blank task", run: func() error {
+			_, err := svc.GetTask(ctx, " ")
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if err := tc.run(); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("err = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+func TestGetTaskAndListTasksDelegateWithValidationAndDefaults(t *testing.T) {
+	t.Parallel()
+
+	repo := newMemoryRepo()
+	svc := NewService(repo, Config{LeaseTTL: time.Minute, MaxAttempts: 3})
+	ctx := context.Background()
+
+	first, err := svc.CreateURLTask(ctx, CreateURLInput{ID: "77777777-7777-7777-7777-777777777771", URL: "https://telegra.ph/first"})
+	if err != nil {
+		t.Fatalf("CreateURLTask first: %v", err)
+	}
+	if _, err := svc.CreateURLTask(ctx, CreateURLInput{ID: "77777777-7777-7777-7777-777777777772", URL: "https://telegra.ph/second"}); err != nil {
+		t.Fatalf("CreateURLTask second: %v", err)
+	}
+
+	view, err := svc.GetTask(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if view.Task.ID != first.ID || view.Input.URL != "https://telegra.ph/first" {
+		t.Fatalf("view = %#v", view)
+	}
+
+	views, err := svc.ListTasks(ctx, 0, -10)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("len(ListTasks defaulted) = %d, want 2", len(views))
+	}
+	if repo.lastListLimit != 20 || repo.lastListOffset != 0 {
+		t.Fatalf("ListTasks delegated limit/offset = %d/%d, want 20/0", repo.lastListLimit, repo.lastListOffset)
+	}
+}
+
+func TestRequestCancelDoesNotPopulateLastError(t *testing.T) {
+	t.Parallel()
+
+	repo := newMemoryRepo()
+	svc := NewService(repo, Config{LeaseTTL: time.Minute, MaxAttempts: 3})
+
+	created, err := svc.InitUploadTask(context.Background(), InitUploadInput{ID: "88888888-8888-8888-8888-888888888888"})
+	if err != nil {
+		t.Fatalf("InitUploadTask: %v", err)
+	}
+	canceled, err := svc.RequestCancel(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("RequestCancel: %v", err)
+	}
+	if canceled.LastError != "" {
+		t.Fatalf("LastError = %q, want empty for normal cancellation", canceled.LastError)
+	}
+}
+
 type memoryRepo struct {
-	tasks    map[string]Task
-	inputs   map[string]Input
-	progress map[string]domain.Progress
-	results  map[string]*Result
+	tasks          map[string]Task
+	inputs         map[string]Input
+	progress       map[string]domain.Progress
+	results        map[string]*Result
+	lastListLimit  int
+	lastListOffset int
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -277,7 +407,7 @@ func (r *memoryRepo) Transition(ctx context.Context, taskID string, to domain.St
 	}
 	task.Status = to
 	task.UpdatedAt = time.Now()
-	if message != "" {
+	if to == domain.StatusFailed && message != "" {
 		task.LastError = message
 	}
 	r.tasks[taskID] = task
@@ -474,6 +604,8 @@ func (r *memoryRepo) RecoverExpired(ctx context.Context, maxAttempts int) (Recov
 }
 
 func (r *memoryRepo) ListTasks(ctx context.Context, limit int, offset int) ([]TaskView, error) {
+	r.lastListLimit = limit
+	r.lastListOffset = offset
 	ids := make([]string, 0, len(r.tasks))
 	for id := range r.tasks {
 		ids = append(ids, id)
