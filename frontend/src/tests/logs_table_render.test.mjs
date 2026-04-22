@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildStatusBadgeModel, formatProgressValue, getTaskTypeLabel, shouldShowRetryAction } from '../logs/table_render.js';
+import { buildStatusBadgeModel, createStatusCellElement, formatProgressValue, getTaskTypeLabel, shouldShowRetryAction } from '../logs/table_render.js';
 
 test('buildStatusBadgeModel uses status catalog labels when available', () => {
   const model = buildStatusBadgeModel('success', { SUCCESS: { label: '已完成' } });
@@ -53,4 +53,63 @@ test('buildStatusBadgeModel exposes stable task status label marker', () => {
   assert.equal(model.label, '运行中');
   assert.equal(model.statusCode, 'RUNNING');
   assert.equal(model.taskStatusLabel, '运行中');
+});
+
+
+function createFakeDocument() {
+  function createElement(tagName) {
+    const attributes = new Map();
+    const children = [];
+    const element = {
+      tagName,
+      className: '',
+      textContent: '',
+      title: '',
+      children,
+      appendChild(child) {
+        children.push(child);
+        return child;
+      },
+      setAttribute(name, value) {
+        attributes.set(name, String(value));
+      },
+      getAttribute(name) {
+        return attributes.get(name) || null;
+      },
+      matches(selector) {
+        const match = selector.match(/^\[([^=]+)="([^"]*)"\]$/);
+        return Boolean(match && attributes.get(match[1]) === match[2]);
+      },
+      querySelector(selector) {
+        if (this.matches(selector)) {
+          return this;
+        }
+        for (const child of children) {
+          const match = typeof child.querySelector === 'function' ? child.querySelector(selector) : null;
+          if (match) {
+            return match;
+          }
+        }
+        return null;
+      },
+    };
+    return element;
+  }
+
+  return { createElement };
+}
+
+test('createStatusCellElement renders stable status marker attributes into row DOM', () => {
+  const cell = createStatusCellElement(
+    createFakeDocument(),
+    { status: 'RUNNING', statusLabel: '' },
+    { RUNNING: { label: '运行中' } },
+  );
+  const badge = cell.querySelector('[data-task-status-label="运行中"]');
+
+  assert.ok(badge);
+  assert.equal(badge.textContent, '运行中');
+  assert.equal(badge.getAttribute('data-task-status-label'), '运行中');
+  assert.equal(badge.getAttribute('data-task-status-code'), 'RUNNING');
+  assert.equal(cell.querySelector('[data-task-status-code="RUNNING"]'), badge);
 });

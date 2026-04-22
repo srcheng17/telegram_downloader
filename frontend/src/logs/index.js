@@ -8,7 +8,7 @@ import {
     canRetryTaskAction,
 } from './task_actions.js';
 import { applyStatusCatalog as normalizeStatusCatalog } from './status_filters.js';
-import { buildStatusBadgeModel } from './table_render.js';
+import { createStatusCellElement } from './table_render.js';
 import { buildLogsUrl, readLogsFiltersFromForm } from './state.js';
 import { mapTaskToLogViewModel } from './view_model.js';
 import {
@@ -240,19 +240,7 @@ export function createLogsModule(win, doc) {
     }
 
     function createStatusCell(view) {
-        const model = buildStatusBadgeModel(view.status, state.statusCatalog);
-        const cell = doc.createElement('td');
-        const value = createValueContainer();
-        const badge = doc.createElement('span');
-        const statusLabel = String(view.statusLabel || model.label || '').trim();
-        badge.className = model.className;
-        badge.textContent = statusLabel;
-        badge.title = model.statusCode;
-        badge.setAttribute('data-task-status-label', statusLabel);
-        badge.setAttribute('data-task-status-code', model.statusCode);
-        value.appendChild(badge);
-        cell.appendChild(value);
-        return cell;
+        return createStatusCellElement(doc, view, state.statusCatalog);
     }
 
     function createTaskTypeCell(log) {
