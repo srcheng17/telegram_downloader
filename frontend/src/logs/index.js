@@ -21,7 +21,6 @@ import {
     getStartupRecoveryDismissKey,
     parseStartupRecovery,
 } from '../shared/startup_recovery.js';
-import { localizeServerMessage } from '../shared/server_messages.js';
 
 export function createLogsModule(win, doc) {
     const state = win.__telegraphLogsState || {

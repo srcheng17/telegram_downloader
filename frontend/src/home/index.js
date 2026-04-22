@@ -110,7 +110,7 @@ export function createHomeModule(win, doc) {
         };
 
         setSubmitting(true);
-        resetActionButtons();
+        resetHomeActionButtons(doc);
         showFeedback('正在创建新的 CBZ 任务...', 'info');
 
         try {
