@@ -39,7 +39,7 @@ export function buildStatusBadgeModel(status, statusCatalog) {
 export function mapTaskToLogViewModel(log) {
     const task = log && typeof log === 'object' ? log : {};
     const statusCode = normalizeStatusCode(task.status);
-    const statusLabel = String(task.status_label || '').trim() || fallbackStatusLabel(statusCode);
+    const statusLabel = String(task.status_label || '').trim();
     const taskType = String(task.task_type || '').trim().toLowerCase() === 'upload' ? 'upload' : 'url';
     const startTimeSeconds = Number(task.start_time || 0);
     const taskCoreProgressText = buildTaskCoreProgressLabel(task);

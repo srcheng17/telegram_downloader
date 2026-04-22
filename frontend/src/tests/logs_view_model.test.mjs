@@ -59,3 +59,14 @@ test('mapTaskToLogViewModel prefers backend status label, progress, and availabl
   assert.equal(view.progressText, '下载中 2/5');
   assert.deepEqual(view.availableActions, ['cancel']);
 });
+
+test('mapTaskToLogViewModel leaves status label empty so catalog fallback can apply', () => {
+  const view = mapTaskToLogViewModel({
+    id: 'task-catalog-fallback',
+    task_type: 'url',
+    status: 'SUCCEEDED',
+  });
+
+  assert.equal(view.statusLabel, '');
+  assert.equal(buildStatusBadgeModel(view.status, { SUCCEEDED: { label: '已完成' } }).label, '已完成');
+});
