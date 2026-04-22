@@ -44,6 +44,13 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	if !goAPIStaticMountReadonly.MatchString(goAPIBlock) {
 		t.Fatalf("go-api must mount static assets as read-only volume ./web/static:/app/static:ro in %q", composePath)
 	}
+	if !strings.Contains(goAPIBlock, "TEMP_PATH: /app/temp_downloads") {
+		t.Fatalf("go-api must set TEMP_PATH=/app/temp_downloads so taskcore uploads are visible to workers in %q", composePath)
+	}
+	goAPITempMount := regexp.MustCompile(`(?m)^\s*-\s*\./temp_downloads:/app/temp_downloads\s*$`)
+	if !goAPITempMount.MatchString(goAPIBlock) {
+		t.Fatalf("go-api must mount shared upload temp volume ./temp_downloads:/app/temp_downloads in %q", composePath)
+	}
 	goAPIKomgaMount := regexp.MustCompile(`(?m)^\s*-\s*\$\{KOMGA_LIBRARY_ROOT_HOST:-/Users/ryancheng/docker_data/komga/data/myReadingManga\}:\$\{KOMGA_LIBRARY_ROOT:-/app/komga/myReadingManga\}:rw\s*$`)
 	if !goAPIKomgaMount.MatchString(goAPIBlock) {
 		t.Fatalf("go-api must mount the host Komga library into the container in %q", composePath)

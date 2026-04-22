@@ -279,6 +279,7 @@ type ReadyzChecker func(ctx context.Context) (bool, error)
 type API struct {
 	store                   TaskReader
 	legacyAdapter           *LegacyAdapter
+	taskCoreService         TaskCoreService
 	v2TaskStore             LegacyV2TaskStore
 	v2TaskQueue             LegacyV2TaskQueue
 	v2ArtifactService       LegacyV2ArtifactService
@@ -338,6 +339,7 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 	api := &API{
 		store:                   store,
 		legacyAdapter:           NewLegacyAdapter(options.V2TaskStore, options.V2TaskQueue, options.V2ArtifactService),
+		taskCoreService:         options.TaskCoreService,
 		v2TaskStore:             options.V2TaskStore,
 		v2TaskQueue:             options.V2TaskQueue,
 		v2ArtifactService:       options.V2ArtifactService,
@@ -432,6 +434,16 @@ func (a *API) handleReadyz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleSummary(w http.ResponseWriter, r *http.Request) {
+	if a.taskCoreService != nil {
+		summary, err := a.buildTaskCoreSummary(r.Context())
+		if err != nil {
+			writeInternalError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, summary)
+		return
+	}
+
 	if a.legacyAdapter != nil && a.legacyAdapter.SupportsSummary() {
 		summary, err := a.legacyAdapter.BuildSummary(r.Context())
 		if err != nil {
@@ -458,6 +470,16 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 		queryValues.Get("status"),
 		queryValues.Get("q"),
 	)
+
+	if a.taskCoreService != nil {
+		payload, err := a.readTaskCoreLogs(r.Context(), query, queryValues.Get("status"))
+		if err != nil {
+			writeInternalError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
 
 	if a.legacyAdapter != nil && a.legacyAdapter.SupportsLogs() {
 		payload, err := a.legacyAdapter.ReadLogs(r.Context(), query)

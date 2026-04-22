@@ -124,6 +124,26 @@ func TestBuildLegacyRouterOptionsUsesKomgaRootDirFromEnv(t *testing.T) {
 	}
 }
 
+func TestBuildLegacyRouterOptionsUsesSharedUploadTempDir(t *testing.T) {
+	t.Setenv("TEMP_PATH", "")
+
+	got := buildLegacyRouterOptions(config.Config{}, &fakeDownloadQueueForLegacyRouterOptions{}, httpv2.NewPostgresTaskStore(nil), httpv2.NewV2TaskQueue(nil))
+
+	if got.UploadTempDir != "/app/temp_downloads" {
+		t.Fatalf("expected taskcore upload temp dir /app/temp_downloads, got %q", got.UploadTempDir)
+	}
+}
+
+func TestBuildLegacyRouterOptionsUsesTempPathFromEnv(t *testing.T) {
+	t.Setenv("TEMP_PATH", "/app/shared-temp")
+
+	got := buildLegacyRouterOptions(config.Config{}, &fakeDownloadQueueForLegacyRouterOptions{}, httpv2.NewPostgresTaskStore(nil), httpv2.NewV2TaskQueue(nil))
+
+	if got.UploadTempDir != "/app/shared-temp" {
+		t.Fatalf("expected upload temp dir from TEMP_PATH, got %q", got.UploadTempDir)
+	}
+}
+
 type fakeSettingsStoreForUIConfig struct{}
 
 func (f *fakeSettingsStoreForUIConfig) GetSettings(_ context.Context) (config.SettingsSnapshot, error) {

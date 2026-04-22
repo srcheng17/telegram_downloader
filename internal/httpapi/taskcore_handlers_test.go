@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ func TestTaskCoreHandlersCreateURLTask(t *testing.T) {
 
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if svc.createdURL.URL != "https://telegra.ph/demo" {
@@ -34,6 +35,129 @@ func TestTaskCoreHandlersCreateURLTask(t *testing.T) {
 	}
 	if svc.createdTask.Status != domain.StatusReady {
 		t.Fatalf("created status = %q, want READY", svc.createdTask.Status)
+	}
+}
+
+func TestTaskCoreHandlersLogsUseTaskCoreListTasks(t *testing.T) {
+	svc := &fakeTaskCoreHTTPService{}
+	router := newTaskCoreTestRouter(t, svc)
+	createReq := httptest.NewRequest(http.MethodPost, "/download", strings.NewReader("url=https%3A%2F%2Ftelegra.ph%2Fdemo"))
+	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	createRec := httptest.NewRecorder()
+	router.ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d body=%s", createRec.Code, createRec.Body.String())
+	}
+
+	logsReq := httptest.NewRequest(http.MethodGet, "/api/logs?page=1&per_page=25", nil)
+	logsRec := httptest.NewRecorder()
+	router.ServeHTTP(logsRec, logsReq)
+
+	if logsRec.Code != http.StatusOK {
+		t.Fatalf("logs status = %d body=%s", logsRec.Code, logsRec.Body.String())
+	}
+	var payload struct {
+		Logs []struct {
+			ID               string   `json:"id"`
+			TaskType         string   `json:"task_type"`
+			Status           string   `json:"status"`
+			StatusLabel      string   `json:"status_label"`
+			PhaseLabel       string   `json:"phase_label"`
+			AvailableActions []string `json:"available_actions"`
+			URL              string   `json:"url"`
+			CanonicalURL     string   `json:"canonical_url"`
+		} `json:"logs"`
+		Total          int  `json:"total"`
+		Page           int  `json:"page"`
+		PerPage        int  `json:"per_page"`
+		TotalPages     int  `json:"total_pages"`
+		HasActiveTasks bool `json:"has_active_tasks"`
+		Summary        struct {
+			TotalTasks      int `json:"total_tasks"`
+			PendingTasks    int `json:"pending_tasks"`
+			ActiveTasks     int `json:"active_tasks"`
+			FinishedTasks   int `json:"finished_tasks"`
+			StartupRecovery struct {
+				Happened bool `json:"happened"`
+			} `json:"startup_recovery"`
+		} `json:"summary"`
+		StatusCatalog map[string]any `json:"status_catalog"`
+		Filters       map[string]any `json:"filters"`
+	}
+	if err := json.NewDecoder(logsRec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode logs payload: %v body=%s", err, logsRec.Body.String())
+	}
+	if payload.Total != 1 || payload.Page != 1 || payload.PerPage != 25 || payload.TotalPages != 1 {
+		t.Fatalf("unexpected pagination payload: %#v", payload)
+	}
+	if !payload.HasActiveTasks {
+		t.Fatalf("expected taskcore active task in logs payload")
+	}
+	if len(payload.Logs) != 1 {
+		t.Fatalf("expected one log entry, got %#v", payload.Logs)
+	}
+	log := payload.Logs[0]
+	if log.ID == "" || log.TaskType != "url" || log.Status != "READY" || log.StatusLabel == "" || log.PhaseLabel == "" {
+		t.Fatalf("unexpected taskcore log entry: %#v", log)
+	}
+	if log.URL != "https://telegra.ph/demo" || log.CanonicalURL != "https://telegra.ph/demo" {
+		t.Fatalf("unexpected taskcore log URLs: %#v", log)
+	}
+	if !containsAction(log.AvailableActions, "cancel") {
+		t.Fatalf("expected cancel in available_actions, got %#v", log.AvailableActions)
+	}
+	if payload.Summary.TotalTasks != 1 || payload.Summary.PendingTasks != 1 || payload.Summary.ActiveTasks != 1 || payload.Summary.FinishedTasks != 0 {
+		t.Fatalf("unexpected taskcore summary in logs payload: %#v", payload.Summary)
+	}
+	if payload.Summary.StartupRecovery.Happened {
+		t.Fatalf("expected startup recovery default false")
+	}
+	if _, ok := payload.StatusCatalog["READY"]; !ok {
+		t.Fatalf("expected READY in taskcore status catalog: %#v", payload.StatusCatalog)
+	}
+	if payload.Filters == nil {
+		t.Fatalf("expected filters payload")
+	}
+}
+
+func TestTaskCoreHandlersSummaryUsesTaskCoreViews(t *testing.T) {
+	svc := &fakeTaskCoreHTTPService{views: []app.TaskView{
+		{Task: app.Task{ID: "task-ready", Kind: domain.KindURL, Status: domain.StatusReady}},
+		{Task: app.Task{ID: "task-success", Kind: domain.KindURL, Status: domain.StatusSucceeded}, Result: &app.Result{ArtifactPath: "/tmp/out.cbz"}},
+		{Task: app.Task{ID: "task-failed", Kind: domain.KindURL, Status: domain.StatusFailed}},
+	}}
+	router := newTaskCoreTestRouter(t, svc)
+	req := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("summary status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		TotalTasks      int      `json:"total_tasks"`
+		PendingTasks    int      `json:"pending_tasks"`
+		SuccessTasks    int      `json:"success_tasks"`
+		FailedTasks     int      `json:"failed_tasks"`
+		ActiveTasks     int      `json:"active_tasks"`
+		FinishedTasks   int      `json:"finished_tasks"`
+		SuccessRate     *float64 `json:"success_rate"`
+		StartupRecovery struct {
+			Happened bool `json:"happened"`
+		} `json:"startup_recovery"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode summary payload: %v", err)
+	}
+	if payload.TotalTasks != 3 || payload.PendingTasks != 1 || payload.SuccessTasks != 1 || payload.FailedTasks != 1 || payload.ActiveTasks != 1 || payload.FinishedTasks != 2 {
+		t.Fatalf("unexpected summary payload: %#v", payload)
+	}
+	if payload.SuccessRate == nil || *payload.SuccessRate != 50 {
+		t.Fatalf("expected success_rate=50, got %#v", payload.SuccessRate)
+	}
+	if payload.StartupRecovery.Happened {
+		t.Fatalf("expected startup recovery default false")
 	}
 }
 
@@ -279,6 +403,9 @@ func (f *fakeTaskCoreHTTPService) Retry(_ context.Context, taskID string) (app.T
 }
 
 func (f *fakeTaskCoreHTTPService) ListTasks(_ context.Context, _ int, _ int) ([]app.TaskView, error) {
+	if len(f.views) == 0 && f.view != nil {
+		return []app.TaskView{*f.view}, nil
+	}
 	return append([]app.TaskView(nil), f.views...), nil
 }
 

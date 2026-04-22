@@ -37,9 +37,11 @@ services:
       GO_DOWNLOAD_RETRIES: ${GO_DOWNLOAD_RETRIES:-10}
       GO_IMAGE_CONCURRENCY: ${GO_IMAGE_CONCURRENCY:-2}
       DOWNLOAD_PATH: /app/downloaded_images
+      TEMP_PATH: /app/temp_downloads
       KOMGA_LIBRARY_ROOT: ${KOMGA_LIBRARY_ROOT:-/app/komga/myReadingManga}
     volumes:
       - ./downloaded_images:/app/downloaded_images
+      - ./temp_downloads:/app/temp_downloads
       - ./web/static:/app/static:ro
       - ${KOMGA_LIBRARY_ROOT_HOST:-/Users/ryancheng/docker_data/komga/data/myReadingManga}:${KOMGA_LIBRARY_ROOT:-/app/komga/myReadingManga}:rw
     healthcheck:

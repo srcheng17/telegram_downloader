@@ -163,11 +163,19 @@ func buildLegacyRouterOptions(
 		DownloadTimeout:   cfg.DownloadTimeout,
 		DownloadRetries:   cfg.DownloadRetries,
 		ImageConcurrency:  cfg.ImageConcurrency,
+		UploadTempDir:     resolveUploadTempDir(),
 		KomgaRootDir:      resolveKomgaRootDir(),
 		V2TaskStore:       v2Store,
 		V2TaskQueue:       v2Queue,
 		V2ArtifactService: service.NewV2ArtifactService(service.V2ArtifactServiceConfig{}),
 	}
+}
+
+func resolveUploadTempDir() string {
+	if candidate := strings.TrimSpace(os.Getenv("TEMP_PATH")); candidate != "" {
+		return candidate
+	}
+	return "/app/temp_downloads"
 }
 
 func resolveKomgaRootDir() string {

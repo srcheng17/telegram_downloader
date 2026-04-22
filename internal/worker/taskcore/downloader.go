@@ -10,8 +10,10 @@ import (
 	"time"
 
 	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
+	taskarchive "github.com/ryancheng/telegram-downloader/internal/archive"
 	"github.com/ryancheng/telegram-downloader/internal/domain"
 	domainnaming "github.com/ryancheng/telegram-downloader/internal/domain/naming"
+	taskcoredomain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
 	godownloader "github.com/ryancheng/telegram-downloader/internal/downloader"
 )
 
@@ -26,9 +28,14 @@ type DownloadService interface {
 	PackageCBZ(images []domain.DownloadedImage, metadata godownloader.TaskMetadata, outputPath string) error
 }
 
+type ArchiveExtractor interface {
+	Extract(ctx context.Context, archivePath string) ([]taskarchive.ExtractedImage, error)
+}
+
 type TaskDownloaderConfig struct {
 	Tasks        TaskViewService
 	Service      DownloadService
+	Extractor    ArchiveExtractor
 	DownloadRoot string
 	Now          func() time.Time
 }
@@ -36,6 +43,7 @@ type TaskDownloaderConfig struct {
 type TaskDownloader struct {
 	tasks        TaskViewService
 	service      DownloadService
+	extractor    ArchiveExtractor
 	downloadRoot string
 	now          func() time.Time
 }
@@ -44,6 +52,7 @@ func NewTaskDownloader(cfg TaskDownloaderConfig) *TaskDownloader {
 	return &TaskDownloader{
 		tasks:        cfg.Tasks,
 		service:      cfg.Service,
+		extractor:    cfg.Extractor,
 		downloadRoot: strings.TrimSpace(cfg.DownloadRoot),
 		now:          cfg.Now,
 	}
@@ -73,12 +82,8 @@ func (d *TaskDownloader) Execute(ctx context.Context, taskID string) (string, er
 		return "", fmt.Errorf("task core task %s not found", taskID)
 	}
 
-	pageURL := firstNonEmpty(view.Input.CanonicalURL, view.Input.URL)
-	if pageURL == "" {
-		return "", fmt.Errorf("task core task %s has empty url", taskID)
-	}
-
-	result, err := d.service.Download(ctx, pageURL)
+	metadata := metadataFromInput(view.Input)
+	images, err := d.loadImages(ctx, *view)
 	if err != nil {
 		return "", err
 	}
@@ -91,12 +96,44 @@ func (d *TaskDownloader) Execute(ctx context.Context, taskID string) (string, er
 		return "", fmt.Errorf("create task core download output root: %w", err)
 	}
 
-	metadata := metadataFromInput(view.Input)
 	outputPath := filepath.Join(downloadRoot, buildTaskCoreDownloadFilename(metadata, d.clock().Unix()))
-	if err := d.service.PackageCBZ(result.Images, metadata, outputPath); err != nil {
+	if err := d.service.PackageCBZ(images, metadata, outputPath); err != nil {
 		return "", err
 	}
 	return outputPath, nil
+}
+
+func (d *TaskDownloader) loadImages(ctx context.Context, view app.TaskView) ([]domain.DownloadedImage, error) {
+	pageURL := firstNonEmpty(view.Input.CanonicalURL, view.Input.URL)
+	if view.Task.Kind == taskcoredomain.KindUpload || pageURL == "" {
+		source := strings.TrimSpace(view.Input.SourceArchivePath)
+		if source == "" {
+			return nil, fmt.Errorf("task core task %s has empty source archive path", view.Task.ID)
+		}
+		extractor := d.extractor
+		if extractor == nil {
+			extractor = taskarchive.NewExtractor(taskarchive.ExtractorConfig{})
+		}
+		extractedImages, err := extractor.Extract(ctx, source)
+		if err != nil {
+			return nil, err
+		}
+		images := make([]domain.DownloadedImage, 0, len(extractedImages))
+		for _, image := range extractedImages {
+			images = append(images, domain.DownloadedImage{
+				URL:         image.Name,
+				ContentType: image.ContentType,
+				Data:        image.Data,
+			})
+		}
+		return images, nil
+	}
+
+	result, err := d.service.Download(ctx, pageURL)
+	if err != nil {
+		return nil, err
+	}
+	return result.Images, nil
 }
 
 func (d *TaskDownloader) clock() time.Time {

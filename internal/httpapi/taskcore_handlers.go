@@ -89,7 +89,7 @@ func (h *taskCoreHandlers) handleCreateURLTask(w http.ResponseWriter, r *http.Re
 		Input:    app.Input{TaskID: task.ID, URL: rawURL, CanonicalURL: canonicalURL, Metadata: taskCoreMetadataMap(metadata)},
 		Progress: domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, "准备下载"),
 	}
-	writeJSON(w, http.StatusOK, h.taskPayload(view))
+	writeJSON(w, http.StatusAccepted, h.taskPayload(view))
 }
 
 func (h *taskCoreHandlers) handleListTasks(w http.ResponseWriter, r *http.Request) {
@@ -345,7 +345,7 @@ func (h *taskCoreHandlers) uploadArchiveName(r *http.Request, taskID string) str
 func (h *taskCoreHandlers) saveUploadSource(r *http.Request, taskID string, archiveName string) (string, int64, error) {
 	dir := h.uploadTempDir
 	if dir == "" {
-		dir = "temp_uploads"
+		dir = "temp_downloads"
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", 0, err

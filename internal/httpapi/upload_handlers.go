@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -166,7 +167,10 @@ func (a *API) uploadTempDirOrDefault() string {
 	if strings.TrimSpace(a.uploadTempDir) != "" {
 		return strings.TrimSpace(a.uploadTempDir)
 	}
-	return "temp_uploads"
+	if tempPath := strings.TrimSpace(os.Getenv("TEMP_PATH")); tempPath != "" {
+		return tempPath
+	}
+	return "temp_downloads"
 }
 
 type uploadInitStoreAdapter struct {
