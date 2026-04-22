@@ -13,11 +13,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	apptaskcore "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
 	"github.com/ryancheng/telegram-downloader/internal/config"
 	"github.com/ryancheng/telegram-downloader/internal/downloader"
 	queuev2 "github.com/ryancheng/telegram-downloader/internal/queue/v2"
 	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
+	pgtaskcore "github.com/ryancheng/telegram-downloader/internal/store/postgres/taskcore"
 	"github.com/ryancheng/telegram-downloader/internal/worker"
+	workertaskcore "github.com/ryancheng/telegram-downloader/internal/worker/taskcore"
 )
 
 const (
@@ -95,6 +98,15 @@ func main() {
 		DownloadRoot: downloadRoot,
 	})
 
+	taskCoreStore := pgtaskcore.NewStore(pool)
+	taskCoreService := apptaskcore.NewService(taskCoreStore, apptaskcore.Config{LeaseTTL: 30 * time.Second, MaxAttempts: 3})
+	taskCoreExecutor := &workertaskcore.Executor{
+		Service:           taskCoreService,
+		Downloader:        taskDownloader,
+		WorkerID:          consumerName,
+		HeartbeatInterval: 5 * time.Second,
+	}
+
 	executor := &worker.Executor{
 		Store:      store,
 		Downloader: taskDownloader,
@@ -132,15 +144,21 @@ func main() {
 		consumerName,
 	)
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 4)
 	go func() {
 		errCh <- consumer.Run(runCtx)
 	}()
 	go func() {
 		errCh <- v2Executor.Run(runCtx, v2Consumer)
 	}()
+	go func() {
+		errCh <- runTaskCoreExecutor(runCtx, taskCoreExecutor)
+	}()
+	go func() {
+		errCh <- runTaskCoreRecovery(runCtx, taskCoreExecutor, 30*time.Second)
+	}()
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 4; i++ {
 		if err := <-errCh; err != nil {
 			stop()
 			log.Fatalf("worker pipeline exited with error: %v", err)
@@ -163,4 +181,47 @@ func ensureV2ConsumerGroup(ctx context.Context, redisClient redis.Cmdable, strea
 		return err
 	}
 	return nil
+}
+
+func runTaskCoreExecutor(ctx context.Context, executor *workertaskcore.Executor) error {
+	for {
+		processed, err := executor.ProcessOne(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		if processed {
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func runTaskCoreRecovery(ctx context.Context, executor *workertaskcore.Executor, interval time.Duration) error {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if _, err := executor.RecoverExpired(ctx); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return err
+			}
+		}
+	}
 }
