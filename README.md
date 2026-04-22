@@ -62,6 +62,10 @@ web/static/               # 页面静态资源与构建产物
 
 仓库当前只保留 Go 运行时主线；历史 Python compatibility runtime 已下线并转入 Git 历史参考。
 
+### Task Core lifecycle
+
+Task Core cutover uses `task_core_*` tables as the canonical task lifecycle store. The logs page renders backend-provided status labels and available actions for URL and upload tasks; legacy task rows are preserved but not migrated into the new logs view. Deployment, validation, and rollback steps are documented in `docs/runbooks/2026-04-22-task-core-rebuild.md`.
+
 ## 测试分层（重构后）
 
 ```text

@@ -244,9 +244,12 @@ export function createLogsModule(win, doc) {
         const cell = doc.createElement('td');
         const value = createValueContainer();
         const badge = doc.createElement('span');
+        const statusLabel = String(view.statusLabel || model.label || '').trim();
         badge.className = model.className;
-        badge.textContent = String(view.statusLabel || model.label || '').trim();
+        badge.textContent = statusLabel;
         badge.title = model.statusCode;
+        badge.setAttribute('data-task-status-label', statusLabel);
+        badge.setAttribute('data-task-status-code', model.statusCode);
         value.appendChild(badge);
         cell.appendChild(value);
         return cell;

@@ -186,6 +186,7 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
   const statusCatalog = {
     IN_PROGRESS: { label: '进行中', can_cancel: true, can_download: false },
     CANCEL_REQUESTED: { label: '取消中', can_cancel: false, can_download: false },
+    CANCELED: { label: '已取消', can_cancel: false, can_download: false },
     SUCCESS: { label: '成功', can_cancel: false, can_download: true },
     FAILED: { label: '失败', can_cancel: false, can_download: false },
   };
@@ -203,6 +204,7 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
       id: 'e2e-pending-cancel',
       url: 'https://telegra.ph/e2e-pending-cancel',
       status: 'IN_PROGRESS',
+      available_actions: ['cancel'],
       progress: 3,
       total_images: 10,
       start_time: 1762531201,
@@ -212,6 +214,7 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
       id: 'e2e-success-missing',
       url: 'https://telegra.ph/e2e-success-missing',
       status: 'SUCCESS',
+      available_actions: ['download'],
       progress: 10,
       total_images: 10,
       start_time: 1762531202,
@@ -221,6 +224,7 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
       id: 'e2e-success-download',
       url: 'https://telegra.ph/e2e-success-download',
       status: 'SUCCESS',
+      available_actions: ['download'],
       progress: 11,
       total_images: 11,
       start_time: 1762531203,
@@ -251,7 +255,7 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
     });
 
     const finishedTasks = logs.filter(
-      (item) => item.status === 'SUCCESS' || item.status === 'FAILED' || item.status === 'CANCEL_REQUESTED',
+      (item) => ['SUCCESS', 'FAILED', 'CANCEL_REQUESTED', 'CANCELED'].includes(item.status),
     ).length;
 
     await route.fulfill({
@@ -273,7 +277,7 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
           finished_tasks: finishedTasks,
           success_rate: 50,
           failed_tasks: logs.filter((item) => item.status === 'FAILED').length,
-          canceled_tasks: logs.filter((item) => item.status === 'CANCEL_REQUESTED').length,
+          canceled_tasks: logs.filter((item) => ['CANCEL_REQUESTED', 'CANCELED'].includes(item.status)).length,
         },
         status_catalog: statusCatalog,
       }),
@@ -285,7 +289,9 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
     const taskID = match ? decodeURIComponent(match[1]) : '';
     const task = logs.find((item) => item.id === taskID);
     if (task) {
-      task.status = 'CANCEL_REQUESTED';
+      task.status = 'CANCELED';
+      task.retryable = true;
+      task.available_actions = ['retry'];
     }
     await route.fulfill({
       status: 200,
@@ -293,6 +299,18 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
       body: JSON.stringify({
         ok: true,
         message: 'Cancellation requested.',
+      }),
+    });
+  });
+
+  await page.route('**/api/tasks/*/retry', async (route) => {
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        task_id: 'e2e-pending-cancel',
+        status: 'QUEUED',
       }),
     });
   });
@@ -371,7 +389,9 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
   await expect(pendingRow).toBeVisible();
   await pendingRow.getByRole('button', { name: '取消' }).click();
   await expect(page.locator('#logs-feedback')).toContainText('已提交取消请求。');
-  await expect(pendingRow).toContainText('取消中');
+  await expect(pendingRow.locator('[data-task-status-label]')).toHaveText(/取消中|已取消/);
+  await expect(pendingRow.locator('[data-task-status-code]')).toHaveAttribute('data-task-status-code', /CANCEL_REQUESTED|CANCELED/);
+  await expect(pendingRow.getByRole('button', { name: '重试' })).toBeVisible();
 
   await page.locator('#status-filter').selectOption('SUCCESS');
   await page.locator('#query-filter').fill('e2e-success-missing');
@@ -391,6 +411,9 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
 
   const successRow = page.locator('#log-body tr', { hasText: 'e2e-success-download' });
   await expect(successRow).toBeVisible();
+  await expect(successRow.locator('[data-task-status-label]')).toHaveText('成功');
+  await expect(successRow.locator('[data-task-status-code]')).toHaveAttribute('data-task-status-code', 'SUCCESS');
+  await expect(successRow.getByRole('button', { name: '下载' })).toBeVisible();
   await successRow.getByRole('button', { name: '下载' }).click();
 
   await expect(page.locator('#logs-feedback')).toContainText('下载已开始。');
@@ -415,6 +438,7 @@ test('日志页：上传失败可重试，Komga 模式成功任务走复制动�
       task_type: 'upload',
       source_archive_name: 'demo.zip',
       status: 'UPLOADING',
+      available_actions: ['cancel'],
       upload_loaded_bytes: 12,
       upload_total_bytes: 40,
       progress: 0,
@@ -429,6 +453,7 @@ test('日志页：上传失败可重试，Komga 模式成功任务走复制动�
       source_archive_name: 'retry-me.7z',
       status: 'FAILED',
       retryable: true,
+      available_actions: ['retry'],
       upload_loaded_bytes: 40,
       upload_total_bytes: 40,
       progress: 0,
@@ -442,6 +467,7 @@ test('日志页：上传失败可重试，Komga 模式成功任务走复制动�
       task_type: 'upload',
       source_archive_name: 'copy.zip',
       status: 'SUCCESS',
+      available_actions: ['download', 'copy_to_komga'],
       progress: 8,
       total_images: 8,
       start_time: 1762531206,
@@ -505,6 +531,7 @@ test('日志页：上传失败可重试，Komga 模式成功任务走复制动�
 
   const uploadRow = page.locator('#log-body tr', { hasText: 'e2e-upload-progress' });
   await expect(uploadRow).toContainText('上传');
+  await expect(uploadRow.locator('[data-task-status-label]')).toHaveText('上传中');
   await expect(uploadRow).toContainText('12 / 40');
 
   const failedUploadRow = page.locator('#log-body tr', { hasText: 'e2e-upload-failed' });
@@ -513,6 +540,8 @@ test('日志页：上传失败可重试，Komga 模式成功任务走复制动�
   await expect.poll(() => retryRequests).toBe(1);
 
   const successRow = page.locator('#log-body tr', { hasText: 'e2e-komga-copy' });
+  await expect(successRow.locator('[data-task-status-label]')).toHaveText('成功');
+  await expect(successRow.getByRole('button', { name: '下载' })).toBeVisible();
   await successRow.getByRole('button', { name: '下载' }).click();
   await expect(page.locator('#logs-feedback')).toContainText('myReadingManga');
   await expect.poll(() => copyRequests).toBe(1);

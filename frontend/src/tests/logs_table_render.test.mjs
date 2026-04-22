@@ -47,3 +47,10 @@ test('formatProgressValue renders preparing state for running url tasks before t
   });
   assert.equal(value, '准备中');
 });
+
+test('buildStatusBadgeModel exposes stable task status label marker', () => {
+  const model = buildStatusBadgeModel('running', { RUNNING: { label: '运行中' } });
+  assert.equal(model.label, '运行中');
+  assert.equal(model.statusCode, 'RUNNING');
+  assert.equal(model.taskStatusLabel, '运行中');
+});

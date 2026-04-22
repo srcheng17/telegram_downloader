@@ -29,9 +29,11 @@ export function buildTaskCoreProgressLabel(task) {
 export function buildStatusBadgeModel(status, statusCatalog) {
     const statusCode = normalizeStatusCode(status) || 'UNKNOWN';
     const statusMeta = getStatusMeta(statusCatalog, statusCode);
+    const label = statusMeta ? statusMeta.label : fallbackStatusLabel(statusCode);
     return {
         statusCode,
-        label: statusMeta ? statusMeta.label : fallbackStatusLabel(statusCode),
+        label,
+        taskStatusLabel: label,
         className: `status-badge status-${statusCode.toLowerCase().replace(/[^a-z_]/g, '') || 'unknown'}`,
     };
 }
