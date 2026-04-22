@@ -35,8 +35,11 @@ function hasLegacyAction(task, action) {
         case 'cancel':
             return ['created', 'ready', 'queued', 'uploading', 'running', 'in_progress', 'canceling'].includes(statusCode);
         case 'retry':
-            if (!task || !task.retryable || !['failed', 'canceled'].includes(statusCode)) {
+            if (!task || !['failed', 'canceled'].includes(statusCode)) {
                 return false;
+            }
+            if (typeof task.retryable === 'boolean') {
+                return task.retryable;
             }
             return taskType === 'upload' ? hasSourceArchive : hasURL;
         case 'download':

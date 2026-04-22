@@ -85,6 +85,14 @@ test('legacy retry action still requires retryable url or source archive data', 
     canRetryTaskAction({
       status: 'FAILED',
       retryable: true,
+      task_type: 'upload',
+      source_archive_name: 'source.zip',
+    }),
+    true,
+  );
+  assert.equal(
+    canRetryTaskAction({
+      status: 'FAILED',
       task_type: 'url',
     }),
     false,
