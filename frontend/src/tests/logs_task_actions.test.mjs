@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runSuccessTaskAction, requestRetryTask } from '../logs/task_actions.js';
+import {
+  canCancelTaskAction,
+  canCopyToKomgaTaskAction,
+  canDownloadTaskAction,
+  requestRetryTask,
+  runSuccessTaskAction,
+} from '../logs/task_actions.js';
 
 test('runSuccessTaskAction calls copy endpoint when mode is komga_copy', async () => {
   const calls = [];
@@ -38,4 +44,12 @@ test('requestRetryTask posts retry request', async () => {
 
   assert.equal(calls[0].url, '/api/tasks/task-upload-failed/retry');
   assert.equal(result.payload.status, 'QUEUED');
+});
+
+test('backend available actions take priority over legacy status heuristics', () => {
+  const task = { status: 'SUCCEEDED', available_actions: ['download', 'copy_to_komga'] };
+
+  assert.equal(canDownloadTaskAction(task), true);
+  assert.equal(canCopyToKomgaTaskAction(task), true);
+  assert.equal(canCancelTaskAction(task), false);
 });

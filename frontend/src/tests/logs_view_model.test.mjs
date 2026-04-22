@@ -43,3 +43,19 @@ test('mapTaskToLogViewModel renders preparing state for running url tasks before
   });
   assert.equal(view.progressText, '准备中');
 });
+
+test('mapTaskToLogViewModel prefers backend status label, progress, and available actions', () => {
+  const view = mapTaskToLogViewModel({
+    id: 'task-core',
+    task_type: 'url',
+    status: 'RUNNING',
+    status_label: '运行中',
+    phase_label: '下载中',
+    progress: { phase: 'downloading', current: 2, total: 5, unit: 'images', message: '下载中' },
+    available_actions: ['cancel'],
+  });
+
+  assert.equal(view.statusLabel, '运行中');
+  assert.equal(view.progressText, '下载中 2/5');
+  assert.deepEqual(view.availableActions, ['cancel']);
+});

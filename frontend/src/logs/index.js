@@ -2,13 +2,17 @@ import { createTasksApi } from '../shared/api/tasks_api.js';
 import { createLogsActionController } from './action_controller.js';
 import { createLogsApi } from './api.js';
 import { hideErrorModal as hideLogsErrorModal, showErrorModal as showLogsErrorModal } from './error_modal.js';
+import {
+    canCancelTaskAction,
+    canDownloadTaskAction,
+    canRetryTaskAction,
+} from './task_actions.js';
 import { applyStatusCatalog as normalizeStatusCatalog } from './status_filters.js';
 import { buildStatusBadgeModel } from './table_render.js';
 import { buildLogsUrl, readLogsFiltersFromForm } from './state.js';
 import { mapTaskToLogViewModel } from './view_model.js';
 import {
     fallbackStatusLabel as fallbackSharedStatusLabel,
-    getStatusMeta as getSharedStatusMeta,
     normalizeStatusCode as normalizeSharedStatusCode,
 } from '../shared/models/status_catalog.js';
 import { resolvePollDelay } from '../shared/polling.js';
@@ -74,10 +78,6 @@ export function createLogsModule(win, doc) {
 
     function fallbackStatusLabel(statusCode) {
         return fallbackSharedStatusLabel(statusCode);
-    }
-
-    function getStatusMeta(status) {
-        return getSharedStatusMeta(state.statusCatalog, status);
     }
 
     function renderStatusFilterOptions() {
@@ -239,13 +239,13 @@ export function createLogsModule(win, doc) {
         return cell;
     }
 
-    function createStatusCell(status) {
-        const model = buildStatusBadgeModel(status, state.statusCatalog);
+    function createStatusCell(view) {
+        const model = buildStatusBadgeModel(view.status, state.statusCatalog);
         const cell = doc.createElement('td');
         const value = createValueContainer();
         const badge = doc.createElement('span');
         badge.className = model.className;
-        badge.textContent = model.label;
+        badge.textContent = String(view.statusLabel || model.label || '').trim();
         badge.title = model.statusCode;
         value.appendChild(badge);
         cell.appendChild(value);
@@ -302,11 +302,9 @@ export function createLogsModule(win, doc) {
         const cell = doc.createElement('td');
         cell.className = 'log-action-cell';
         const value = createValueContainer();
-        const status = view.status;
-        const statusMeta = getStatusMeta(status);
-        const canCancel = Boolean(statusMeta && statusMeta.can_cancel && view.id);
-        const canDownload = Boolean(statusMeta && statusMeta.can_download && view.id);
-        const canRetry = view.canRetry;
+        const canCancel = Boolean(view.id && canCancelTaskAction(view.raw));
+        const canDownload = Boolean(view.id && canDownloadTaskAction(view.raw));
+        const canRetry = Boolean(view.id && canRetryTaskAction(view.raw));
 
         if (canCancel) {
             const button = doc.createElement('button');
@@ -371,7 +369,7 @@ export function createLogsModule(win, doc) {
             row.appendChild(createCell(view.id));
             row.appendChild(createTaskTypeCell(log));
             row.appendChild(createLinkCell(view.url));
-            row.appendChild(createStatusCell(view.status));
+            row.appendChild(createStatusCell(view));
             row.appendChild(createCell(view.progressText));
             row.appendChild(createCell(view.startTimeLabel));
             row.appendChild(createErrorCell(view.errorText));
