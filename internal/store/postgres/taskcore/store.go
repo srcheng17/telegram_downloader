@@ -233,6 +233,7 @@ func (s *Store) Retry(ctx context.Context, taskID string, progress domain.Progre
 	task, err = scanTask(tx.QueryRow(ctx, `
 		UPDATE task_core_tasks
 		SET status = 'READY',
+		    attempt = 0,
 		    ready_at = $2,
 		    started_at = NULL,
 		    finished_at = NULL,
@@ -284,11 +285,11 @@ func (s *Store) ClaimNext(ctx context.Context, workerID string, leaseTTL time.Du
 		UPDATE task_core_tasks t
 		SET status = 'RUNNING',
 		    attempt = candidate.attempt + 1,
-		    started_at = $3,
-		    updated_at = $3,
+		    started_at = $3::timestamptz,
+		    updated_at = $3::timestamptz,
 		    lease_owner = $1,
-		    lease_expires_at = $3 + $2::interval,
-		    heartbeat_at = $3
+		    lease_expires_at = $3::timestamptz + $2::interval,
+		    heartbeat_at = $3::timestamptz
 		FROM candidate
 		WHERE t.id = candidate.id
 		RETURNING t.id, t.kind, t.status, t.attempt, t.last_error, t.lease_owner, t.lease_expires_at, t.created_at, t.updated_at
@@ -316,9 +317,9 @@ func (s *Store) Heartbeat(ctx context.Context, taskID string, workerID string, l
 	var status string
 	err := s.pool.QueryRow(ctx, `
 		UPDATE task_core_tasks
-		SET lease_expires_at = $4 + $3::interval,
-		    heartbeat_at = $4,
-		    updated_at = $4
+		SET lease_expires_at = $4::timestamptz + $3::interval,
+		    heartbeat_at = $4::timestamptz,
+		    updated_at = $4::timestamptz
 		WHERE id = $1 AND lease_owner = $2 AND status IN ('RUNNING', 'CANCELING')
 		RETURNING status
 	`, taskID, workerID, intervalString(leaseTTL), now).Scan(&status)
