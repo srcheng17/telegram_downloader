@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,6 +235,7 @@ func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	_, _, metadata := extractFromMap(payload)
+	fileName := taskCoreUploadArchiveBaseName(normalizePayloadText(payload["file_name"], maxMetadataFieldLength))
 	task, err := h.service.InitUploadTask(r.Context(), app.InitUploadInput{
 		ID:       uuid.NewString(),
 		Metadata: taskCoreMetadataMap(metadata),
@@ -247,7 +249,10 @@ func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Reque
 		Input:    app.Input{TaskID: task.ID, Metadata: taskCoreMetadataMap(metadata)},
 		Progress: domain.NewProgress(domain.PhaseUploading, 0, 0, domain.UnitBytes, "等待上传"),
 	}
-	uploadURL := "/api/tasks/" + task.ID + "/upload-source"
+	uploadURL := "/api/tasks/" + url.PathEscape(strings.TrimSpace(task.ID)) + "/upload-source"
+	if fileName != "" {
+		uploadURL += "?file_name=" + url.QueryEscape(fileName)
+	}
 	payloadOut := h.taskPayload(view)
 	payloadOut["upload_url"] = uploadURL
 	writeJSON(w, http.StatusAccepted, payloadOut)
@@ -329,17 +334,33 @@ func (h *taskCoreHandlers) writeServiceError(w http.ResponseWriter, err error) {
 
 func (h *taskCoreHandlers) uploadArchiveName(r *http.Request, taskID string) string {
 	if raw := strings.TrimSpace(r.URL.Query().Get("file_name")); raw != "" {
-		return filepath.Base(raw)
+		if name := taskCoreUploadArchiveBaseName(raw); name != "" {
+			return name
+		}
 	}
 	if _, params, err := mime.ParseMediaType(r.Header.Get("Content-Disposition")); err == nil {
 		if raw := strings.TrimSpace(params["filename"]); raw != "" {
-			return filepath.Base(raw)
+			if name := taskCoreUploadArchiveBaseName(raw); name != "" {
+				return name
+			}
 		}
 	}
 	if ext := strings.ToLower(filepath.Ext(r.URL.Path)); ext == ".zip" || ext == ".rar" || ext == ".7z" {
 		return taskID + ext
 	}
 	return taskID + ".upload"
+}
+
+func taskCoreUploadArchiveBaseName(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	base := strings.TrimSpace(filepath.Base(strings.ReplaceAll(raw, "\\", "/")))
+	if base == "." || base == "/" {
+		return ""
+	}
+	return base
 }
 
 func (h *taskCoreHandlers) saveUploadSource(r *http.Request, taskID string, archiveName string) (string, int64, error) {

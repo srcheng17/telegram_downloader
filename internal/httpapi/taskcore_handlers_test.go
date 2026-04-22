@@ -206,6 +206,48 @@ func TestTaskCoreHandlersDownloadHeadRejectsUnavailableResult(t *testing.T) {
 	}
 }
 
+func TestTaskCoreHandlersUploadInitURLPreservesFrontendFileNameForRawPut(t *testing.T) {
+	uploadTempDir := t.TempDir()
+	svc := &fakeTaskCoreHTTPService{}
+	router := newTaskCoreTestRouterWithOptions(t, svc, RouterOptions{UploadTempDir: uploadTempDir})
+
+	initReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/tasks/upload/init",
+		strings.NewReader(`{"file_name":"demo.zip","file_size":8}`),
+	)
+	initReq.Header.Set("Content-Type", "application/json")
+	initRec := httptest.NewRecorder()
+	router.ServeHTTP(initRec, initReq)
+
+	if initRec.Code != http.StatusAccepted {
+		t.Fatalf("init status = %d body=%s", initRec.Code, initRec.Body.String())
+	}
+	var initPayload struct {
+		UploadURL string `json:"upload_url"`
+	}
+	if err := json.NewDecoder(initRec.Body).Decode(&initPayload); err != nil {
+		t.Fatalf("decode init payload: %v", err)
+	}
+	if !strings.Contains(initPayload.UploadURL, "file_name=demo.zip") {
+		t.Fatalf("upload_url = %q, want file_name=demo.zip query", initPayload.UploadURL)
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, initPayload.UploadURL, strings.NewReader("zip-data"))
+	putRec := httptest.NewRecorder()
+	router.ServeHTTP(putRec, putReq)
+
+	if putRec.Code != http.StatusAccepted {
+		t.Fatalf("put status = %d body=%s", putRec.Code, putRec.Body.String())
+	}
+	if svc.attached.Name != "demo.zip" {
+		t.Fatalf("attached name = %q, want demo.zip", svc.attached.Name)
+	}
+	if filepath.Ext(svc.attached.Path) != ".zip" {
+		t.Fatalf("attached path = %q, want .zip extension", svc.attached.Path)
+	}
+}
+
 func TestTaskCoreHandlersUploadSourceRejectsInvalidTaskBeforeCreatingTempFile(t *testing.T) {
 	uploadTempDir := t.TempDir()
 	svc := &fakeTaskCoreHTTPService{
@@ -355,6 +397,7 @@ type fakeTaskCoreHTTPService struct {
 	view            *app.TaskView
 	attachErr       error
 	attachCalls     int
+	attached        app.AttachUploadSourceInput
 }
 
 func (f *fakeTaskCoreHTTPService) CreateURLTask(_ context.Context, in app.CreateURLInput) (app.Task, error) {
@@ -380,6 +423,7 @@ func (f *fakeTaskCoreHTTPService) InitUploadTask(_ context.Context, in app.InitU
 
 func (f *fakeTaskCoreHTTPService) AttachUploadSource(_ context.Context, in app.AttachUploadSourceInput) (app.Task, error) {
 	f.attachCalls++
+	f.attached = in
 	if f.attachErr != nil {
 		return app.Task{}, f.attachErr
 	}
