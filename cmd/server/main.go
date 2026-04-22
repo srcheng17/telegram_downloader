@@ -9,11 +9,13 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	apptaskcore "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
 	"github.com/ryancheng/telegram-downloader/internal/config"
 	"github.com/ryancheng/telegram-downloader/internal/httpapi"
 	"github.com/ryancheng/telegram-downloader/internal/httpui"
@@ -24,6 +26,7 @@ import (
 	"github.com/ryancheng/telegram-downloader/internal/service"
 	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
 	pgmigrations "github.com/ryancheng/telegram-downloader/internal/store/postgres/migrations"
+	pgtaskcore "github.com/ryancheng/telegram-downloader/internal/store/postgres/taskcore"
 )
 
 func main() {
@@ -63,11 +66,14 @@ func main() {
 	downloadQueue := redisstream.NewProducer(redisClient, cfg.StreamName)
 	v2Store := httpv2.NewPostgresTaskStore(pool)
 	v2Queue := httpv2.NewV2TaskQueue(queuev2.NewProducer(redisClient, cfg.V2StreamName))
+	taskCoreStore := pgtaskcore.NewStore(pool)
+	taskCoreService := apptaskcore.NewService(taskCoreStore, apptaskcore.Config{LeaseTTL: 30 * time.Second, MaxAttempts: 3})
 	if cfg.UpstreamBaseURL == "" {
 		log.Printf("PYTHON_WEB_BASE_URL not set, go-api will use local defaults for runtime settings")
 	}
 
 	legacyRouterOptions := buildLegacyRouterOptions(cfg, downloadQueue, v2Store, v2Queue)
+	legacyRouterOptions.TaskCoreService = taskCoreService
 	legacyRouterOptions.ReadyzChecker = func(ctx context.Context) (bool, error) {
 		pending, err := pgmigrations.PendingCount(ctx, pool)
 		if err != nil {

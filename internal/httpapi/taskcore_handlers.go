@@ -1,0 +1,389 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
+	domain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
+)
+
+type TaskCoreService interface {
+	CreateURLTask(ctx context.Context, in app.CreateURLInput) (app.Task, error)
+	InitUploadTask(ctx context.Context, in app.InitUploadInput) (app.Task, error)
+	AttachUploadSource(ctx context.Context, in app.AttachUploadSourceInput) (app.Task, error)
+	RequestCancel(ctx context.Context, taskID string) (app.Task, error)
+	Retry(ctx context.Context, taskID string) (app.Task, error)
+	ListTasks(ctx context.Context, limit int, offset int) ([]app.TaskView, error)
+	GetTask(ctx context.Context, taskID string) (*app.TaskView, error)
+}
+
+type taskCoreHandlers struct {
+	service         TaskCoreService
+	komgaConfigured bool
+	uploadTempDir   string
+}
+
+func newTaskCoreHandlers(service TaskCoreService, komgaConfigured bool, uploadTempDir string) *taskCoreHandlers {
+	return &taskCoreHandlers{
+		service:         service,
+		komgaConfigured: komgaConfigured,
+		uploadTempDir:   strings.TrimSpace(uploadTempDir),
+	}
+}
+
+func (h *taskCoreHandlers) registerRoutes(router chi.Router) {
+	router.Post("/download", h.handleCreateURLTask)
+	router.Get("/api/tasks", h.handleListTasks)
+	router.Post("/api/tasks/upload/init", h.handleUploadInit)
+	router.Put("/api/tasks/{task_id}/upload-source", h.handleUploadSource)
+	router.Post("/api/tasks/{task_id}/cancel", h.handleCancelTask)
+	router.Post("/api/tasks/{task_id}/retry", h.handleRetryTask)
+	router.Post("/api/tasks/{task_id}/copy-to-komga", h.handleCopyToKomga)
+	router.Get("/api/tasks/{task_id}/download", h.handleDownload)
+	router.Head("/api/tasks/{task_id}/download", h.handleDownload)
+}
+
+func (h *taskCoreHandlers) handleCreateURLTask(w http.ResponseWriter, r *http.Request) {
+	rawURL, _, metadata, err := extractDownloadRequest(r)
+	if err != nil || rawURL == "" {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Please provide a Telegraph URL.", nil)
+		return
+	}
+	if !isAllowedTelegraphURL(rawURL) {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Only telegra.ph or graph.org URLs are supported.", nil)
+		return
+	}
+	canonicalURL := normalizeTelegraphURL(rawURL)
+	if canonicalURL == "" {
+		canonicalURL = rawURL
+	}
+
+	task, err := h.service.CreateURLTask(r.Context(), app.CreateURLInput{
+		ID:           uuid.NewString(),
+		URL:          rawURL,
+		CanonicalURL: canonicalURL,
+		Metadata:     taskCoreMetadataMap(metadata),
+	})
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+
+	view := app.TaskView{
+		Task:     task,
+		Input:    app.Input{TaskID: task.ID, URL: rawURL, CanonicalURL: canonicalURL, Metadata: taskCoreMetadataMap(metadata)},
+		Progress: domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, "准备下载"),
+	}
+	writeJSON(w, http.StatusOK, h.taskPayload(view))
+}
+
+func (h *taskCoreHandlers) handleListTasks(w http.ResponseWriter, r *http.Request) {
+	limit := parseInt(r.URL.Query().Get("per_page"), 50)
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	page := parseInt(r.URL.Query().Get("page"), 1)
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+
+	views, err := h.service.ListTasks(r.Context(), limit, offset)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+
+	out := make([]taskCoreView, 0, len(views))
+	for _, view := range views {
+		out = append(out, presentTaskCoreView(view, h.komgaConfigured))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"tasks":    out,
+		"total":    len(out),
+		"page":     page,
+		"per_page": limit,
+	})
+}
+
+func (h *taskCoreHandlers) handleCancelTask(w http.ResponseWriter, r *http.Request) {
+	taskID := taskCoreTaskID(r)
+	if taskID == "" {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Task not found.", nil)
+		return
+	}
+	task, err := h.service.RequestCancel(r.Context(), taskID)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h.taskPayload(app.TaskView{Task: task}))
+}
+
+func (h *taskCoreHandlers) handleRetryTask(w http.ResponseWriter, r *http.Request) {
+	taskID := taskCoreTaskID(r)
+	if taskID == "" {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Task not found.", nil)
+		return
+	}
+	task, err := h.service.Retry(r.Context(), taskID)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h.taskPayload(app.TaskView{Task: task}))
+}
+
+func (h *taskCoreHandlers) handleDownload(w http.ResponseWriter, r *http.Request) {
+	taskID := taskCoreTaskID(r)
+	if taskID == "" {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Task not found.", nil)
+		return
+	}
+	view, err := h.service.GetTask(r.Context(), taskID)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	if view == nil {
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
+		return
+	}
+	if !taskCoreActionAvailable(*view, domain.ActionDownload, h.komgaConfigured) {
+		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.", nil)
+		return
+	}
+	artifactPath := strings.TrimSpace(view.Result.ArtifactPath)
+	if artifactPath == "" {
+		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.", nil)
+		return
+	}
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	file, err := os.Open(artifactPath)
+	if err != nil {
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
+		return
+	}
+
+	fileName := strings.TrimSpace(view.Result.ArtifactName)
+	if fileName == "" {
+		fileName = filepath.Base(artifactPath)
+	}
+	w.Header().Set("Content-Type", downloadMimeType(fileName))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+	http.ServeContent(w, r, fileName, info.ModTime(), file)
+}
+
+func (h *taskCoreHandlers) handleCopyToKomga(w http.ResponseWriter, r *http.Request) {
+	taskID := taskCoreTaskID(r)
+	if taskID == "" {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Task not found.", nil)
+		return
+	}
+	view, err := h.service.GetTask(r.Context(), taskID)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	if view == nil {
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
+		return
+	}
+	if !taskCoreActionAvailable(*view, domain.ActionCopyToKomga, h.komgaConfigured) {
+		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task result cannot be copied to Komga.", nil)
+		return
+	}
+	writeAPIErrorResponse(w, http.StatusNotImplemented, apiErrorCodeServiceUnavailable, "Task core Komga copy is not implemented yet.", nil)
+}
+
+func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Request) {
+	var payload map[string]any
+	decoder := json.NewDecoder(r.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Invalid upload init payload.", nil)
+		return
+	}
+	_, _, metadata := extractFromMap(payload)
+	task, err := h.service.InitUploadTask(r.Context(), app.InitUploadInput{
+		ID:       uuid.NewString(),
+		Metadata: taskCoreMetadataMap(metadata),
+	})
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	view := app.TaskView{
+		Task:     task,
+		Input:    app.Input{TaskID: task.ID, Metadata: taskCoreMetadataMap(metadata)},
+		Progress: domain.NewProgress(domain.PhaseUploading, 0, 0, domain.UnitBytes, "等待上传"),
+	}
+	uploadURL := "/api/tasks/" + task.ID + "/upload-source"
+	payloadOut := h.taskPayload(view)
+	payloadOut["upload_url"] = uploadURL
+	writeJSON(w, http.StatusAccepted, payloadOut)
+}
+
+func (h *taskCoreHandlers) handleUploadSource(w http.ResponseWriter, r *http.Request) {
+	taskID := taskCoreTaskID(r)
+	if taskID == "" {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Task not found.", nil)
+		return
+	}
+
+	archiveName := h.uploadArchiveName(r, taskID)
+	path, size, err := h.saveUploadSource(r, taskID, archiveName)
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+
+	task, err := h.service.AttachUploadSource(r.Context(), app.AttachUploadSourceInput{
+		TaskID: taskID,
+		Name:   archiveName,
+		Path:   path,
+		Size:   size,
+	})
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	view := app.TaskView{
+		Task: task,
+		Input: app.Input{
+			TaskID:            task.ID,
+			SourceArchiveName: archiveName,
+			SourceArchivePath: path,
+			SourceArchiveSize: size,
+		},
+		Progress: domain.NewProgress(domain.PhasePreparing, size, size, domain.UnitBytes, "上传完成，等待处理"),
+	}
+	writeJSON(w, http.StatusAccepted, h.taskPayload(view))
+}
+
+func (h *taskCoreHandlers) taskPayload(view app.TaskView) map[string]any {
+	presented := presentTaskCoreView(view, h.komgaConfigured)
+	return map[string]any{
+		"ok":      true,
+		"task":    presented,
+		"task_id": presented.ID,
+		"status":  presented.Status,
+	}
+}
+
+func (h *taskCoreHandlers) writeServiceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, app.ErrInvalidInput):
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Invalid task request.", nil)
+	case errors.Is(err, app.ErrNotFound):
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
+	case errors.Is(err, app.ErrConflict):
+		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Task state does not allow this action.", nil)
+	default:
+		writeInternalError(w, err)
+	}
+}
+
+func (h *taskCoreHandlers) uploadArchiveName(r *http.Request, taskID string) string {
+	if raw := strings.TrimSpace(r.URL.Query().Get("file_name")); raw != "" {
+		return filepath.Base(raw)
+	}
+	if _, params, err := mime.ParseMediaType(r.Header.Get("Content-Disposition")); err == nil {
+		if raw := strings.TrimSpace(params["filename"]); raw != "" {
+			return filepath.Base(raw)
+		}
+	}
+	if ext := strings.ToLower(filepath.Ext(r.URL.Path)); ext == ".zip" || ext == ".rar" || ext == ".7z" {
+		return taskID + ext
+	}
+	return taskID + ".upload"
+}
+
+func (h *taskCoreHandlers) saveUploadSource(r *http.Request, taskID string, archiveName string) (string, int64, error) {
+	dir := h.uploadTempDir
+	if dir == "" {
+		dir = "temp_uploads"
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", 0, err
+	}
+	ext := filepath.Ext(archiveName)
+	file, err := os.CreateTemp(dir, taskID+"-*"+ext)
+	if err != nil {
+		return "", 0, err
+	}
+	path := file.Name()
+	defer file.Close()
+
+	size, err := io.Copy(file, r.Body)
+	if err != nil {
+		_ = os.Remove(path)
+		return "", 0, err
+	}
+	return path, size, nil
+}
+
+func taskCoreTaskID(r *http.Request) string {
+	if taskID := strings.TrimSpace(chi.URLParam(r, "task_id")); taskID != "" {
+		return taskID
+	}
+	return strings.TrimSpace(chi.URLParam(r, "id"))
+}
+
+func taskCoreMetadataMap(metadata downloadMetadata) map[string]string {
+	out := map[string]string{}
+	putOptional := func(key string, value *string) {
+		if value == nil {
+			return
+		}
+		trimmed := strings.TrimSpace(*value)
+		if trimmed != "" {
+			out[key] = trimmed
+		}
+	}
+	putOptional("author", metadata.author)
+	putOptional("series_name", metadata.seriesName)
+	putOptional("comic_name", metadata.comicName)
+	putOptional("summary", metadata.summary)
+	putOptional("tags", metadata.tagsRaw)
+	putOptional("tags_normalized", metadata.tagsNormalized)
+	putOptional("genres", metadata.genresRaw)
+	putOptional("genres_normalized", metadata.genresNormalized)
+	return out
+}
+
+func taskCoreActionAvailable(view app.TaskView, action domain.Action, komgaConfigured bool) bool {
+	hasResult := view.Result != nil && strings.TrimSpace(view.Result.ArtifactPath) != ""
+	for _, candidate := range domain.AvailableActions(view.Task.Status, hasResult, komgaConfigured) {
+		if candidate == action {
+			return true
+		}
+	}
+	return false
+}

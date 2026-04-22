@@ -300,6 +300,7 @@ type RouterOptions struct {
 	HTTPClient              *http.Client
 	DownloadSubmitter       DownloadSubmitter
 	DownloadQueue           queue.DownloadQueue
+	TaskCoreService         TaskCoreService
 	V2TaskStore             LegacyV2TaskStore
 	V2TaskQueue             LegacyV2TaskQueue
 	V2ArtifactService       LegacyV2ArtifactService
@@ -365,14 +366,23 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 	router.Get("/api/summary", api.handleSummary)
 	router.Get("/api/logs", api.handleLogs)
 	router.Get("/api/metadata-history", api.handleMetadataHistory)
-	router.Post("/download", api.handleDownload)
-	router.Post("/api/tasks/upload/init", api.handleUploadInit)
-	router.Put("/api/tasks/{task_id}/upload-source", api.handleUploadSource)
-	router.Post("/api/tasks/{task_id}/cancel", api.handleTaskCancel)
-	router.Post("/api/tasks/{task_id}/retry", api.handleTaskRetry)
-	router.Post("/api/tasks/{task_id}/copy-to-komga", api.handleTaskCopyToKomga)
-	router.Get("/api/tasks/{task_id}/download", api.handleTaskDownload)
-	router.Head("/api/tasks/{task_id}/download", api.handleTaskDownload)
+	if options.TaskCoreService != nil {
+		taskCore := newTaskCoreHandlers(
+			options.TaskCoreService,
+			strings.TrimSpace(options.KomgaRootDir) != "",
+			api.uploadTempDirOrDefault(),
+		)
+		taskCore.registerRoutes(router)
+	} else {
+		router.Post("/download", api.handleDownload)
+		router.Post("/api/tasks/upload/init", api.handleUploadInit)
+		router.Put("/api/tasks/{task_id}/upload-source", api.handleUploadSource)
+		router.Post("/api/tasks/{task_id}/cancel", api.handleTaskCancel)
+		router.Post("/api/tasks/{task_id}/retry", api.handleTaskRetry)
+		router.Post("/api/tasks/{task_id}/copy-to-komga", api.handleTaskCopyToKomga)
+		router.Get("/api/tasks/{task_id}/download", api.handleTaskDownload)
+		router.Head("/api/tasks/{task_id}/download", api.handleTaskDownload)
+	}
 	return router
 }
 
