@@ -71,12 +71,23 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	if strings.Contains(nginxText, "telegraph_python_web") {
 		t.Fatalf("nginx config must not reference python frontend upstream: %q", nginxPath)
 	}
-	if !strings.Contains(nginxText, "resolver 127.0.0.11 valid=10s ipv6=off;") {
+	resolverIndex := strings.Index(nginxText, "resolver 127.0.0.11 valid=10s ipv6=off;")
+	if resolverIndex < 0 {
 		t.Fatalf("nginx config must use Docker DNS resolver for dynamic upstream refresh: %q", nginxPath)
+	}
+	upstreamIndex := strings.Index(nginxText, "upstream telegraph_go_api")
+	if upstreamIndex < 0 {
+		t.Fatalf("nginx config must define telegraph_go_api upstream: %q", nginxPath)
+	}
+	if resolverIndex > upstreamIndex {
+		t.Fatalf("nginx resolver must be in http scope before the dynamic upstream so upstream resolve can use it: %q", nginxPath)
 	}
 	dynamicGoAPIUpstream := regexp.MustCompile(`(?m)^\s*server\s+go-api:5000\s+resolve;\s*$`)
 	if !dynamicGoAPIUpstream.MatchString(nginxText) {
 		t.Fatalf("nginx upstream must dynamically resolve go-api:5000 via resolve: %q", nginxPath)
+	}
+	if !regexp.MustCompile(`(?m)^\s*zone\s+telegraph_go_api\s+\S+;\s*$`).MatchString(nginxText) {
+		t.Fatalf("nginx dynamic upstream must define a shared memory zone when using resolve: %q", nginxPath)
 	}
 	locationRootToGo := regexp.MustCompile(`location\s*/\s*\{\s*proxy_pass\s+http://telegraph_go_api;`)
 	if !locationRootToGo.MatchString(nginxText) {

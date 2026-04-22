@@ -137,7 +137,7 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	assertContains(t, body, `hx-target="#content"`)
 	assertContains(t, body, `hx-push-url="true"`)
 	assertContains(t, body, "最近 20 条填写的元数据")
-	assertContains(t, body, `id="metadata-history-collapsible"`)
+	assertContains(t, body, `id="metadata-history-collapsible" class="summary-collapsible metadata-history-panel" open`)
 	assertContains(t, body, "点击最近记录回填元数据")
 	assertContains(t, body, "URL 下载")
 	assertContains(t, body, "上传压缩包")
