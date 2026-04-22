@@ -2,6 +2,40 @@ package taskcore
 
 import "testing"
 
+func TestNormalizeStatusTrimsAndUppercases(t *testing.T) {
+	t.Parallel()
+
+	if got := NormalizeStatus("  succeeded \n"); got != StatusSucceeded {
+		t.Fatalf("NormalizeStatus() = %q, want %q", got, StatusSucceeded)
+	}
+}
+
+func TestNormalizeKindTrimsAndLowercases(t *testing.T) {
+	t.Parallel()
+
+	if got := NormalizeKind("  UPLOAD \t"); got != KindUpload {
+		t.Fatalf("NormalizeKind() = %q, want %q", got, KindUpload)
+	}
+}
+
+func TestIsTerminal(t *testing.T) {
+	t.Parallel()
+
+	terminal := []Status{StatusSucceeded, StatusFailed, StatusCanceled}
+	for _, status := range terminal {
+		if !IsTerminal(status) {
+			t.Fatalf("IsTerminal(%q) = false, want true", status)
+		}
+	}
+
+	nonTerminal := []Status{StatusCreated, StatusReady, StatusRunning, StatusCanceling}
+	for _, status := range nonTerminal {
+		if IsTerminal(status) {
+			t.Fatalf("IsTerminal(%q) = true, want false", status)
+		}
+	}
+}
+
 func TestTransitionAllowsApprovedLifecycle(t *testing.T) {
 	t.Parallel()
 
@@ -65,22 +99,52 @@ func TestTransitionRejectsAmbiguousLifecycle(t *testing.T) {
 func TestActionsComeFromDomainStateAndArtifacts(t *testing.T) {
 	t.Parallel()
 
-	if !CanCancel(StatusReady) || !CanCancel(StatusRunning) || !CanCancel(StatusCreated) {
-		t.Fatalf("created, ready, and running tasks must be cancelable")
+	cancelable := []Status{StatusCreated, StatusReady, StatusRunning}
+	for _, status := range cancelable {
+		if !CanCancel(status) {
+			t.Fatalf("CanCancel(%q) = false, want true", status)
+		}
 	}
-	if CanCancel(StatusSucceeded) || CanCancel(StatusFailed) || CanCancel(StatusCanceled) {
-		t.Fatalf("terminal tasks must not be cancelable")
+	for _, status := range []Status{StatusSucceeded, StatusFailed, StatusCanceled} {
+		if CanCancel(status) {
+			t.Fatalf("CanCancel(%q) = true, want false", status)
+		}
 	}
+
 	if !CanRetry(StatusFailed) || !CanRetry(StatusCanceled) {
 		t.Fatalf("failed and canceled tasks must be retryable")
 	}
-	if CanRetry(StatusSucceeded) || CanRetry(StatusReady) {
-		t.Fatalf("succeeded and active tasks must not be retryable")
+	if CanRetry(StatusSucceeded) || CanRetry(StatusReady) || CanRetry(StatusRunning) || CanRetry(StatusCanceling) || CanRetry(StatusCreated) {
+		t.Fatalf("only failed and canceled tasks must be retryable")
 	}
-	if !CanAccessResult(StatusSucceeded, true) {
-		t.Fatalf("succeeded task with result must allow result access")
+
+	actions := AvailableActions(StatusSucceeded, true, true)
+	want := []Action{ActionDownload, ActionCopyToKomga}
+	if len(actions) != len(want) {
+		t.Fatalf("AvailableActions(succeeded, hasResult=true, komgaConfigured=true) len = %d, want %d", len(actions), len(want))
 	}
-	if CanAccessResult(StatusSucceeded, false) || CanAccessResult(StatusFailed, true) {
-		t.Fatalf("result access requires succeeded status and result")
+	for i, action := range want {
+		if actions[i] != action {
+			t.Fatalf("AvailableActions(succeeded, hasResult=true, komgaConfigured=true)[%d] = %q, want %q", i, actions[i], action)
+		}
+	}
+
+	actions = AvailableActions(StatusSucceeded, true, false)
+	want = []Action{ActionDownload}
+	if len(actions) != len(want) {
+		t.Fatalf("AvailableActions(succeeded, hasResult=true, komgaConfigured=false) len = %d, want %d", len(actions), len(want))
+	}
+	for i, action := range want {
+		if actions[i] != action {
+			t.Fatalf("AvailableActions(succeeded, hasResult=true, komgaConfigured=false)[%d] = %q, want %q", i, actions[i], action)
+		}
+	}
+
+	if got := AvailableActions(StatusSucceeded, false, true); len(got) != 0 {
+		t.Fatalf("AvailableActions(succeeded, hasResult=false, komgaConfigured=true) = %v, want no result actions", got)
+	}
+
+	if got := AvailableActions(StatusReady, false, true); len(got) != 1 || got[0] != ActionCancel {
+		t.Fatalf("AvailableActions(ready, hasResult=false, komgaConfigured=true) = %v, want [cancel]", got)
 	}
 }
