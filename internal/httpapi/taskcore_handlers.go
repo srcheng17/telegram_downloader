@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
+	apptasks "github.com/ryancheng/telegram-downloader/internal/app/tasks"
 	domain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
 )
 
@@ -33,13 +34,15 @@ type taskCoreHandlers struct {
 	service         TaskCoreService
 	komgaConfigured bool
 	uploadTempDir   string
+	komgaRootDir    string
 }
 
-func newTaskCoreHandlers(service TaskCoreService, komgaConfigured bool, uploadTempDir string) *taskCoreHandlers {
+func newTaskCoreHandlers(service TaskCoreService, komgaConfigured bool, uploadTempDir string, komgaRootDir string) *taskCoreHandlers {
 	return &taskCoreHandlers{
 		service:         service,
 		komgaConfigured: komgaConfigured,
 		uploadTempDir:   strings.TrimSpace(uploadTempDir),
+		komgaRootDir:    strings.TrimSpace(komgaRootDir),
 	}
 }
 
@@ -169,32 +172,17 @@ func (h *taskCoreHandlers) handleDownload(w http.ResponseWriter, r *http.Request
 		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.", nil)
 		return
 	}
-	artifactPath := strings.TrimSpace(view.Result.ArtifactPath)
-	if artifactPath == "" {
-		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task is not completed yet.", nil)
-		return
-	}
-	if r.Method == http.MethodHead {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	file, err := os.Open(artifactPath)
+	file, info, fileName, err := openTaskCoreArtifact(*view)
 	if err != nil {
 		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
 		return
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || info.IsDir() {
-		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	fileName := strings.TrimSpace(view.Result.ArtifactName)
-	if fileName == "" {
-		fileName = filepath.Base(artifactPath)
-	}
 	w.Header().Set("Content-Type", downloadMimeType(fileName))
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
 	http.ServeContent(w, r, fileName, info.ModTime(), file)
@@ -219,7 +207,22 @@ func (h *taskCoreHandlers) handleCopyToKomga(w http.ResponseWriter, r *http.Requ
 		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskNotReady, "Task result cannot be copied to Komga.", nil)
 		return
 	}
-	writeAPIErrorResponse(w, http.StatusNotImplemented, apiErrorCodeServiceUnavailable, "Task core Komga copy is not implemented yet.", nil)
+	artifactPath, fileName, err := safeTaskCoreArtifactPath(*view)
+	if err != nil {
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
+		return
+	}
+	copier := apptasks.NewKomgaCopier(apptasks.KomgaCopyConfig{Root: h.komgaRootDir})
+	targetPath, err := copier.CopyFromPath(artifactPath, fileName, taskCoreSeriesName(*view))
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"task_id":     taskID,
+		"target_path": targetPath,
+	})
 }
 
 func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +259,19 @@ func (h *taskCoreHandlers) handleUploadSource(w http.ResponseWriter, r *http.Req
 		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Task not found.", nil)
 		return
 	}
+	existingView, err := h.service.GetTask(r.Context(), taskID)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	if existingView == nil {
+		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeTaskNotFound, "Task not found.", nil)
+		return
+	}
+	if !taskCoreCanAttachUploadSource(*existingView) {
+		writeAPIErrorResponse(w, http.StatusConflict, apiErrorCodeTaskAlreadyDone, "Task state does not allow upload source attachment.", nil)
+		return
+	}
 
 	archiveName := h.uploadArchiveName(r, taskID)
 	path, size, err := h.saveUploadSource(r, taskID, archiveName)
@@ -271,6 +287,7 @@ func (h *taskCoreHandlers) handleUploadSource(w http.ResponseWriter, r *http.Req
 		Size:   size,
 	})
 	if err != nil {
+		_ = os.Remove(path)
 		h.writeServiceError(w, err)
 		return
 	}
@@ -386,4 +403,50 @@ func taskCoreActionAvailable(view app.TaskView, action domain.Action, komgaConfi
 		}
 	}
 	return false
+}
+
+func taskCoreCanAttachUploadSource(view app.TaskView) bool {
+	return view.Task.Kind == domain.KindUpload && view.Task.Status == domain.StatusCreated
+}
+
+func safeTaskCoreArtifactPath(view app.TaskView) (string, string, error) {
+	if view.Result == nil {
+		return "", "", errors.New("missing artifact")
+	}
+	artifactPath := strings.TrimSpace(view.Result.ArtifactPath)
+	if !isSafeExistingDownloadFile(artifactPath) {
+		return "", "", errors.New("artifact unavailable")
+	}
+	fileName := strings.TrimSpace(view.Result.ArtifactName)
+	if fileName == "" {
+		fileName = filepath.Base(artifactPath)
+	}
+	return artifactPath, fileName, nil
+}
+
+func openTaskCoreArtifact(view app.TaskView) (*os.File, os.FileInfo, string, error) {
+	artifactPath, fileName, err := safeTaskCoreArtifactPath(view)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	file, err := os.Open(artifactPath)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		_ = file.Close()
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return nil, nil, "", errors.New("artifact is directory")
+	}
+	return file, info, fileName, nil
+}
+
+func taskCoreSeriesName(view app.TaskView) string {
+	if view.Input.Metadata == nil {
+		return ""
+	}
+	return strings.TrimSpace(view.Input.Metadata["series_name"])
 }

@@ -371,6 +371,7 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 			options.TaskCoreService,
 			strings.TrimSpace(options.KomgaRootDir) != "",
 			api.uploadTempDirOrDefault(),
+			strings.TrimSpace(options.KomgaRootDir),
 		)
 		taskCore.registerRoutes(router)
 	} else {
