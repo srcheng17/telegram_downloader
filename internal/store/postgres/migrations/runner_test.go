@@ -81,6 +81,24 @@ func TestListMigrationVersionsIncludesTaskSearchIndexesMigration(t *testing.T) {
 	}
 }
 
+func TestListMigrationVersionsIncludesTaskCoreSchema(t *testing.T) {
+	versions, err := listMigrationVersions()
+	if err != nil {
+		t.Fatalf("list migration versions: %v", err)
+	}
+
+	found := false
+	for _, version := range versions {
+		if version == "011_task_core_schema.sql" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected task core schema migration to be listed, got %#v", versions)
+	}
+}
+
 func TestRunnerApplies007V2TasksStatusUpdatedIndex(t *testing.T) {
 	const version007 = "007_v2_tasks_status_updated_index.sql"
 
