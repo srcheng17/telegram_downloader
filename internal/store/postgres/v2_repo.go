@@ -52,6 +52,8 @@ type TaskRecord struct {
 	UploadLoadedBytes int64
 	UploadTotalBytes  int64
 	Retryable         bool
+	Error             *string
+	ResultZipPath     *string
 	Author            *string
 	SeriesName        *string
 	ComicName         *string

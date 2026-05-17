@@ -68,16 +68,5 @@ export function createTasksApi(fetchImpl = fetch) {
                 ...options,
             });
         },
-        async createTask(payload) {
-            const { payload: result } = await requestJson('/v2/tasks', {
-                method: 'POST',
-                headers: {
-                    Accept: 'application/json',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload),
-            });
-            return result;
-        },
     };
 }

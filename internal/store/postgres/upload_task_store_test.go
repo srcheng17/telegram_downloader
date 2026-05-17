@@ -1,45 +1,45 @@
-package httpv2
+package postgres
 
 import (
 	"testing"
 	"time"
 )
 
-type fakeTaskScanRow struct {
+type fakeTaskRecordScanRow struct {
 	values []any
 }
 
-func (f fakeTaskScanRow) Scan(dest ...any) error {
+func (f fakeTaskRecordScanRow) Scan(dest ...any) error {
 	*dest[0].(*string) = f.values[0].(string)
 	*dest[1].(*string) = f.values[1].(string)
-	*dest[2].(**string) = optionalTaskString(f.values[2])
+	*dest[2].(**string) = optionalTaskRecordString(f.values[2])
 	*dest[3].(*string) = f.values[3].(string)
 	*dest[4].(*int) = f.values[4].(int)
 	*dest[5].(*int) = f.values[5].(int)
-	*dest[6].(**string) = optionalTaskString(f.values[6])
-	*dest[7].(**string) = optionalTaskString(f.values[7])
-	*dest[8].(**string) = optionalTaskString(f.values[8])
+	*dest[6].(**string) = optionalTaskRecordString(f.values[6])
+	*dest[7].(**string) = optionalTaskRecordString(f.values[7])
+	*dest[8].(**string) = optionalTaskRecordString(f.values[8])
 	*dest[9].(*int64) = f.values[9].(int64)
 	*dest[10].(*int64) = f.values[10].(int64)
 	*dest[11].(*bool) = f.values[11].(bool)
-	*dest[12].(**string) = optionalTaskString(f.values[12])
-	*dest[13].(**string) = optionalTaskString(f.values[13])
-	*dest[14].(**string) = optionalTaskString(f.values[14])
-	*dest[15].(**string) = optionalTaskString(f.values[15])
-	*dest[16].(**string) = optionalTaskString(f.values[16])
-	*dest[17].(**string) = optionalTaskString(f.values[17])
-	*dest[18].(**string) = optionalTaskString(f.values[18])
-	*dest[19].(**string) = optionalTaskString(f.values[19])
-	*dest[20].(**string) = cloneTaskString(f.values[20].(*string))
-	*dest[21].(**string) = cloneTaskString(f.values[21].(*string))
+	*dest[12].(**string) = optionalTaskRecordString(f.values[12])
+	*dest[13].(**string) = optionalTaskRecordString(f.values[13])
+	*dest[14].(**string) = optionalTaskRecordString(f.values[14])
+	*dest[15].(**string) = optionalTaskRecordString(f.values[15])
+	*dest[16].(**string) = optionalTaskRecordString(f.values[16])
+	*dest[17].(**string) = optionalTaskRecordString(f.values[17])
+	*dest[18].(**string) = optionalTaskRecordString(f.values[18])
+	*dest[19].(**string) = optionalTaskRecordString(f.values[19])
+	*dest[20].(**string) = cloneTaskRecordString(f.values[20].(*string))
+	*dest[21].(**string) = cloneTaskRecordString(f.values[21].(*string))
 	*dest[22].(*time.Time) = f.values[22].(time.Time)
 	*dest[23].(*time.Time) = f.values[23].(time.Time)
 	return nil
 }
 
-func TestScanTaskRowPreservesUploadFields(t *testing.T) {
+func TestScanTaskRecordPreservesUploadFields(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
-	row := fakeTaskScanRow{
+	row := fakeTaskRecordScanRow{
 		values: []any{
 			"task-upload-1",
 			"",
@@ -47,7 +47,7 @@ func TestScanTaskRowPreservesUploadFields(t *testing.T) {
 			TaskStatusUploading,
 			3,
 			9,
-			stringPtr("upload"),
+			stringPtr(TaskTypeUpload),
 			stringPtr("/tmp/source/demo.7z"),
 			stringPtr("demo.7z"),
 			int64(12),
@@ -68,11 +68,11 @@ func TestScanTaskRowPreservesUploadFields(t *testing.T) {
 		},
 	}
 
-	task, err := scanTaskRow(row)
+	task, err := scanTaskRecord(row)
 	if err != nil {
-		t.Fatalf("scan task row: %v", err)
+		t.Fatalf("scan task record: %v", err)
 	}
-	if task.TaskType == nil || *task.TaskType != "upload" {
+	if task.TaskType == nil || *task.TaskType != TaskTypeUpload {
 		t.Fatalf("expected task_type upload, got %#v", task.TaskType)
 	}
 	if task.SourceArchiveName == nil || *task.SourceArchiveName != "demo.7z" {
@@ -95,7 +95,7 @@ func TestScanTaskRowPreservesUploadFields(t *testing.T) {
 	}
 }
 
-func cloneTaskString(value *string) *string {
+func cloneTaskRecordString(value *string) *string {
 	if value == nil {
 		return nil
 	}
@@ -103,7 +103,7 @@ func cloneTaskString(value *string) *string {
 	return &copied
 }
 
-func optionalTaskString(value any) *string {
+func optionalTaskRecordString(value any) *string {
 	if value == nil {
 		return nil
 	}
@@ -111,5 +111,5 @@ func optionalTaskString(value any) *string {
 	if !ok {
 		return nil
 	}
-	return cloneTaskString(typed)
+	return cloneTaskRecordString(typed)
 }

@@ -18,7 +18,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/ryancheng/telegram-downloader/internal/domain"
-	"github.com/ryancheng/telegram-downloader/internal/queue"
 )
 
 const (
@@ -78,15 +77,11 @@ type ReadyzChecker func(ctx context.Context) (bool, error)
 
 type API struct {
 	store                   TaskReader
-	legacyAdapter           *LegacyAdapter
 	taskCoreService         TaskCoreService
-	v2TaskStore             LegacyV2TaskStore
-	v2TaskQueue             LegacyV2TaskQueue
-	v2ArtifactService       LegacyV2ArtifactService
+	uploadTaskStore         UploadTaskStore
 	upstreamBaseURL         string
 	httpClient              *http.Client
 	downloadSubmitter       DownloadSubmitter
-	downloadQueue           queue.DownloadQueue
 	runtimeSettingsProvider DownloadSettingsProvider
 	readyzChecker           ReadyzChecker
 	downloadTimeout         int
@@ -100,11 +95,8 @@ type RouterOptions struct {
 	UpstreamBaseURL         string
 	HTTPClient              *http.Client
 	DownloadSubmitter       DownloadSubmitter
-	DownloadQueue           queue.DownloadQueue
 	TaskCoreService         TaskCoreService
-	V2TaskStore             LegacyV2TaskStore
-	V2TaskQueue             LegacyV2TaskQueue
-	V2ArtifactService       LegacyV2ArtifactService
+	UploadTaskStore         UploadTaskStore
 	RuntimeSettingsProvider DownloadSettingsProvider
 	InternalToken           string
 	DisableRootRoutes       bool
@@ -135,18 +127,13 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 	if runtimeSettingsProvider == nil && upstreamBaseURL != "" {
 		runtimeSettingsProvider = NewHTTPDownloadSettingsProvider(upstreamBaseURL, httpClient, options.InternalToken)
 	}
-
 	api := &API{
 		store:                   store,
-		legacyAdapter:           NewLegacyAdapter(options.V2TaskStore, options.V2TaskQueue, options.V2ArtifactService),
 		taskCoreService:         options.TaskCoreService,
-		v2TaskStore:             options.V2TaskStore,
-		v2TaskQueue:             options.V2TaskQueue,
-		v2ArtifactService:       options.V2ArtifactService,
+		uploadTaskStore:         options.UploadTaskStore,
 		upstreamBaseURL:         upstreamBaseURL,
 		httpClient:              httpClient,
 		downloadSubmitter:       downloadSubmitter,
-		downloadQueue:           options.DownloadQueue,
 		runtimeSettingsProvider: runtimeSettingsProvider,
 		readyzChecker:           options.ReadyzChecker,
 		downloadTimeout:         positiveOrDefault(options.DownloadTimeout, defaultTimeoutSeconds),
@@ -161,8 +148,6 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 		router.Get("/", api.handleRoot)
 		router.Get("/logs", api.handleLogsPageRedirect)
 	}
-	router.Get("/v2", api.handleV2DashboardPage)
-	router.Get("/v2/tasks-ui", api.handleV2TasksPage)
 	router.Get("/healthz", api.handleHealthz)
 	router.Get("/readyz", api.handleReadyz)
 	router.Get("/api/summary", api.handleSummary)
@@ -176,15 +161,6 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 			strings.TrimSpace(options.KomgaRootDir),
 		)
 		taskCore.registerRoutes(router)
-	} else {
-		router.Post("/download", api.handleDownload)
-		router.Post("/api/tasks/upload/init", api.handleUploadInit)
-		router.Put("/api/tasks/{task_id}/upload-source", api.handleUploadSource)
-		router.Post("/api/tasks/{task_id}/cancel", api.handleTaskCancel)
-		router.Post("/api/tasks/{task_id}/retry", api.handleTaskRetry)
-		router.Post("/api/tasks/{task_id}/copy-to-komga", api.handleTaskCopyToKomga)
-		router.Get("/api/tasks/{task_id}/download", api.handleTaskDownload)
-		router.Head("/api/tasks/{task_id}/download", api.handleTaskDownload)
 	}
 	return router
 }

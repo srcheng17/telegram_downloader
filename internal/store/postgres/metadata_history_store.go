@@ -1,4 +1,4 @@
-package httpv2
+package postgres
 
 import (
 	"context"
@@ -57,7 +57,7 @@ func normalizeMetadataHistoryLimit(limit int) int {
 	return limit
 }
 
-func (s *PostgresTaskStore) InsertMetadataHistory(ctx context.Context, entry MetadataHistoryEntry) error {
+func (s *UploadTaskStore) InsertMetadataHistory(ctx context.Context, entry MetadataHistoryEntry) error {
 	if s == nil || s.db == nil {
 		return errors.New("v2 task database is not configured")
 	}
@@ -90,7 +90,7 @@ func (s *PostgresTaskStore) InsertMetadataHistory(ctx context.Context, entry Met
 	return err
 }
 
-func (s *PostgresTaskStore) ListMetadataHistory(ctx context.Context, limit int) ([]MetadataHistoryEntry, error) {
+func (s *UploadTaskStore) ListMetadataHistory(ctx context.Context, limit int) ([]MetadataHistoryEntry, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("v2 task database is not configured")
 	}

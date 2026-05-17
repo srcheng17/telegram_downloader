@@ -7,8 +7,7 @@ import (
 
 	"github.com/ryancheng/telegram-downloader/internal/config"
 	"github.com/ryancheng/telegram-downloader/internal/httpui"
-	"github.com/ryancheng/telegram-downloader/internal/httpv2"
-	"github.com/ryancheng/telegram-downloader/internal/queue"
+	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
 )
 
 func TestBuildUIConfigUsesRuntimeValues(t *testing.T) {
@@ -73,23 +72,12 @@ func TestBuildLegacyRouterOptionsInjectsV2Dependencies(t *testing.T) {
 		DownloadRetries:  7,
 		ImageConcurrency: 5,
 	}
-	legacyQueue := &fakeDownloadQueueForLegacyRouterOptions{}
-	v2Store := httpv2.NewPostgresTaskStore(nil)
-	v2Queue := httpv2.NewV2TaskQueue(nil)
+	uploadTaskStore := postgres.NewUploadTaskStore(nil)
 
-	got := buildLegacyRouterOptions(cfg, legacyQueue, v2Store, v2Queue)
+	got := buildLegacyRouterOptions(cfg, uploadTaskStore)
 
-	if got.V2TaskStore != v2Store {
-		t.Fatalf("expected v2 task store to be injected")
-	}
-	if got.V2TaskQueue != v2Queue {
-		t.Fatalf("expected v2 task queue to be injected")
-	}
-	if got.V2ArtifactService == nil {
-		t.Fatalf("expected v2 artifact service to be injected")
-	}
-	if got.DownloadQueue != legacyQueue {
-		t.Fatalf("expected legacy download queue to be preserved")
+	if got.UploadTaskStore != uploadTaskStore {
+		t.Fatalf("expected upload task store to be injected")
 	}
 	if got.UpstreamBaseURL != cfg.UpstreamBaseURL {
 		t.Fatalf("expected upstream base url=%q, got %q", cfg.UpstreamBaseURL, got.UpstreamBaseURL)
@@ -117,7 +105,7 @@ func TestBuildLegacyRouterOptionsInjectsV2Dependencies(t *testing.T) {
 func TestBuildLegacyRouterOptionsUsesKomgaRootDirFromEnv(t *testing.T) {
 	t.Setenv("KOMGA_LIBRARY_ROOT", "/app/custom-komga")
 
-	got := buildLegacyRouterOptions(config.Config{}, &fakeDownloadQueueForLegacyRouterOptions{}, httpv2.NewPostgresTaskStore(nil), httpv2.NewV2TaskQueue(nil))
+	got := buildLegacyRouterOptions(config.Config{}, postgres.NewUploadTaskStore(nil))
 
 	if got.KomgaRootDir != "/app/custom-komga" {
 		t.Fatalf("expected komga root from env, got %q", got.KomgaRootDir)
@@ -127,7 +115,7 @@ func TestBuildLegacyRouterOptionsUsesKomgaRootDirFromEnv(t *testing.T) {
 func TestBuildLegacyRouterOptionsUsesSharedUploadTempDir(t *testing.T) {
 	t.Setenv("TEMP_PATH", "")
 
-	got := buildLegacyRouterOptions(config.Config{}, &fakeDownloadQueueForLegacyRouterOptions{}, httpv2.NewPostgresTaskStore(nil), httpv2.NewV2TaskQueue(nil))
+	got := buildLegacyRouterOptions(config.Config{}, postgres.NewUploadTaskStore(nil))
 
 	if got.UploadTempDir != "/app/temp_downloads" {
 		t.Fatalf("expected taskcore upload temp dir /app/temp_downloads, got %q", got.UploadTempDir)
@@ -137,7 +125,7 @@ func TestBuildLegacyRouterOptionsUsesSharedUploadTempDir(t *testing.T) {
 func TestBuildLegacyRouterOptionsUsesTempPathFromEnv(t *testing.T) {
 	t.Setenv("TEMP_PATH", "/app/shared-temp")
 
-	got := buildLegacyRouterOptions(config.Config{}, &fakeDownloadQueueForLegacyRouterOptions{}, httpv2.NewPostgresTaskStore(nil), httpv2.NewV2TaskQueue(nil))
+	got := buildLegacyRouterOptions(config.Config{}, postgres.NewUploadTaskStore(nil))
 
 	if got.UploadTempDir != "/app/shared-temp" {
 		t.Fatalf("expected upload temp dir from TEMP_PATH, got %q", got.UploadTempDir)
@@ -152,10 +140,4 @@ func (f *fakeSettingsStoreForUIConfig) GetSettings(_ context.Context) (config.Se
 
 func (f *fakeSettingsStoreForUIConfig) UpdateSettings(_ context.Context, snapshot config.SettingsSnapshot) (config.SettingsSnapshot, error) {
 	return snapshot, nil
-}
-
-type fakeDownloadQueueForLegacyRouterOptions struct{}
-
-func (f *fakeDownloadQueueForLegacyRouterOptions) EnqueueDownload(_ context.Context, _ queue.EnqueueMessage) error {
-	return nil
 }

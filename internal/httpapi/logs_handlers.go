@@ -18,16 +18,6 @@ func (a *API) handleSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if a.legacyAdapter != nil && a.legacyAdapter.SupportsSummary() {
-		summary, err := a.legacyAdapter.BuildSummary(r.Context())
-		if err != nil {
-			writeInternalError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, summary)
-		return
-	}
-
 	summary, err := a.buildSummary(r.Context())
 	if err != nil {
 		writeInternalError(w, err)
@@ -47,16 +37,6 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	if a.taskCoreService != nil {
 		payload, err := a.readTaskCoreLogs(r.Context(), query, queryValues.Get("status"))
-		if err != nil {
-			writeInternalError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, payload)
-		return
-	}
-
-	if a.legacyAdapter != nil && a.legacyAdapter.SupportsLogs() {
-		payload, err := a.legacyAdapter.ReadLogs(r.Context(), query)
 		if err != nil {
 			writeInternalError(w, err)
 			return

@@ -13,17 +13,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 
 	apptaskcore "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
 	"github.com/ryancheng/telegram-downloader/internal/config"
 	"github.com/ryancheng/telegram-downloader/internal/httpapi"
 	"github.com/ryancheng/telegram-downloader/internal/httpui"
 	"github.com/ryancheng/telegram-downloader/internal/httpv2"
-	"github.com/ryancheng/telegram-downloader/internal/queue"
-	"github.com/ryancheng/telegram-downloader/internal/queue/redisstream"
-	queuev2 "github.com/ryancheng/telegram-downloader/internal/queue/v2"
-	"github.com/ryancheng/telegram-downloader/internal/service"
 	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
 	pgmigrations "github.com/ryancheng/telegram-downloader/internal/store/postgres/migrations"
 	pgtaskcore "github.com/ryancheng/telegram-downloader/internal/store/postgres/taskcore"
@@ -49,30 +44,16 @@ func main() {
 		log.Fatalf("run postgres migrations: %v", err)
 	}
 
-	redisOptions, err := redis.ParseURL(cfg.RedisURL)
-	if err != nil {
-		log.Fatalf("parse redis url: %v", err)
-	}
-	redisClient := redis.NewClient(redisOptions)
-	defer func() {
-		_ = redisClient.Close()
-	}()
-
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Fatalf("ping redis: %v", err)
-	}
-
 	store := postgres.NewStore(pool)
-	downloadQueue := redisstream.NewProducer(redisClient, cfg.StreamName)
 	v2Store := httpv2.NewPostgresTaskStore(pool)
-	v2Queue := httpv2.NewV2TaskQueue(queuev2.NewProducer(redisClient, cfg.V2StreamName))
+	uploadTaskStore := postgres.NewUploadTaskStore(pool)
 	taskCoreStore := pgtaskcore.NewStore(pool)
 	taskCoreService := apptaskcore.NewService(taskCoreStore, apptaskcore.Config{LeaseTTL: 30 * time.Second, MaxAttempts: 3})
 	if cfg.UpstreamBaseURL == "" {
 		log.Printf("PYTHON_WEB_BASE_URL not set, go-api will use local defaults for runtime settings")
 	}
 
-	legacyRouterOptions := buildLegacyRouterOptions(cfg, downloadQueue, v2Store, v2Queue)
+	legacyRouterOptions := buildLegacyRouterOptions(cfg, uploadTaskStore)
 	legacyRouterOptions.TaskCoreService = taskCoreService
 	legacyRouterOptions.ReadyzChecker = func(ctx context.Context) (bool, error) {
 		pending, err := pgmigrations.PendingCount(ctx, pool)
@@ -84,7 +65,7 @@ func main() {
 	legacyRouter := httpapi.NewRouterWithOptions(store, legacyRouterOptions)
 	rootRouter := chi.NewRouter()
 	httpui.RegisterRoutesWithConfig(rootRouter, buildUIConfig(cfg, v2Store))
-	httpv2.RegisterRoutes(rootRouter, httpv2.NewTasksHandler(v2Store, v2Queue))
+	httpv2.RegisterSettings(rootRouter, httpv2.NewSettingsHandler(v2Store))
 	rootRouter.Mount("/", legacyRouter)
 
 	server := &http.Server{
@@ -151,23 +132,18 @@ func resolveUIStaticDir() string {
 
 func buildLegacyRouterOptions(
 	cfg config.Config,
-	downloadQueue queue.DownloadQueue,
-	v2Store httpapi.LegacyV2TaskStore,
-	v2Queue httpapi.LegacyV2TaskQueue,
+	uploadTaskStore httpapi.UploadTaskStore,
 ) httpapi.RouterOptions {
 	return httpapi.RouterOptions{
 		UpstreamBaseURL:   cfg.UpstreamBaseURL,
 		InternalToken:     cfg.InternalToken,
 		DisableRootRoutes: true,
-		DownloadQueue:     downloadQueue,
 		DownloadTimeout:   cfg.DownloadTimeout,
 		DownloadRetries:   cfg.DownloadRetries,
 		ImageConcurrency:  cfg.ImageConcurrency,
 		UploadTempDir:     resolveUploadTempDir(),
 		KomgaRootDir:      resolveKomgaRootDir(),
-		V2TaskStore:       v2Store,
-		V2TaskQueue:       v2Queue,
-		V2ArtifactService: service.NewV2ArtifactService(service.V2ArtifactServiceConfig{}),
+		UploadTaskStore:   uploadTaskStore,
 	}
 }
 

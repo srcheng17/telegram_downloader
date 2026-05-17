@@ -1,4 +1,4 @@
-package httpv2
+package postgres
 
 import (
 	"testing"
@@ -11,13 +11,13 @@ type fakeMetadataHistoryRow struct {
 
 func (f fakeMetadataHistoryRow) Scan(dest ...any) error {
 	*dest[0].(*string) = f.values[0].(string)
-	*dest[1].(**string) = cloneTaskString(f.values[1].(*string))
-	*dest[2].(**string) = cloneTaskString(f.values[2].(*string))
-	*dest[3].(**string) = cloneTaskString(f.values[3].(*string))
-	*dest[4].(**string) = cloneTaskString(f.values[4].(*string))
-	*dest[5].(**string) = cloneTaskString(f.values[5].(*string))
-	*dest[6].(**string) = cloneTaskString(f.values[6].(*string))
-	*dest[7].(**string) = cloneTaskString(f.values[7].(*string))
+	*dest[1].(**string) = cloneMetadataHistoryString(f.values[1].(*string))
+	*dest[2].(**string) = cloneMetadataHistoryString(f.values[2].(*string))
+	*dest[3].(**string) = cloneMetadataHistoryString(f.values[3].(*string))
+	*dest[4].(**string) = cloneMetadataHistoryString(f.values[4].(*string))
+	*dest[5].(**string) = cloneMetadataHistoryString(f.values[5].(*string))
+	*dest[6].(**string) = cloneMetadataHistoryString(f.values[6].(*string))
+	*dest[7].(**string) = cloneMetadataHistoryString(f.values[7].(*string))
 	*dest[8].(*time.Time) = f.values[8].(time.Time)
 	return nil
 }
@@ -54,4 +54,12 @@ func TestScanMetadataHistoryEntryPreservesTaskTypeAndURL(t *testing.T) {
 	if !entry.CreatedAt.Equal(now) {
 		t.Fatalf("expected created_at %v, got %v", now, entry.CreatedAt)
 	}
+}
+
+func cloneMetadataHistoryString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
 }
