@@ -13,25 +13,12 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - ./data/redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
   go-api:
     build:
       context: .
     environment:
       PORT: "5000"
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
-      STREAM_NAME: ${STREAM_NAME:-download_tasks}
       INTERNAL_ENQUEUE_TOKEN: ${INTERNAL_ENQUEUE_TOKEN:?required}
       GO_DOWNLOAD_TIMEOUT: ${GO_DOWNLOAD_TIMEOUT:-30}
       GO_DOWNLOAD_RETRIES: ${GO_DOWNLOAD_RETRIES:-10}
@@ -53,8 +40,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
 
   go-worker:
     build:
@@ -62,10 +47,7 @@ services:
     entrypoint: ["/app/go-worker"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
-      STREAM_NAME: ${STREAM_NAME:-download_tasks}
       INTERNAL_ENQUEUE_TOKEN: ${INTERNAL_ENQUEUE_TOKEN:?required}
-      CONSUMER_GROUP: ${CONSUMER_GROUP:-go-workers}
       CONSUMER_NAME: ${GO_WORKER_CONSUMER_NAME:-}
       GO_DOWNLOAD_TIMEOUT: ${GO_DOWNLOAD_TIMEOUT:-30}
       GO_DOWNLOAD_RETRIES: ${GO_DOWNLOAD_RETRIES:-10}
@@ -77,8 +59,6 @@ services:
       - ./temp_downloads:/app/temp_downloads
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   gateway:

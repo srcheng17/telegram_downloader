@@ -22,7 +22,6 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 		"go-api":    {},
 		"go-worker": {},
 		"postgres":  {},
-		"redis":     {},
 		"gateway":   {},
 	}
 	if !sameServiceSet(services, expectedServices) {
@@ -34,6 +33,7 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	}
 
 	goAPIBlock := extractComposeServiceBlock(t, composeText, "go-api")
+	assertComposeBlockOmitsRetiredRuntimeEnv(t, goAPIBlock, "go-api")
 	if !strings.Contains(goAPIBlock, "    healthcheck:\n") {
 		t.Fatalf("go-api must define healthcheck in %q", composePath)
 	}
@@ -55,6 +55,9 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	if !goAPIKomgaMount.MatchString(goAPIBlock) {
 		t.Fatalf("go-api must mount the host Komga library into the container in %q", composePath)
 	}
+
+	goWorkerBlock := extractComposeServiceBlock(t, composeText, "go-worker")
+	assertComposeBlockOmitsRetiredRuntimeEnv(t, goWorkerBlock, "go-worker")
 
 	gatewayBlock := extractComposeServiceBlock(t, composeText, "gateway")
 	gatewayDependsOnHealthyGoAPI := regexp.MustCompile(`(?ms)go-api:\n\s+condition:\s*service_healthy`)
@@ -100,6 +103,25 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	locationAPIToGo := regexp.MustCompile(`location\s+\^~\s*/api/\s*\{\s*proxy_pass\s+http://telegraph_go_api;`)
 	if !locationAPIToGo.MatchString(nginxText) {
 		t.Fatalf("nginx config must route /api/* to telegraph_go_api: %q", nginxPath)
+	}
+}
+
+func assertComposeBlockOmitsRetiredRuntimeEnv(t *testing.T, block, serviceName string) {
+	t.Helper()
+
+	retiredEnvNames := []string{
+		strings.Join([]string{"REDIS", "URL:"}, "_"),
+		strings.Join([]string{"STREAM", "NAME:"}, "_"),
+		strings.Join([]string{"V2", "STREAM", "NAME:"}, "_"),
+		strings.Join([]string{"CONSUMER", "GROUP:"}, "_"),
+	}
+	for _, name := range retiredEnvNames {
+		if strings.Contains(block, name) {
+			t.Fatalf("%s must not declare retired runtime env %s", serviceName, name)
+		}
+	}
+	if strings.Contains(block, "redis:") {
+		t.Fatalf("%s must not depend on redis in the Task Core PostgreSQL mainline", serviceName)
 	}
 }
 

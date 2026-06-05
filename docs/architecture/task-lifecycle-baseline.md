@@ -6,6 +6,10 @@
 
 ## 当前任务类型
 
+## 当前调度方式
+
+当前任务调度不再依赖外部队列服务。`go-api` 写入 PostgreSQL `task_core_*` 表后，`go-worker` 周期性领取 `READY` 任务并持有 lease；执行过程中通过 heartbeat 保持租约，异常退出后由 recovery 重新释放过期任务。
+
 ### URL 任务
 
 来源：

@@ -16,23 +16,17 @@
 卷：
 - `./data/postgres:/var/lib/postgresql/data`
 
-### redis
-
-卷：
-- `./data/redis:/data`
-
 ### go-api
 
 关键环境变量：
 - `PORT`（默认 `5000`）
 - `DATABASE_URL`
-- `REDIS_URL`
-- `STREAM_NAME`（默认 `download_tasks`）
 - `INTERNAL_ENQUEUE_TOKEN`（必填）
 - `GO_DOWNLOAD_TIMEOUT`
 - `GO_DOWNLOAD_RETRIES`
 - `GO_IMAGE_CONCURRENCY`
 - `DOWNLOAD_PATH`（默认 `/app/downloaded_images`）
+- `TEMP_PATH`（默认 `/app/temp_downloads`）
 - `KOMGA_LIBRARY_ROOT`（默认 `/app/komga/myReadingManga`）
 
 卷：
@@ -44,11 +38,8 @@
 
 关键环境变量：
 - `DATABASE_URL`
-- `REDIS_URL`
-- `STREAM_NAME`
 - `INTERNAL_ENQUEUE_TOKEN`
-- `CONSUMER_GROUP`
-- `CONSUMER_NAME`
+- `CONSUMER_NAME`（由 Compose 的 `GO_WORKER_CONSUMER_NAME` 注入，空值时回退到容器 hostname）
 - `GO_DOWNLOAD_TIMEOUT`
 - `GO_DOWNLOAD_RETRIES`
 - `GO_IMAGE_CONCURRENCY`
@@ -75,10 +66,10 @@
    - 下载超时、重试次数、图片并发数
 2. **数据存储与路径**
    - `DOWNLOAD_PATH`、`TEMP_PATH`、`KOMGA_LIBRARY_ROOT`
-3. **队列与 worker**
-   - `STREAM_NAME`、`CONSUMER_GROUP`、`CONSUMER_NAME`
+3. **worker 身份与执行**
+   - `CONSUMER_NAME`
 4. **基础设施连接**
-   - `DATABASE_URL`、`REDIS_URL`
+   - `DATABASE_URL`
 5. **运维与入口**
    - `PORT`、`APP_PORT`、`INTERNAL_ENQUEUE_TOKEN`
 

@@ -35,16 +35,18 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 
 *   **后端主线**: Go（`go-api` + `go-worker`）
 *   **前端**: HTML + CSS + htmx + 原生 JS（Vite 最小工程化）
-*   **部署**: Docker Compose, Nginx, Redis Streams, PostgreSQL
+*   **部署**: Docker Compose, Nginx, PostgreSQL
 *   **测试**: Go test, Playwright, GitHub Actions CI
 
 ## 后端架构（重构后）
 
 默认生产拓扑：
 
-`gateway -> go-api -> postgres/redis`
+`gateway -> go-api -> postgres`
 
-`go-worker` 独立消费 Redis Streams（consumer group + ack + pending reclaim），并按 v2 状态机推进任务生命周期。
+`go-worker -> postgres`
+
+`go-worker` 通过 PostgreSQL 中的 Task Core 任务、lease、heartbeat 与 recovery 推进任务生命周期。
 
 核心目录：
 
@@ -54,8 +56,9 @@ cmd/worker/               # go-worker 入口
 internal/httpui/          # 首页/日志/设置 UI（保持现有界面）
 internal/httpapi/         # /download + /api/* legacy-facing 适配层
 internal/httpv2/          # /v2/* API
-internal/queue/v2/        # Redis Streams v2 队列抽象
-internal/store/postgres/  # v2 任务仓储 + migrations runner
+internal/app/taskcore/    # Task Core 应用服务与任务生命周期用例
+internal/worker/taskcore/ # PostgreSQL lease 驱动的 worker 执行链路
+internal/store/postgres/  # Task Core / 上传 / 设置仓储 + migrations runner
 web/templates/            # Go 页面模板
 web/static/               # 页面静态资源与构建产物
 ```
@@ -199,7 +202,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-默认服务拓扑为：`gateway + go-api + go-worker + redis + postgres`。
+默认服务拓扑为：`gateway + go-api + go-worker + postgres`。
 
 - `gateway`（Nginx）统一对外暴露 `APP_PORT`（默认 `5002`）。
 - 网关规则文件：`deploy/nginx/canary-go-full.conf`。

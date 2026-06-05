@@ -33,10 +33,6 @@ type SettingsSnapshot struct {
 type Config struct {
 	Addr             string
 	DatabaseURL      string
-	RedisURL         string
-	StreamName       string
-	V2StreamName     string
-	ConsumerGroup    string
 	ConsumerName     string
 	UpstreamBaseURL  string
 	InternalToken    string
@@ -77,25 +73,6 @@ func LoadFromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("go-backend only supports PostgreSQL in phase 1, got TASKS_DB_PATH=%q", databaseURL)
 	}
 
-	redisURL := strings.TrimSpace(os.Getenv("REDIS_URL"))
-	if redisURL == "" {
-		redisURL = "redis://localhost:6379/0"
-	}
-
-	streamName := strings.TrimSpace(os.Getenv("STREAM_NAME"))
-	if streamName == "" {
-		streamName = "download_tasks"
-	}
-	v2StreamName := strings.TrimSpace(os.Getenv("V2_STREAM_NAME"))
-	if v2StreamName == "" {
-		v2StreamName = "download_tasks_v2"
-	}
-
-	consumerGroup := strings.TrimSpace(os.Getenv("CONSUMER_GROUP"))
-	if consumerGroup == "" {
-		consumerGroup = "go-workers"
-	}
-
 	consumerName := strings.TrimSpace(os.Getenv("CONSUMER_NAME"))
 	if consumerName == "" {
 		consumerName = strings.TrimSpace(os.Getenv("HOSTNAME"))
@@ -116,10 +93,6 @@ func LoadFromEnv() (Config, error) {
 	return Config{
 		Addr:             addr,
 		DatabaseURL:      databaseURL,
-		RedisURL:         redisURL,
-		StreamName:       streamName,
-		V2StreamName:     v2StreamName,
-		ConsumerGroup:    consumerGroup,
 		ConsumerName:     consumerName,
 		UpstreamBaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("PYTHON_WEB_BASE_URL")), "/"),
 		InternalToken:    internalToken,

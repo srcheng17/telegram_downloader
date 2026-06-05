@@ -39,7 +39,6 @@ temp_compose_override="$(mktemp)"
 
 mkdir -p \
   "${temp_data_root}/postgres" \
-  "${temp_data_root}/redis" \
   "${temp_data_root}/downloaded_images" \
   "${temp_data_root}/temp_downloads"
 
@@ -48,9 +47,6 @@ services:
   postgres:
     volumes:
       - ${temp_data_root}/postgres:/var/lib/postgresql/data
-  redis:
-    volumes:
-      - ${temp_data_root}/redis:/data
   go-api:
     volumes:
       - ${temp_data_root}/downloaded_images:/app/downloaded_images

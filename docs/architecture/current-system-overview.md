@@ -8,7 +8,7 @@
 2. 目录与模块大致各负责什么；
 3. 请求、任务、日志这些主链路目前是如何串起来的。
 
-该文档描述的是 **2026-03-29 的基线状态**，不是目标架构。
+该文档描述的是 **2026-06-05 的基线状态**，不是目标架构。
 
 ## 运行拓扑
 
@@ -18,19 +18,16 @@
 gateway (nginx)
   -> go-api
        -> postgres
-       -> redis
-  -> go-worker
-       -> postgres
-       -> redis
+go-worker
+  -> postgres
 ```
 
 补充说明：
 
 - `gateway` 是统一对外入口，默认暴露 `APP_PORT=5002`。
 - `go-api` 同时负责页面渲染（首页/日志/设置）与 `/download`、`/api/*`、`/v2/*` 接口。
-- `go-worker` 独立消费 Redis Streams 中的任务消息，并推进任务状态。
-- `postgres` 存储 v2 任务、元数据历史、状态变化相关数据。
-- `redis` 承载 Redis Streams 队列和 consumer group 语义。
+- `go-worker` 通过 PostgreSQL `task_core_*` 表中的 ready 任务、lease、heartbeat 与 recovery 推进任务状态。
+- `postgres` 存储 Task Core 任务、上传任务、元数据历史、设置和状态变化相关数据。
 
 ## 当前目录职责观察
 
@@ -39,7 +36,7 @@ gateway (nginx)
 - `cmd/server/`
   - Go API 入口，负责配置装配、HTTP 路由、legacy/v2 接口和页面服务。
 - `cmd/worker/`
-  - Go worker 入口，负责消费队列、执行任务、上报状态与进度。
+  - Go worker 入口，负责领取 PostgreSQL Task Core 任务、执行任务、上报状态与进度。
 
 ### 后端主要模块
 
@@ -60,11 +57,9 @@ gateway (nginx)
 - `internal/service/`
   - 若干与 artifact / 任务服务相关的运行时能力。
 - `internal/worker/`
-  - worker 执行链路、v2 executor、运行时协调逻辑。
+  - Task Core worker 执行链路、lease heartbeat、过期任务 recovery 与运行时协调逻辑。
 - `internal/store/postgres/`
   - PostgreSQL 仓储与 migrations。
-- `internal/queue/v2/` 与 `internal/queue/redisstream/`
-  - 队列抽象与 Redis Streams 实现。
 
 ### 前端主要模块
 
@@ -87,9 +82,8 @@ gateway (nginx)
 Web Form / /download
   -> internal/httpapi
   -> 可能经过 LegacyAdapter / app/tasks bridge
-  -> internal/httpv2 store 写任务
-  -> queue enqueue
-  -> go-worker 消费
+  -> Task Core service 写入 PostgreSQL
+  -> go-worker 领取 READY 任务并持有 lease
   -> downloader 抓取页面与图片
   -> archive / artifact 生成 CBZ
   -> store 更新状态、进度、结果路径
@@ -101,11 +95,11 @@ Web Form / /download
 ```text
 首页上传初始化
   -> /api/tasks/upload/init
-  -> v2 store 创建 upload task
+  -> Task Core service 创建 upload task
   -> PUT 上传源文件
   -> go-api 落盘并标记 queued
-  -> queue enqueue
-  -> go-worker 解包/重打包/写 ComicInfo.xml
+  -> go-worker 领取 READY 任务
+  -> worker 解包/重打包/写 ComicInfo.xml
   -> store 更新状态与结果
   -> logs 下载或 copy to Komga
 ```
