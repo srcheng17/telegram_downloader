@@ -8,17 +8,19 @@ type StatusMeta struct {
 }
 
 type MetadataInput struct {
-	Author     *string
-	SeriesName *string
-	ComicName  *string
-	Summary    *string
-	TagsRaw    *string
-	GenresRaw  *string
+	Author       *string
+	SeriesName   *string
+	SeriesNumber *string
+	ComicName    *string
+	Summary      *string
+	TagsRaw      *string
+	GenresRaw    *string
 }
 
 type Metadata struct {
 	Author           *string
 	SeriesName       *string
+	SeriesNumber     *string
 	ComicName        *string
 	Summary          *string
 	TagsRaw          *string

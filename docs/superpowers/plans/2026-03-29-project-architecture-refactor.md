@@ -282,7 +282,7 @@ git commit -m "refactor: centralize task status and action rules"
 测试至少覆盖：
 - `作者_系列_漫画名_时间戳.cbz`
 - 无系列时省略系列段
-- 无系列目录时进入 `tanbokon`
+- 无系列目录时进入 `tankobon`
 
 - [ ] **Step 3: Run tests to verify failure**
 

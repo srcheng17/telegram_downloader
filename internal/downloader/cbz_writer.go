@@ -17,6 +17,7 @@ var invalidXML10CharsPattern = regexp.MustCompile("[\x00-\x08\x0B\x0C\x0E-\x1F]"
 type TaskMetadata struct {
 	Writer  string
 	Series  string
+	Number  string
 	Title   string
 	Summary string
 	Tags    string
@@ -32,6 +33,7 @@ type comicInfoXML struct {
 	XMLName xml.Name `xml:"ComicInfo"`
 	Writer  string   `xml:"Writer"`
 	Series  string   `xml:"Series"`
+	Number  string   `xml:"Number"`
 	Title   string   `xml:"Title"`
 	Summary string   `xml:"Summary"`
 	Tags    string   `xml:"Tags"`
@@ -43,6 +45,7 @@ func WriteComicInfoXML(meta TaskMetadata) ([]byte, error) {
 		comicInfoXML{
 			Writer:  sanitizeComicInfoValue(meta.Writer),
 			Series:  sanitizeComicInfoValue(meta.Series),
+			Number:  sanitizeComicInfoValue(meta.Number),
 			Title:   sanitizeComicInfoValue(meta.Title),
 			Summary: sanitizeComicInfoValue(meta.Summary),
 			Tags:    sanitizeComicInfoValue(meta.Tags),

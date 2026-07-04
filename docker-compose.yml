@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-telegraph}
       POSTGRES_USER: ${POSTGRES_USER:-telegraph}
@@ -16,6 +17,7 @@ services:
   go-api:
     build:
       context: .
+    restart: unless-stopped
     environment:
       PORT: "5000"
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
@@ -45,6 +47,7 @@ services:
     build:
       context: .
     entrypoint: ["/app/go-worker"]
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-telegraph}:${POSTGRES_PASSWORD:-telegraph}@postgres:5432/${POSTGRES_DB:-telegraph}?sslmode=disable
       INTERNAL_ENQUEUE_TOKEN: ${INTERNAL_ENQUEUE_TOKEN:?required}
@@ -63,6 +66,7 @@ services:
 
   gateway:
     image: nginx:1.27-alpine
+    restart: unless-stopped
     ports:
       - "${APP_PORT:-5002}:80"
     volumes:

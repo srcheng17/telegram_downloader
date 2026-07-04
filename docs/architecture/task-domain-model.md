@@ -225,7 +225,7 @@ UPLOADING
 
 - 作者 / 标签 / 类型规范化
 - `作者_[系列名]_漫画名_时间戳.cbz` 文件名规则
-- 无系列名时 Komga 放入 `tanbokon`
+- 无系列名时 Komga 放入 `tankobon`
 
 这些规则目前主要散落在：
 - `internal/app/tasks/metadata.go`

@@ -219,11 +219,12 @@ export function createLogsModule(win, doc) {
         return cell;
     }
 
-    function createLinkCell(url) {
+    function createLinkCell(url, label) {
         const cell = doc.createElement('td');
         const value = createValueContainer();
+        const text = String(label || '').trim();
         if (!url) {
-            appendTextValue(value, '');
+            appendTextValue(value, text);
             cell.appendChild(value);
             return cell;
         }
@@ -232,7 +233,7 @@ export function createLogsModule(win, doc) {
         link.href = url;
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
-        link.textContent = (url || '').split('/').pop().split('?')[0] || url;
+        link.textContent = text || (url || '').split('/').pop().split('?')[0] || url;
         value.appendChild(link);
         cell.appendChild(value);
         return cell;
@@ -358,7 +359,7 @@ export function createLogsModule(win, doc) {
             const row = doc.createElement('tr');
             row.appendChild(createCell(view.id));
             row.appendChild(createTaskTypeCell(log));
-            row.appendChild(createLinkCell(view.url));
+            row.appendChild(createLinkCell(view.url, view.urlLabel));
             row.appendChild(createStatusCell(view));
             row.appendChild(createCell(view.progressText));
             row.appendChild(createCell(view.startTimeLabel));

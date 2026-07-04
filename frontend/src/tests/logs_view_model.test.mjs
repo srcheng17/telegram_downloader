@@ -60,6 +60,42 @@ test('mapTaskToLogViewModel prefers backend status label, progress, and availabl
   assert.deepEqual(view.availableActions, ['cancel']);
 });
 
+test('mapTaskToLogViewModel uses artifact filename without generated timestamp as url label', () => {
+  const view = mapTaskToLogViewModel({
+    id: 'task-core-success',
+    task_type: 'url',
+    url: 'https://telegra.ph/raw-url-should-stay-href',
+    artifact_name: '作者A_系列B_漫画C_1700000000.cbz',
+  });
+
+  assert.equal(view.url, 'https://telegra.ph/raw-url-should-stay-href');
+  assert.equal(view.urlLabel, '作者A_系列B_漫画C.cbz');
+});
+
+test('mapTaskToLogViewModel uses result path filename without generated timestamp as url label', () => {
+  const view = mapTaskToLogViewModel({
+    id: 'legacy-success',
+    task_type: 'url',
+    url: 'https://telegra.ph/raw-url-should-stay-href',
+    result_zip_path: '/app/downloaded_images/Author_Series_Title_1700000001.cbz',
+  });
+
+  assert.equal(view.urlLabel, 'Author_Series_Title.cbz');
+});
+
+test('mapTaskToLogViewModel falls back to metadata filename for unfinished url tasks', () => {
+  const view = mapTaskToLogViewModel({
+    id: 'task-core-ready',
+    task_type: 'url',
+    url: 'https://telegra.ph/raw-url-should-stay-href',
+    author: '作者A',
+    series_name: '系列B',
+    comic_name: '漫画C',
+  });
+
+  assert.equal(view.urlLabel, '作者A_系列B_漫画C.cbz');
+});
+
 test('mapTaskToLogViewModel leaves status label empty so catalog fallback can apply', () => {
   const view = mapTaskToLogViewModel({
     id: 'task-catalog-fallback',

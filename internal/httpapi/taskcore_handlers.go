@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -19,6 +20,7 @@ import (
 	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
 	apptasks "github.com/ryancheng/telegram-downloader/internal/app/tasks"
 	domain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
+	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
 )
 
 type TaskCoreService interface {
@@ -32,18 +34,20 @@ type TaskCoreService interface {
 }
 
 type taskCoreHandlers struct {
-	service         TaskCoreService
-	komgaConfigured bool
-	uploadTempDir   string
-	komgaRootDir    string
+	service              TaskCoreService
+	metadataHistoryStore UploadTaskStore
+	komgaConfigured      bool
+	uploadTempDir        string
+	komgaRootDir         string
 }
 
-func newTaskCoreHandlers(service TaskCoreService, komgaConfigured bool, uploadTempDir string, komgaRootDir string) *taskCoreHandlers {
+func newTaskCoreHandlers(service TaskCoreService, metadataHistoryStore UploadTaskStore, komgaConfigured bool, uploadTempDir string, komgaRootDir string) *taskCoreHandlers {
 	return &taskCoreHandlers{
-		service:         service,
-		komgaConfigured: komgaConfigured,
-		uploadTempDir:   strings.TrimSpace(uploadTempDir),
-		komgaRootDir:    strings.TrimSpace(komgaRootDir),
+		service:              service,
+		metadataHistoryStore: metadataHistoryStore,
+		komgaConfigured:      komgaConfigured,
+		uploadTempDir:        strings.TrimSpace(uploadTempDir),
+		komgaRootDir:         strings.TrimSpace(komgaRootDir),
 	}
 }
 
@@ -84,6 +88,7 @@ func (h *taskCoreHandlers) handleCreateURLTask(w http.ResponseWriter, r *http.Re
 		h.writeServiceError(w, err)
 		return
 	}
+	h.recordMetadataHistory(r.Context(), "url", rawURL, metadata)
 
 	view := app.TaskView{
 		Task:     task,
@@ -244,6 +249,8 @@ func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Reque
 		h.writeServiceError(w, err)
 		return
 	}
+	h.recordMetadataHistory(r.Context(), "upload", "", metadata)
+
 	view := app.TaskView{
 		Task:     task,
 		Input:    app.Input{TaskID: task.ID, Metadata: taskCoreMetadataMap(metadata)},
@@ -407,6 +414,7 @@ func taskCoreMetadataMap(metadata downloadMetadata) map[string]string {
 	}
 	putOptional("author", metadata.author)
 	putOptional("series_name", metadata.seriesName)
+	putOptional("series_number", metadata.seriesNumber)
 	putOptional("comic_name", metadata.comicName)
 	putOptional("summary", metadata.summary)
 	putOptional("tags", metadata.tagsRaw)
@@ -414,6 +422,70 @@ func taskCoreMetadataMap(metadata downloadMetadata) map[string]string {
 	putOptional("genres", metadata.genresRaw)
 	putOptional("genres_normalized", metadata.genresNormalized)
 	return out
+}
+
+func (h *taskCoreHandlers) recordMetadataHistory(ctx context.Context, taskType string, rawURL string, metadata downloadMetadata) {
+	if h.metadataHistoryStore == nil {
+		return
+	}
+	entry := taskCoreMetadataHistoryEntry(taskType, rawURL, metadata)
+	if !taskCoreMetadataHistoryHasMetadata(entry) {
+		return
+	}
+
+	entries, err := h.metadataHistoryStore.ListMetadataHistory(ctx, 20)
+	if err != nil {
+		log.Printf("metadata history duplicate check failed: %v", err)
+		return
+	}
+	for _, existing := range entries {
+		if sameTaskCoreMetadataHistoryEntry(existing, entry) {
+			return
+		}
+	}
+	if err := h.metadataHistoryStore.InsertMetadataHistory(ctx, entry); err != nil {
+		log.Printf("metadata history insert failed: %v", err)
+	}
+}
+
+func taskCoreMetadataHistoryEntry(taskType string, rawURL string, metadata downloadMetadata) postgres.MetadataHistoryEntry {
+	normalizedTaskType := strings.ToLower(strings.TrimSpace(taskType))
+	entry := postgres.MetadataHistoryEntry{
+		TaskType:     normalizedTaskType,
+		Author:       optionalString(stringValue(metadata.author)),
+		SeriesName:   optionalString(stringValue(metadata.seriesName)),
+		SeriesNumber: optionalString(stringValue(metadata.seriesNumber)),
+		ComicName:    optionalString(stringValue(metadata.comicName)),
+		Summary:      optionalString(stringValue(metadata.summary)),
+		Tags:         optionalString(stringValue(metadata.tagsRaw)),
+		Genres:       optionalString(stringValue(metadata.genresRaw)),
+	}
+	if normalizedTaskType == "url" {
+		entry.URL = optionalString(rawURL)
+	}
+	return entry
+}
+
+func taskCoreMetadataHistoryHasMetadata(entry postgres.MetadataHistoryEntry) bool {
+	return stringValue(entry.Author) != "" ||
+		stringValue(entry.SeriesName) != "" ||
+		stringValue(entry.SeriesNumber) != "" ||
+		stringValue(entry.ComicName) != "" ||
+		stringValue(entry.Summary) != "" ||
+		stringValue(entry.Tags) != "" ||
+		stringValue(entry.Genres) != ""
+}
+
+func sameTaskCoreMetadataHistoryEntry(left postgres.MetadataHistoryEntry, right postgres.MetadataHistoryEntry) bool {
+	return strings.EqualFold(strings.TrimSpace(left.TaskType), strings.TrimSpace(right.TaskType)) &&
+		stringValue(left.URL) == stringValue(right.URL) &&
+		stringValue(left.Author) == stringValue(right.Author) &&
+		stringValue(left.SeriesName) == stringValue(right.SeriesName) &&
+		stringValue(left.SeriesNumber) == stringValue(right.SeriesNumber) &&
+		stringValue(left.ComicName) == stringValue(right.ComicName) &&
+		stringValue(left.Summary) == stringValue(right.Summary) &&
+		stringValue(left.Tags) == stringValue(right.Tags) &&
+		stringValue(left.Genres) == stringValue(right.Genres)
 }
 
 func taskCoreActionAvailable(view app.TaskView, action domain.Action, komgaConfigured bool) bool {

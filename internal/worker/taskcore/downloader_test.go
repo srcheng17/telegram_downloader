@@ -26,6 +26,7 @@ func TestTaskDownloaderUsesTaskCoreInputAndMetadata(t *testing.T) {
 				Metadata: map[string]string{
 					"author":            "Author",
 					"series_name":       "Series",
+					"series_number":     "3",
 					"comic_name":        "Title",
 					"summary":           "Summary",
 					"tags":              "raw-tag",
@@ -59,6 +60,7 @@ func TestTaskDownloaderUsesTaskCoreInputAndMetadata(t *testing.T) {
 	wantMetadata := godownloader.TaskMetadata{
 		Writer:  "Author",
 		Series:  "Series",
+		Number:  "3",
 		Title:   "Title",
 		Summary: "Summary",
 		Tags:    "normalized-tag",

@@ -13,15 +13,16 @@ const (
 )
 
 type MetadataHistoryEntry struct {
-	TaskType   string    `json:"task_type"`
-	URL        *string   `json:"url,omitempty"`
-	Author     *string   `json:"author,omitempty"`
-	SeriesName *string   `json:"series_name,omitempty"`
-	ComicName  *string   `json:"comic_name,omitempty"`
-	Summary    *string   `json:"summary,omitempty"`
-	Tags       *string   `json:"tags,omitempty"`
-	Genres     *string   `json:"genres,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	TaskType     string    `json:"task_type"`
+	URL          *string   `json:"url,omitempty"`
+	Author       *string   `json:"author,omitempty"`
+	SeriesName   *string   `json:"series_name,omitempty"`
+	SeriesNumber *string   `json:"series_number,omitempty"`
+	ComicName    *string   `json:"comic_name,omitempty"`
+	Summary      *string   `json:"summary,omitempty"`
+	Tags         *string   `json:"tags,omitempty"`
+	Genres       *string   `json:"genres,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type metadataHistoryRowScanner interface {
@@ -35,6 +36,7 @@ func scanMetadataHistoryEntry(scanner metadataHistoryRowScanner) (MetadataHistor
 		&entry.URL,
 		&entry.Author,
 		&entry.SeriesName,
+		&entry.SeriesNumber,
 		&entry.ComicName,
 		&entry.Summary,
 		&entry.Tags,
@@ -69,19 +71,22 @@ func (s *UploadTaskStore) InsertMetadataHistory(ctx context.Context, entry Metad
 			url,
 			author,
 			series_name,
+			series_number,
 			comic_name,
 			summary,
 			tags,
 			genres,
 			created_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, NOW()
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()
 		)
+		ON CONFLICT DO NOTHING
 		`,
 		strings.TrimSpace(entry.TaskType),
 		entry.URL,
 		entry.Author,
 		entry.SeriesName,
+		entry.SeriesNumber,
 		entry.ComicName,
 		entry.Summary,
 		entry.Tags,
@@ -102,6 +107,7 @@ func (s *UploadTaskStore) ListMetadataHistory(ctx context.Context, limit int) ([
 			url,
 			author,
 			series_name,
+			series_number,
 			comic_name,
 			summary,
 			tags,

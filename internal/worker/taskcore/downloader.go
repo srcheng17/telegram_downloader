@@ -148,6 +148,7 @@ func metadataFromInput(input app.Input) godownloader.TaskMetadata {
 	return godownloader.TaskMetadata{
 		Writer:  metadataValue(metadata, "author"),
 		Series:  metadataValue(metadata, "series_name"),
+		Number:  metadataValue(metadata, "series_number"),
 		Title:   metadataValue(metadata, "comic_name"),
 		Summary: metadataValue(metadata, "summary"),
 		Tags: firstNonEmpty(

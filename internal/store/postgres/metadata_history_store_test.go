@@ -1,8 +1,13 @@
 package postgres
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type fakeMetadataHistoryRow struct {
@@ -18,7 +23,8 @@ func (f fakeMetadataHistoryRow) Scan(dest ...any) error {
 	*dest[5].(**string) = cloneMetadataHistoryString(f.values[5].(*string))
 	*dest[6].(**string) = cloneMetadataHistoryString(f.values[6].(*string))
 	*dest[7].(**string) = cloneMetadataHistoryString(f.values[7].(*string))
-	*dest[8].(*time.Time) = f.values[8].(time.Time)
+	*dest[8].(**string) = cloneMetadataHistoryString(f.values[8].(*string))
+	*dest[9].(*time.Time) = f.values[9].(time.Time)
 	return nil
 }
 
@@ -30,6 +36,7 @@ func TestScanMetadataHistoryEntryPreservesTaskTypeAndURL(t *testing.T) {
 			stringPtr("https://telegra.ph/demo"),
 			stringPtr("作者A"),
 			stringPtr("系列B"),
+			stringPtr("3"),
 			stringPtr("漫画C"),
 			stringPtr("简介D"),
 			stringPtr("tag1,tag2"),
@@ -51,8 +58,34 @@ func TestScanMetadataHistoryEntryPreservesTaskTypeAndURL(t *testing.T) {
 	if entry.Author == nil || *entry.Author != "作者A" {
 		t.Fatalf("expected author preserved, got %#v", entry.Author)
 	}
+	if entry.SeriesName == nil || *entry.SeriesName != "系列B" {
+		t.Fatalf("expected series_name preserved, got %#v", entry.SeriesName)
+	}
+	if entry.SeriesNumber == nil || *entry.SeriesNumber != "3" {
+		t.Fatalf("expected series_number preserved, got %#v", entry.SeriesNumber)
+	}
 	if !entry.CreatedAt.Equal(now) {
 		t.Fatalf("expected created_at %v, got %v", now, entry.CreatedAt)
+	}
+}
+
+func TestInsertMetadataHistoryUsesConflictGuard(t *testing.T) {
+	executor := &recordingMetadataHistoryExecutor{}
+	store := &UploadTaskStore{db: executor}
+
+	err := store.InsertMetadataHistory(context.Background(), MetadataHistoryEntry{
+		TaskType:   "url",
+		URL:        stringPtr("https://telegra.ph/demo"),
+		Author:     stringPtr("作者A"),
+		SeriesName: stringPtr("系列B"),
+		ComicName:  stringPtr("漫画C"),
+	})
+
+	if err != nil {
+		t.Fatalf("insert metadata history: %v", err)
+	}
+	if !strings.Contains(executor.query, "ON CONFLICT DO NOTHING") {
+		t.Fatalf("expected duplicate conflict guard in insert query, got %s", executor.query)
 	}
 }
 
@@ -62,4 +95,25 @@ func cloneMetadataHistoryString(value *string) *string {
 	}
 	copied := *value
 	return &copied
+}
+
+type recordingMetadataHistoryExecutor struct {
+	query string
+}
+
+func (r *recordingMetadataHistoryExecutor) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	r.query = sql
+	return pgconn.CommandTag{}, nil
+}
+
+func (r *recordingMetadataHistoryExecutor) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, nil
+}
+
+func (r *recordingMetadataHistoryExecutor) QueryRow(context.Context, string, ...any) pgx.Row {
+	return nil
+}
+
+func (r *recordingMetadataHistoryExecutor) Begin(context.Context) (pgx.Tx, error) {
+	return nil, nil
 }

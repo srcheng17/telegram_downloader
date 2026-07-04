@@ -13,6 +13,7 @@ import (
 
 	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
 	domain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
+	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
 )
 
 func TestTaskCoreHandlersCreateURLTask(t *testing.T) {
@@ -36,6 +37,112 @@ func TestTaskCoreHandlersCreateURLTask(t *testing.T) {
 	if svc.createdTask.Status != domain.StatusReady {
 		t.Fatalf("created status = %q, want READY", svc.createdTask.Status)
 	}
+}
+
+func TestTaskCoreHandlersCreateURLTaskRecordsMetadataHistory(t *testing.T) {
+	svc := &fakeTaskCoreHTTPService{createURLStatus: domain.StatusReady}
+	historyStore := &recordingTaskCoreMetadataHistoryStore{}
+	router := newTaskCoreTestRouterWithOptions(t, svc, RouterOptions{UploadTaskStore: historyStore})
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/download",
+		strings.NewReader("url=https%3A%2F%2Ftelegra.ph%2Fdemo&author=%E4%BD%9C%E8%80%85A&series_name=%E7%B3%BB%E5%88%97B&series_number=3&comic_name=%E6%BC%AB%E7%94%BBC&summary=%E7%AE%80%E4%BB%8BD&tags=tag1&genres=genre1"),
+	)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(historyStore.inserted) != 1 {
+		t.Fatalf("expected one metadata history entry, got %#v", historyStore.inserted)
+	}
+	entry := historyStore.inserted[0]
+	if entry.TaskType != "url" {
+		t.Fatalf("task_type = %q, want url", entry.TaskType)
+	}
+	assertOptionalHistoryValue(t, entry.URL, "https://telegra.ph/demo", "url")
+	assertOptionalHistoryValue(t, entry.Author, "作者A", "author")
+	assertOptionalHistoryValue(t, entry.SeriesName, "系列B", "series_name")
+	assertOptionalHistoryValue(t, entry.SeriesNumber, "3", "series_number")
+	assertOptionalHistoryValue(t, entry.ComicName, "漫画C", "comic_name")
+	assertOptionalHistoryValue(t, entry.Summary, "简介D", "summary")
+	assertOptionalHistoryValue(t, entry.Tags, "tag1", "tags")
+	assertOptionalHistoryValue(t, entry.Genres, "genre1", "genres")
+	if svc.createdURL.Metadata["series_number"] != "3" {
+		t.Fatalf("created metadata series_number = %q, want 3", svc.createdURL.Metadata["series_number"])
+	}
+}
+
+func TestTaskCoreHandlersCreateURLTaskSkipsDuplicateMetadataHistory(t *testing.T) {
+	svc := &fakeTaskCoreHTTPService{createURLStatus: domain.StatusReady}
+	historyStore := &recordingTaskCoreMetadataHistoryStore{
+		entries: []postgres.MetadataHistoryEntry{
+			{
+				TaskType:     "url",
+				URL:          stringPtr("https://telegra.ph/demo"),
+				Author:       stringPtr("作者A"),
+				SeriesName:   stringPtr("系列B"),
+				SeriesNumber: stringPtr("3"),
+				ComicName:    stringPtr("漫画C"),
+			},
+		},
+	}
+	router := newTaskCoreTestRouterWithOptions(t, svc, RouterOptions{UploadTaskStore: historyStore})
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/download",
+		strings.NewReader("url=https%3A%2F%2Ftelegra.ph%2Fdemo&author=%E4%BD%9C%E8%80%85A&series_name=%E7%B3%BB%E5%88%97B&series_number=3&comic_name=%E6%BC%AB%E7%94%BBC"),
+	)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(historyStore.inserted) != 0 {
+		t.Fatalf("expected duplicate metadata history to be skipped, inserted %#v", historyStore.inserted)
+	}
+}
+
+func TestTaskCoreHandlersUploadInitRecordsMetadataHistory(t *testing.T) {
+	svc := &fakeTaskCoreHTTPService{}
+	historyStore := &recordingTaskCoreMetadataHistoryStore{}
+	router := newTaskCoreTestRouterWithOptions(t, svc, RouterOptions{UploadTaskStore: historyStore})
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/tasks/upload/init",
+		strings.NewReader(`{"file_name":"demo.zip","author":"上传作者","series_name":"上传系列","series_number":"4","comic_name":"上传漫画","summary":"上传简介","tags":"上传标签","genres":"上传类型"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(historyStore.inserted) != 1 {
+		t.Fatalf("expected one metadata history entry, got %#v", historyStore.inserted)
+	}
+	entry := historyStore.inserted[0]
+	if entry.TaskType != "upload" {
+		t.Fatalf("task_type = %q, want upload", entry.TaskType)
+	}
+	if entry.URL != nil {
+		t.Fatalf("upload metadata history URL = %#v, want nil", entry.URL)
+	}
+	assertOptionalHistoryValue(t, entry.Author, "上传作者", "author")
+	assertOptionalHistoryValue(t, entry.SeriesName, "上传系列", "series_name")
+	assertOptionalHistoryValue(t, entry.SeriesNumber, "4", "series_number")
+	assertOptionalHistoryValue(t, entry.ComicName, "上传漫画", "comic_name")
+	assertOptionalHistoryValue(t, entry.Summary, "上传简介", "summary")
+	assertOptionalHistoryValue(t, entry.Tags, "上传标签", "tags")
+	assertOptionalHistoryValue(t, entry.Genres, "上传类型", "genres")
 }
 
 func TestTaskCoreHandlersLogsUseTaskCoreListTasks(t *testing.T) {
@@ -382,6 +489,7 @@ func newTaskCoreTestRouterWithOptions(t *testing.T, svc *fakeTaskCoreHTTPService
 	options.TaskCoreService = svc
 	return NewRouterWithOptions(&fakeTaskReader{}, RouterOptions{
 		TaskCoreService: options.TaskCoreService,
+		UploadTaskStore: options.UploadTaskStore,
 		KomgaRootDir:    options.KomgaRootDir,
 		UploadTempDir:   options.UploadTempDir,
 	})
@@ -476,5 +584,50 @@ func assertDirEmpty(t *testing.T, dir string) {
 			names = append(names, entry.Name())
 		}
 		t.Fatalf("temp dir contains files: %v", names)
+	}
+}
+
+type recordingTaskCoreMetadataHistoryStore struct {
+	entries  []postgres.MetadataHistoryEntry
+	inserted []postgres.MetadataHistoryEntry
+}
+
+func (f *recordingTaskCoreMetadataHistoryStore) CreateUploadTask(context.Context, postgres.CreateTaskInput) (postgres.TaskRecord, error) {
+	return postgres.TaskRecord{}, nil
+}
+
+func (f *recordingTaskCoreMetadataHistoryStore) GetTask(context.Context, string) (*postgres.TaskRecord, error) {
+	return nil, nil
+}
+
+func (f *recordingTaskCoreMetadataHistoryStore) UpdateUploadProgress(context.Context, string, int64, int64) error {
+	return nil
+}
+
+func (f *recordingTaskCoreMetadataHistoryStore) MarkUploadTaskQueued(context.Context, string, string, int64) error {
+	return nil
+}
+
+func (f *recordingTaskCoreMetadataHistoryStore) MarkTaskFailed(context.Context, string, string) error {
+	return nil
+}
+
+func (f *recordingTaskCoreMetadataHistoryStore) RetryUploadTask(context.Context, string, string) error {
+	return nil
+}
+
+func (f *recordingTaskCoreMetadataHistoryStore) InsertMetadataHistory(_ context.Context, entry postgres.MetadataHistoryEntry) error {
+	f.inserted = append(f.inserted, entry)
+	return nil
+}
+
+func (f *recordingTaskCoreMetadataHistoryStore) ListMetadataHistory(context.Context, int) ([]postgres.MetadataHistoryEntry, error) {
+	return append([]postgres.MetadataHistoryEntry(nil), f.entries...), nil
+}
+
+func assertOptionalHistoryValue(t *testing.T, actual *string, want string, field string) {
+	t.Helper()
+	if actual == nil || *actual != want {
+		t.Fatalf("%s = %#v, want %q", field, actual, want)
 	}
 }

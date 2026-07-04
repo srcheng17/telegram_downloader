@@ -8,6 +8,7 @@ func NormalizeMetadata(input MetadataInput) Metadata {
 	return Metadata{
 		Author:           domainmetadata.NormalizeAuthorListPtr(input.Author),
 		SeriesName:       domainmetadata.NormalizeOptionalTextPtr(input.SeriesName),
+		SeriesNumber:     domainmetadata.NormalizeOptionalTextPtr(input.SeriesNumber),
 		ComicName:        domainmetadata.NormalizeOptionalTextPtr(input.ComicName),
 		Summary:          domainmetadata.NormalizeOptionalTextPtr(input.Summary),
 		TagsRaw:          domainmetadata.NormalizeOptionalTextPtr(input.TagsRaw),

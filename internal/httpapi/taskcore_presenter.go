@@ -32,6 +32,7 @@ type taskCoreView struct {
 	Error             string               `json:"error,omitempty"`
 	Author            string               `json:"author,omitempty"`
 	SeriesName        string               `json:"series_name,omitempty"`
+	SeriesNumber      string               `json:"series_number,omitempty"`
 	ComicName         string               `json:"comic_name,omitempty"`
 	Summary           string               `json:"summary,omitempty"`
 	TagsRaw           string               `json:"tags_raw,omitempty"`
@@ -76,6 +77,7 @@ func presentTaskCoreView(view app.TaskView, komgaConfigured bool) taskCoreView {
 	}
 	out.Author = metadataViewValue(view.Input.Metadata, "author")
 	out.SeriesName = metadataViewValue(view.Input.Metadata, "series_name")
+	out.SeriesNumber = metadataViewValue(view.Input.Metadata, "series_number")
 	out.ComicName = metadataViewValue(view.Input.Metadata, "comic_name")
 	out.Summary = metadataViewValue(view.Input.Metadata, "summary")
 	out.TagsRaw = metadataViewValue(view.Input.Metadata, "tags")

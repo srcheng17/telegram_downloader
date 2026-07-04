@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func TestTargetSubdirFallsBackToTanbokonWhenSeriesMissing(t *testing.T) {
+func TestTargetSubdirFallsBackToTankobonWhenSeriesMissing(t *testing.T) {
 	t.Parallel()
 
-	if got := TargetSubdir(""); got != "tanbokon" {
-		t.Fatalf("expected tanbokon fallback, got %q", got)
+	if got := TargetSubdir(""); got != "tankobon" {
+		t.Fatalf("expected tankobon fallback, got %q", got)
 	}
 }
 
@@ -26,4 +26,3 @@ func TestBuildTargetPathUsesSeriesDirectoryWhenPresent(t *testing.T) {
 		t.Fatalf("expected path %q, got %q", want, got)
 	}
 }
-

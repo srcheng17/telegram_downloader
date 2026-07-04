@@ -133,7 +133,7 @@ legacy 日志层再映射为页面使用的中文/兼容状态值。
 - 日志页点击下载动作时，实际触发 copy 接口；
 - 目标目录根据系列名决定：
   - 有系列名：`<root>/<series>/file.cbz`
-  - 无系列名：`<root>/tanbokon/file.cbz`
+  - 无系列名：`<root>/tankobon/file.cbz`
 
 ## 当前已知易变点
 

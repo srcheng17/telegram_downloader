@@ -507,7 +507,7 @@ func TestRetryUploadTaskRequeuesFailedTaskWithoutCreatingNewID(t *testing.T) {
     // POST /api/tasks/{id}/retry should keep the same task ID and move FAILED(upload) back to QUEUED.
 }
 
-func TestCopyToKomgaUsesSeriesFolderOrTanbokon(t *testing.T) {
+func TestCopyToKomgaUsesSeriesFolderOrTankobon(t *testing.T) {
     copier := NewKomgaCopier(KomgaCopyConfig{
         Root: "/Users/ryancheng/docker_data/komga/data/myReadingManga",
     })
@@ -523,7 +523,7 @@ func TestCopyToKomgaUsesSeriesFolderOrTanbokon(t *testing.T) {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `go test ./internal/app/tasks ./internal/httpapi -run 'Test(RetryUploadTaskRequeuesFailedTaskWithoutCreatingNewID|CopyToKomgaUsesSeriesFolderOrTanbokon)' -count=1`
+Run: `go test ./internal/app/tasks ./internal/httpapi -run 'Test(RetryUploadTaskRequeuesFailedTaskWithoutCreatingNewID|CopyToKomgaUsesSeriesFolderOrTankobon)' -count=1`
 Expected: FAIL because there is no retry route or Komga copy helper.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -541,7 +541,7 @@ func targetSubdir(seriesName string) string {
     if strings.TrimSpace(seriesName) != "" {
         return sanitizeOptionalFilenamePart(seriesName)
     }
-    return "tanbokon"
+    return "tankobon"
 }
 ```
 
@@ -550,7 +550,7 @@ func targetSubdir(seriesName string) string {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `go test ./internal/app/tasks ./internal/httpapi -run 'Test(RetryUploadTaskRequeuesFailedTaskWithoutCreatingNewID|CopyToKomgaUsesSeriesFolderOrTanbokon)' -count=1`
+Run: `go test ./internal/app/tasks ./internal/httpapi -run 'Test(RetryUploadTaskRequeuesFailedTaskWithoutCreatingNewID|CopyToKomgaUsesSeriesFolderOrTankobon)' -count=1`
 Expected: PASS
 
 - [ ] **Step 5: Run the broader action regression**
@@ -764,7 +764,7 @@ git commit -m "feat(ui): add upload-aware logs and komga action mode"
 - [ ] `npm run test:frontend`
 - [ ] `npm run build`
 - [ ] `npx playwright test tests/e2e/specs/logs-flow.spec.js tests/e2e/specs/settings.spec.js tests/e2e/specs/upload-flow.spec.js`
-- [ ] Manually verify `/Users/ryancheng/docker_data/komga/data/myReadingManga` remains the active fixed root and that `系列名/` vs `tanbokon/` routing matches the stored metadata
+- [ ] Manually verify `/Users/ryancheng/docker_data/komga/data/myReadingManga` remains the active fixed root and that `系列名/` vs `tankobon/` routing matches the stored metadata
 - [ ] Confirm successful upload tasks delete `source_archive_path`, while failed upload tasks keep it until cleanup/retry
 
 ## Handoff notes

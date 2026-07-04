@@ -23,6 +23,7 @@ export function applyHistoryEntryToForm(form, entry) {
 
     setControlValue(form, 'author', resolved.author);
     setControlValue(form, 'series_name', resolved.series_name);
+    setControlValue(form, 'series_number', resolved.series_number);
     setControlValue(form, 'comic_name', resolved.comic_name);
     setControlValue(form, 'summary', resolved.summary);
     setControlValue(form, 'tags', resolved.tags);

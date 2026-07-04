@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const DefaultFallbackDir = "tanbokon"
+const DefaultFallbackDir = "tankobon"
 
 var invalidKomgaPathCharsPattern = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1F]`)
 
@@ -44,4 +44,3 @@ func sanitizePathSegment(value string) string {
 	}
 	return normalized
 }
-

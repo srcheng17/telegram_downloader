@@ -13,6 +13,7 @@ import (
 type downloadMetadata struct {
 	author           *string
 	seriesName       *string
+	seriesNumber     *string
 	comicName        *string
 	summary          *string
 	tagsRaw          *string
@@ -52,17 +53,19 @@ func extractFromMap(payload map[string]any) (string, bool, downloadMetadata) {
 	tagsRaw := normalizePayloadText(payload["tags"], maxMetadataFieldLength)
 	genresRaw := normalizePayloadText(payload["genres"], maxMetadataFieldLength)
 	normalized := apptasks.NormalizeMetadata(apptasks.MetadataInput{
-		Author:     optionalString(rawAuthor),
-		SeriesName: optionalString(normalizePayloadText(payload["series_name"], maxMetadataFieldLength)),
-		ComicName:  optionalString(normalizePayloadText(payload["comic_name"], maxMetadataFieldLength)),
-		Summary:    optionalString(normalizePayloadText(payload["summary"], maxMetadataFieldLength)),
-		TagsRaw:    optionalString(tagsRaw),
-		GenresRaw:  optionalString(genresRaw),
+		Author:       optionalString(rawAuthor),
+		SeriesName:   optionalString(normalizePayloadText(payload["series_name"], maxMetadataFieldLength)),
+		SeriesNumber: optionalString(normalizePayloadText(payload["series_number"], maxMetadataFieldLength)),
+		ComicName:    optionalString(normalizePayloadText(payload["comic_name"], maxMetadataFieldLength)),
+		Summary:      optionalString(normalizePayloadText(payload["summary"], maxMetadataFieldLength)),
+		TagsRaw:      optionalString(tagsRaw),
+		GenresRaw:    optionalString(genresRaw),
 	})
 
 	metadata := downloadMetadata{
 		author:           normalized.Author,
 		seriesName:       normalized.SeriesName,
+		seriesNumber:     normalized.SeriesNumber,
 		comicName:        normalized.ComicName,
 		summary:          normalized.Summary,
 		tagsRaw:          normalized.TagsRaw,

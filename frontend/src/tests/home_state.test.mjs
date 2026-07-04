@@ -9,6 +9,7 @@ test('collectMetadataPayload reads trimmed metadata fields', () => {
       const values = {
         '[name="author"]': { value: ' 作者A ' },
         '[name="series_name"]': { value: ' 系列B ' },
+        '[name="series_number"]': { value: ' 3 ' },
         '[name="comic_name"]': { value: ' 漫画C ' },
         '[name="summary"]': { value: ' 简介D ' },
         '[name="tags"]': { value: ' tag1 ' },
@@ -20,6 +21,7 @@ test('collectMetadataPayload reads trimmed metadata fields', () => {
   assert.deepEqual(collectMetadataPayload(form), {
     author: '作者A',
     series_name: '系列B',
+    series_number: '3',
     comic_name: '漫画C',
     summary: '简介D',
     tags: 'tag1',
@@ -34,6 +36,7 @@ test('collectFormPayload includes force field when present', () => {
         '[name="url"]': { value: ' https://telegra.ph/demo ' },
         '[name="author"]': { value: ' 作者A ' },
         '[name="series_name"]': { value: '' },
+        '[name="series_number"]': { value: '' },
         '[name="comic_name"]': { value: '' },
         '[name="summary"]': { value: '' },
         '[name="tags"]': { value: '' },
@@ -47,6 +50,7 @@ test('collectFormPayload includes force field when present', () => {
     url: 'https://telegra.ph/demo',
     author: '作者A',
     series_name: '',
+    series_number: '',
     comic_name: '',
     summary: '',
     tags: '',
@@ -54,4 +58,3 @@ test('collectFormPayload includes force field when present', () => {
     force: 'true',
   });
 });
-

@@ -137,7 +137,8 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	assertContains(t, body, `hx-target="#content"`)
 	assertContains(t, body, `hx-push-url="true"`)
 	assertContains(t, body, "最近 20 条填写的元数据")
-	assertContains(t, body, `id="metadata-history-collapsible" class="summary-collapsible metadata-history-panel" open`)
+	assertContains(t, body, `id="metadata-history-collapsible" class="summary-collapsible metadata-history-panel"`)
+	assertNotContains(t, body, `id="metadata-history-collapsible" class="summary-collapsible metadata-history-panel" open`)
 	assertContains(t, body, "点击最近记录回填元数据")
 	assertContains(t, body, "URL 下载")
 	assertContains(t, body, "上传压缩包")
@@ -337,6 +338,32 @@ func TestStaticRouteUsesConfiguredStaticDir(t *testing.T) {
 	}
 	if body := recorder.Body.String(); body != "configured-static-dir" {
 		t.Fatalf("expected body %q, got %q", "configured-static-dir", body)
+	}
+}
+
+func TestStaticDistRouteDisablesBrowserCacheForStableBundleNames(t *testing.T) {
+	staticDir := t.TempDir()
+	distDir := filepath.Join(staticDir, "dist")
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		t.Fatalf("create dist dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(distDir, "logs.bundle.js"), []byte("console.log('fresh')"), 0o644); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+
+	router := NewRouterWithConfig(Config{
+		StaticDir: staticDir,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/static/dist/logs.bundle.js", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-cache, no-store, must-revalidate" {
+		t.Fatalf("expected Cache-Control to disable stale bundle reuse, got %q", got)
 	}
 }
 

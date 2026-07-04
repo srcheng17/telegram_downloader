@@ -39,7 +39,7 @@
   - `komga_copy`：复制到 Komga
 - Komga 根目录固定为：
   - `/Users/ryancheng/docker_data/komga/data/myReadingManga`
-- 若有系列名，复制到系列目录；若无系列名，复制到 `tanbokon/`。
+- 若有系列名，复制到系列目录；若无系列名，复制到 `tankobon/`。
 - 该 Komga 路径已在 **2026-03-18** 的当前开发环境中确认存在，但运行时仍要逐次校验目录可写与文件复制结果。
 - 新的 CBZ 文件名规则为：
   - `作者_系列名_漫画名_时间戳.cbz`
@@ -464,7 +464,7 @@ Komga 根目录固定为：
 - 有系列名：
   - `myReadingManga/<系列名>/<文件名>.cbz`
 - 无系列名：
-  - `myReadingManga/tanbokon/<文件名>.cbz`
+  - `myReadingManga/tankobon/<文件名>.cbz`
 
 若目标目录不存在，则自动创建。
 

@@ -17,6 +17,7 @@ func TestCBZContainsComicInfoMetadata(t *testing.T) {
 	comicInfo, err := WriteComicInfoXML(TaskMetadata{
 		Writer:  "Author",
 		Series:  "Series Name",
+		Number:  "3",
 		Title:   "Comic Title",
 		Summary: "A summary",
 		Tags:    "tag1,tag2",
@@ -48,6 +49,7 @@ func TestCBZContainsComicInfoMetadata(t *testing.T) {
 		XMLName xml.Name `xml:"ComicInfo"`
 		Writer  string   `xml:"Writer"`
 		Series  string   `xml:"Series"`
+		Number  string   `xml:"Number"`
 		Title   string   `xml:"Title"`
 		Summary string   `xml:"Summary"`
 		Tags    string   `xml:"Tags"`
@@ -62,6 +64,9 @@ func TestCBZContainsComicInfoMetadata(t *testing.T) {
 	}
 	if payload.Series != "Series Name" {
 		t.Fatalf("expected Series=Series Name, got %q", payload.Series)
+	}
+	if payload.Number != "3" {
+		t.Fatalf("expected Number=3, got %q", payload.Number)
 	}
 	if payload.Title != "Comic Title" {
 		t.Fatalf("expected Title=Comic Title, got %q", payload.Title)

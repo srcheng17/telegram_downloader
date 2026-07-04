@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestKomgaCopierUsesSeriesFolderOrTanbokon(t *testing.T) {
+func TestKomgaCopierUsesSeriesFolderOrTankobon(t *testing.T) {
 	root := t.TempDir()
 	copier := NewKomgaCopier(KomgaCopyConfig{Root: root})
 
@@ -19,12 +19,12 @@ func TestKomgaCopierUsesSeriesFolderOrTanbokon(t *testing.T) {
 		t.Fatalf("unexpected series target path %q", seriesTarget)
 	}
 
-	tanbokonTarget, err := copier.TargetPath("demo.cbz", "")
+	tankobonTarget, err := copier.TargetPath("demo.cbz", "")
 	if err != nil {
 		t.Fatalf("target path without series: %v", err)
 	}
-	if !strings.Contains(tanbokonTarget, filepath.Join(root, "tanbokon", "demo.cbz")) {
-		t.Fatalf("unexpected tanbokon target path %q", tanbokonTarget)
+	if !strings.Contains(tankobonTarget, filepath.Join(root, "tankobon", "demo.cbz")) {
+		t.Fatalf("unexpected tankobon target path %q", tankobonTarget)
 	}
 }
 

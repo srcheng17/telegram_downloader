@@ -28,6 +28,7 @@ export function collectMetadataPayload(form) {
     return {
         author: readOptionalField(form, 'author'),
         series_name: readOptionalField(form, 'series_name'),
+        series_number: readOptionalField(form, 'series_number'),
         comic_name: readOptionalField(form, 'comic_name'),
         summary: readOptionalField(form, 'summary'),
         tags: readOptionalField(form, 'tags'),
@@ -46,4 +47,3 @@ export function collectFormPayload(form) {
     }
     return payload;
 }
-

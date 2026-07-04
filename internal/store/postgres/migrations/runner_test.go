@@ -99,6 +99,90 @@ func TestListMigrationVersionsIncludesTaskCoreSchema(t *testing.T) {
 	}
 }
 
+func TestRunnerApplies012TaskCoreMetadataHistoryBackfill(t *testing.T) {
+	const version012 = "012_task_core_metadata_history_backfill.sql"
+
+	versions, err := listMigrationVersions()
+	if err != nil {
+		t.Fatalf("list migration versions: %v", err)
+	}
+
+	hasMigration := false
+	for _, version := range versions {
+		if version == version012 {
+			hasMigration = true
+			break
+		}
+	}
+	if !hasMigration {
+		t.Fatalf("expected task core metadata history backfill migration to be listed, got %#v", versions)
+	}
+
+	executor := newFakeMigrationExecutor()
+	if err := Run(context.Background(), executor); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	if _, ok := executor.appliedVersions[version012]; !ok {
+		t.Fatalf("expected version %q to be recorded as applied, got %#v", version012, executor.appliedVersions)
+	}
+
+	applied := false
+	for _, body := range executor.appliedBodies {
+		if strings.Contains(body, "INSERT INTO metadata_history") &&
+			strings.Contains(body, "task_core_inputs") &&
+			strings.Contains(body, "ON CONFLICT DO NOTHING") &&
+			strings.Contains(body, "DELETE FROM metadata_history") &&
+			strings.Contains(body, "CREATE UNIQUE INDEX IF NOT EXISTS idx_metadata_history_unique_entry") {
+			applied = true
+			break
+		}
+	}
+	if !applied {
+		t.Fatalf("expected 012 migration to backfill task core metadata history with duplicate guard, bodies=%#v", executor.appliedBodies)
+	}
+}
+
+func TestRunnerApplies013MetadataHistorySeriesNumber(t *testing.T) {
+	const version013 = "013_metadata_history_series_number.sql"
+
+	versions, err := listMigrationVersions()
+	if err != nil {
+		t.Fatalf("list migration versions: %v", err)
+	}
+
+	hasMigration := false
+	for _, version := range versions {
+		if version == version013 {
+			hasMigration = true
+			break
+		}
+	}
+	if !hasMigration {
+		t.Fatalf("expected metadata history series number migration to be listed, got %#v", versions)
+	}
+
+	executor := newFakeMigrationExecutor()
+	if err := Run(context.Background(), executor); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	if _, ok := executor.appliedVersions[version013]; !ok {
+		t.Fatalf("expected version %q to be recorded as applied, got %#v", version013, executor.appliedVersions)
+	}
+
+	applied := false
+	for _, body := range executor.appliedBodies {
+		if strings.Contains(body, "ADD COLUMN IF NOT EXISTS series_number") &&
+			strings.Contains(body, "DROP INDEX IF EXISTS idx_metadata_history_unique_entry") &&
+			strings.Contains(body, "BTRIM(series_number)") {
+			applied = true
+			break
+		}
+	}
+	if !applied {
+		t.Fatalf("expected 013 migration to add series_number and rebuild duplicate index, bodies=%#v", executor.appliedBodies)
+	}
+}
+
 func TestRunnerApplies007V2TasksStatusUpdatedIndex(t *testing.T) {
 	const version007 = "007_v2_tasks_status_updated_index.sql"
 

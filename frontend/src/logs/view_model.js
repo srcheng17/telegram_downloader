@@ -1,5 +1,76 @@
 import { fallbackStatusLabel, getStatusMeta, normalizeStatusCode } from '../shared/models/status_catalog.js';
 
+function normalizeText(value) {
+    return String(value || '').trim();
+}
+
+function firstNonEmpty(...values) {
+    for (const value of values) {
+        const normalized = normalizeText(value);
+        if (normalized) {
+            return normalized;
+        }
+    }
+    return '';
+}
+
+function basename(value) {
+    const raw = normalizeText(value).split('?')[0].split('#')[0];
+    if (!raw) {
+        return '';
+    }
+    const normalized = raw.replaceAll('\\', '/').split('/').filter(Boolean).pop() || raw;
+    try {
+        return decodeURIComponent(normalized);
+    } catch (error) {
+        return normalized;
+    }
+}
+
+function removeGeneratedTimestamp(fileName) {
+    const name = normalizeText(fileName);
+    if (!name) {
+        return '';
+    }
+    const dotIndex = name.lastIndexOf('.');
+    const stem = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+    const extension = dotIndex > 0 ? name.slice(dotIndex) : '';
+    const withoutTimestamp = stem.replace(/[\s_-]+\d{10,13}$/, '');
+    return (withoutTimestamp || stem) + extension;
+}
+
+function buildMetadataFileName(task) {
+    const parts = [
+        normalizeText(task.author),
+        normalizeText(task.series_name),
+        normalizeText(task.comic_name),
+    ].filter(Boolean);
+    if (!parts.length) {
+        return '';
+    }
+    return `${parts.join('_')}.cbz`;
+}
+
+function buildURLLabel(task) {
+    const artifactName = firstNonEmpty(
+        task.artifact_name,
+        basename(task.result_zip_path),
+        basename(task.source_archive_name),
+    );
+    if (artifactName) {
+        return removeGeneratedTimestamp(artifactName);
+    }
+    const metadataName = buildMetadataFileName(task);
+    if (metadataName) {
+        return metadataName;
+    }
+    const urlName = basename(task.url);
+    if (urlName) {
+        return removeGeneratedTimestamp(urlName);
+    }
+    return normalizeText(task.url);
+}
+
 function buildLegacyTaskProgressText(task, statusCode, taskType) {
     let progressText = '暂无';
     if (taskType === 'upload') {
@@ -55,7 +126,8 @@ export function mapTaskToLogViewModel(log) {
     return {
         raw: task,
         id: String(task.id || ''),
-        url: String(task.url || ''),
+        url: normalizeText(task.url),
+        urlLabel: buildURLLabel(task),
         status: statusCode,
         statusLabel,
         taskType,

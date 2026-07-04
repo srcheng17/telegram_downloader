@@ -81,7 +81,17 @@ func RegisterRoutesWithConfig(r chi.Router, config Config) {
 	r.Get("/logs", h.Logs)
 	r.Get("/settings", h.SettingsPage)
 	r.Post("/settings", h.SaveSettings)
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir(resolveStaticDir(config.StaticDir)))))
+	r.Handle("/static/*", http.StripPrefix("/static/", staticFileServer(config.StaticDir)))
+}
+
+func staticFileServer(staticDir string) http.Handler {
+	fileServer := http.FileServer(http.Dir(resolveStaticDir(staticDir)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 func NewHandler(config Config) *Handler {

@@ -34,7 +34,7 @@ func TestExtractDownloadRequestFromJSON(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/download",
-		strings.NewReader(`{"url":"https://telegra.ph/json","force":true,"author":"A，B","tags":"x y","genres":"g1#g2"}`),
+		strings.NewReader(`{"url":"https://telegra.ph/json","force":true,"author":"A，B","series_number":" 3 ","tags":"x y","genres":"g1#g2"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -50,6 +50,9 @@ func TestExtractDownloadRequestFromJSON(t *testing.T) {
 	}
 	if metadata.author == nil || *metadata.author != "A,B" {
 		t.Fatalf("expected author normalization, got %#v", metadata.author)
+	}
+	if metadata.seriesNumber == nil || *metadata.seriesNumber != "3" {
+		t.Fatalf("expected series_number to be preserved, got %#v", metadata.seriesNumber)
 	}
 	if metadata.tagsNormalized == nil || *metadata.tagsNormalized != "x,y" {
 		t.Fatalf("expected tags normalization, got %#v", metadata.tagsNormalized)
