@@ -187,6 +187,7 @@ test('首页：上传模式可初始化任务、上传源包，并支持从历�
   await expect(successfulUploadRow.getByRole('button', { name: '下载' })).toBeVisible();
 
   await page.goto('/');
+  await page.locator('#metadata-history-collapsible > summary').click();
   await page.getByRole('button', { name: /历史作者URL/ }).click();
   await expect(page.getByLabel('URL 下载')).toBeChecked();
   await expect(page.locator('#url')).toHaveValue('https://telegra.ph/history-url');

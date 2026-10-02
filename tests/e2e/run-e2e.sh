@@ -38,7 +38,6 @@ temp_data_root="$(mktemp -d)"
 temp_compose_override="$(mktemp)"
 
 mkdir -p \
-  "${temp_data_root}/postgres" \
   "${temp_data_root}/downloaded_images" \
   "${temp_data_root}/temp_downloads"
 
@@ -46,7 +45,7 @@ cat > "${temp_compose_override}" <<EOF
 services:
   postgres:
     volumes:
-      - ${temp_data_root}/postgres:/var/lib/postgresql/data
+      - e2e_postgres:/var/lib/postgresql/data
   go-api:
     volumes:
       - ${temp_data_root}/downloaded_images:/app/downloaded_images
@@ -55,6 +54,8 @@ services:
     volumes:
       - ${temp_data_root}/downloaded_images:/app/downloaded_images
       - ${temp_data_root}/temp_downloads:/app/temp_downloads
+volumes:
+  e2e_postgres: {}
 EOF
 
 compose_args=(-f docker-compose.yml -f "${temp_compose_override}")
@@ -92,7 +93,7 @@ PY
 fi
 
 cleanup() {
-  compose down --remove-orphans || true
+  compose down --volumes --remove-orphans
   if [[ -n "${temp_docker_config}" && -d "${temp_docker_config}" ]]; then
     rm -rf "${temp_docker_config}"
   fi
