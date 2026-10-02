@@ -1,17 +1,12 @@
 {{ define "content" }}
 <div class="section-header">
     <h2>设置</h2>
-    <p class="muted">全局设置（影响所有用户后续新任务，不影响运行中任务）。</p>
+    <p class="muted">下载参数用于后续新任务；成功任务动作保存后生效。</p>
 </div>
 <p class="settings-impact-note" role="note">
-    设置项为全局生效：点击 <strong>保存设置</strong> 后，仅影响后续新建任务，正在运行的任务会保持原值。
+    下载超时、重试次数与图片并发数会随新任务保存，已有任务及其重试保持创建时的参数。成功任务动作决定日志页成功任务按钮的行为。
 </p>
 <form action="/settings" method="post" class="settings-form" id="settings-form">
-    <div class="form-group settings-grid-item">
-        <label for="task_concurrency">任务并发数（同时运行任务数）</label>
-        <input type="number" id="task_concurrency" name="task_concurrency" value="{{ .Settings.TaskConcurrency }}" min="1" max="10">
-        <p class="field-help">控制同时执行的下载任务数量。</p>
-    </div>
     <div class="form-group settings-grid-item">
         <label for="image_concurrency">图片并发数（单任务下载线程）</label>
         <input type="number" id="image_concurrency" name="image_concurrency" value="{{ .Settings.ImageConcurrency }}" min="1" max="20">
@@ -26,16 +21,6 @@
         <label for="retries">下载重试次数</label>
         <input type="number" id="retries" name="retries" value="{{ .Settings.Retries }}" min="0">
         <p class="field-help">下载失败后的自动重试次数。</p>
-    </div>
-    <div class="form-group settings-grid-item settings-grid-item-full">
-        <label for="log_retention_days">日志保留天数</label>
-        <input type="number" id="log_retention_days" name="log_retention_days" value="{{ .Settings.LogRetentionDays }}" min="1">
-        <p class="field-help">日志页中任务记录的保留时长。</p>
-    </div>
-    <div class="form-group settings-grid-item settings-grid-item-full">
-        <label for="file_retention_days">文件缓存保留天数</label>
-        <input type="number" id="file_retention_days" name="file_retention_days" value="{{ .Settings.FileRetentionDays }}" min="1">
-        <p class="field-help">已生成 ZIP/CBZ 文件的缓存保留时长。</p>
     </div>
     <div class="form-group settings-grid-item settings-grid-item-full">
         <span class="settings-radio-label">成功任务动作</span>

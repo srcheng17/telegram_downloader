@@ -3,11 +3,11 @@ export function createLogsApi(api) {
         getLogs(url, options = {}) {
             return api.getJson(url, { cache: 'no-store', ...options });
         },
-        getSettingsMode() {
-            return api.getJson('/v2/settings', { cache: 'no-store' });
+        getSettingsMode(options = {}) {
+            return api.getJson('/v2/settings', { cache: 'no-store', ...options });
         },
-        head(url) {
-            return api.head(url, { cache: 'no-store' });
+        head(url, options = {}) {
+            return api.head(url, { cache: 'no-store', ...options });
         },
     };
 }

@@ -10,9 +10,15 @@ import { bindFieldHintToggles } from './field_hints.js';
 import { renderSummary, syncSummaryCollapseMode } from './summary_panel.js';
 import { createStartupRecoveryBannerController } from './startup_recovery_banner.js';
 import { localizeServerMessage } from '../shared/server_messages.js';
+import { resolvePollDelay } from '../shared/polling.js';
 
 export function createHomeModule(win, doc) {
     const state = win.__telegraphHomeState || {
+        mountedRoot: null,
+        pageController: null,
+        submitting: false,
+        summaryFailures: 0,
+        visibilityHandler: null,
         form: null,
         submitHandler: null,
         summaryTimer: null,
@@ -66,7 +72,12 @@ export function createHomeModule(win, doc) {
         state.pendingDuplicate = null;
     }
 
+    function isCurrentPage(controller) {
+        return state.pageController === controller && controller && !controller.signal.aborted;
+    }
+
     function setSubmitting(isSubmitting, label = '提交中...') {
+        state.submitting = Boolean(isSubmitting);
         const button = doc.querySelector('#download-form button[type="submit"]');
         if (!button) {
             return;
@@ -79,8 +90,8 @@ export function createHomeModule(win, doc) {
         return extractPayloadMessage(payload) || `请求失败（${statusCode}）`;
     }
 
-    async function postDownloadRequest(formPayload) {
-        return homeApi.postDownload(formPayload);
+    async function postDownloadRequest(formPayload, controller) {
+        return homeApi.postDownload(formPayload, { signal: controller.signal });
     }
 
     function showExistingDownloadEntry() {
@@ -99,6 +110,8 @@ export function createHomeModule(win, doc) {
     }
 
     async function submitForceDuplicate() {
+        const controller = state.pageController;
+        if (state.submitting || !isCurrentPage(controller)) return;
         const duplicateState = state.pendingDuplicate;
         if (!duplicateState) {
             return;
@@ -114,7 +127,8 @@ export function createHomeModule(win, doc) {
         showFeedback('正在创建新的 CBZ 任务...', 'info');
 
         try {
-            const { response, payload } = await postDownloadRequest(retryPayload);
+            const { response, payload } = await postDownloadRequest(retryPayload, controller);
+            if (!isCurrentPage(controller)) return;
             if (!response.ok || !payload || payload.ok !== true) {
                 showFeedback(buildRequestErrorMessage(payload, response.status), 'error');
                 showHomeActionButtons(doc, {
@@ -125,6 +139,7 @@ export function createHomeModule(win, doc) {
             }
             handleDownloadSuccess(payload, duplicateState.basePayload);
         } catch (error) {
+            if (!isCurrentPage(controller)) return;
             console.error('Failed to resubmit forced download:', error);
             showFeedback('网络异常，请稍后重试。', 'error');
             showHomeActionButtons(doc, {
@@ -132,7 +147,7 @@ export function createHomeModule(win, doc) {
                 onUseExisting: showExistingDownloadEntry,
             }, win);
         } finally {
-            setSubmitting(false);
+            if (isCurrentPage(controller)) setSubmitting(false);
         }
     }
 
@@ -156,32 +171,34 @@ export function createHomeModule(win, doc) {
         showHomeActionButtons(doc, { logsUrl: resolution.actions.logsUrl || '/logs' }, win);
     }
 
-    async function fetchSummary() {
-        if (!doc.getElementById('summary-panel')) {
-            return;
-        }
-        if (state.inflightSummaryController) {
-            state.inflightSummaryController.abort();
-        }
+    function scheduleSummary(active) {
+        clearTimers();
+        if (!state.mountedRoot || doc.visibilityState === 'hidden') return;
+        const delay = resolvePollDelay({ active, failures: state.summaryFailures, activePollMs: 10000, idlePollMs: 10000 });
+        state.summaryTimer = win.setTimeout(fetchSummary, delay);
+    }
 
+    async function fetchSummary() {
+        if (!state.mountedRoot || doc.visibilityState === 'hidden' || !doc.getElementById('summary-panel') || state.inflightSummaryController) return;
+        clearTimers();
         const controller = new AbortController();
         state.inflightSummaryController = controller;
+        let active = false;
         try {
-            const { response, payload } = await homeApi.getSummary({
-                cache: 'no-store',
-                signal: controller.signal,
-            });
-            if (!response.ok || !payload) {
-                return;
-            }
+            const { response, payload } = await homeApi.getSummary({ signal: controller.signal });
+            if (controller.signal.aborted || state.inflightSummaryController !== controller) return;
+            if (!response.ok || !payload) throw new Error(`HTTP ${response.status}`);
             updateSummary(payload);
+            active = Number(payload.active_tasks) > 0;
+            state.summaryFailures = 0;
         } catch (error) {
-            if (error && error.name !== 'AbortError') {
-                console.error('Failed to load summary:', error);
-            }
+            if (controller.signal.aborted || state.inflightSummaryController !== controller) return;
+            state.summaryFailures += 1;
+            console.error('Failed to load summary:', error);
         } finally {
             if (state.inflightSummaryController === controller) {
                 state.inflightSummaryController = null;
+                scheduleSummary(active);
             }
         }
     }
@@ -198,13 +215,15 @@ export function createHomeModule(win, doc) {
     }
 
     async function fetchMetadataHistory() {
+        const controller = state.pageController;
         try {
-            const { response, payload } = await homeApi.getMetadataHistory();
+            const { response, payload } = await homeApi.getMetadataHistory({ signal: controller.signal });
+            if (!isCurrentPage(controller)) return;
             if (!response.ok || !Array.isArray(payload)) {
                 return;
             }
             renderMetadataHistory(doc, payload, (entry) => {
-                if (!state.form) {
+                if (!isCurrentPage(controller) || !state.form) {
                     return;
                 }
                 const mode = applyHistoryEntryToForm(state.form, entry);
@@ -216,11 +235,13 @@ export function createHomeModule(win, doc) {
                 showFeedback('已回填 URL 与元数据。', 'info');
             });
         } catch (error) {
+            if (!isCurrentPage(controller)) return;
             console.error('Failed to load metadata history:', error);
         }
     }
 
     async function submitUpload(form) {
+        const controller = state.pageController;
         const archiveInput = doc.getElementById('archive_file');
         const file = archiveInput && archiveInput.files && archiveInput.files[0] ? archiveInput.files[0] : null;
         if (!file) {
@@ -238,20 +259,30 @@ export function createHomeModule(win, doc) {
                 api,
                 file,
                 metadata: metadataPayload,
+                signal: controller.signal,
                 onInit(payload) {
                     initPayload = payload;
+                    if (!isCurrentPage(controller)) return;
                     showFeedback('上传任务已创建，正在上传压缩包...', 'info');
                     showHomeActionButtons(doc, { logsUrl: payload.logs_url || '/logs' }, win);
                 },
                 onProgress(snapshot) {
+                    if (!isCurrentPage(controller)) return;
                     showFeedback(`正在上传 ${snapshot.fileName}（${snapshot.loadedBytes} / ${snapshot.totalBytes}）`, 'info');
                 },
                 createXHR: typeof win.XMLHttpRequest === 'function' ? () => new win.XMLHttpRequest() : undefined,
             });
+            if (!isCurrentPage(controller)) return;
             showFeedback('任务已加入队列。', 'success');
             fetchSummary();
             showHomeActionButtons(doc, { logsUrl: (initPayload && initPayload.logs_url) || (result.uploadPayload && result.uploadPayload.logs_url) || '/logs' }, win);
         } catch (error) {
+            if (initPayload && initPayload.task_id) {
+                api.postJson(`/api/tasks/${encodeURIComponent(initPayload.task_id)}/cancel`, {}).then(({ response }) => {
+                    if (!response.ok && response.status !== 409) throw new Error(`HTTP ${response.status}`);
+                }).catch((cancelError) => console.error('Failed to cancel interrupted upload:', cancelError));
+            }
+            if (!isCurrentPage(controller)) return;
             console.error('Failed to submit upload task:', error);
             showFeedback(error && error.message ? error.message : '上传失败，请稍后重试。', 'error');
             if (initPayload) {
@@ -260,12 +291,14 @@ export function createHomeModule(win, doc) {
                 resetHomeActionButtons(doc, win);
             }
         } finally {
-            setSubmitting(false);
+            if (isCurrentPage(controller)) setSubmitting(false);
         }
     }
 
     async function submitForm(event) {
         event.preventDefault();
+        const controller = state.pageController;
+        if (state.submitting || !isCurrentPage(controller)) return;
 
         const form = event.currentTarget;
         resetHomeActionButtons(doc, win);
@@ -288,7 +321,8 @@ export function createHomeModule(win, doc) {
         showFeedback('正在提交任务...', 'info');
 
         try {
-            const { response, payload } = await postDownloadRequest(formPayload);
+            const { response, payload } = await postDownloadRequest(formPayload, controller);
+            if (!isCurrentPage(controller)) return;
             if (!response.ok || !payload || payload.ok !== true) {
                 showFeedback(buildRequestErrorMessage(payload, response.status), 'error');
                 return;
@@ -296,17 +330,18 @@ export function createHomeModule(win, doc) {
 
             handleDownloadSuccess(payload, formPayload);
         } catch (error) {
+            if (!isCurrentPage(controller)) return;
             console.error('Failed to submit download:', error);
             showFeedback('网络异常，请稍后重试。', 'error');
             resetHomeActionButtons(doc, win);
         } finally {
-            setSubmitting(false);
+            if (isCurrentPage(controller)) setSubmitting(false);
         }
     }
 
     function clearTimers() {
         if (state.summaryTimer) {
-            clearInterval(state.summaryTimer);
+            win.clearTimeout(state.summaryTimer);
             state.summaryTimer = null;
         }
     }
@@ -318,25 +353,12 @@ export function createHomeModule(win, doc) {
         if (!form && !summaryPanel) {
             return;
         }
-
-        if (state.form && state.submitHandler) {
-            state.form.removeEventListener('submit', state.submitHandler);
-        }
-        if (state.startupRecoveryDismissHandler && startupRecoveryDismissBtn) {
-            startupRecoveryDismissBtn.removeEventListener('click', state.startupRecoveryDismissHandler);
-        }
-        if (state.inputModeNodes.length && state.inputModeHandler) {
-            state.inputModeNodes.forEach((node) => node.removeEventListener('change', state.inputModeHandler));
-        }
-        if (typeof state.hintCleanup === 'function') {
-            state.hintCleanup();
-            state.hintCleanup = null;
-        }
-        clearTimers();
-        if (state.summaryResizeHandler) {
-            win.removeEventListener('resize', state.summaryResizeHandler);
-            state.summaryResizeHandler = null;
-        }
+        const root = form || summaryPanel;
+        if (state.mountedRoot === root) return;
+        if (state.mountedRoot) unmount();
+        state.mountedRoot = root;
+        state.pageController = new AbortController();
+        state.summaryFailures = 0;
 
         if (form) {
             state.form = form;
@@ -368,13 +390,22 @@ export function createHomeModule(win, doc) {
             state.summaryResizeHandler = () => syncSummaryCollapseMode(win, doc);
             win.addEventListener('resize', state.summaryResizeHandler);
             fetchSummary();
-            state.summaryTimer = win.setInterval(fetchSummary, 10000);
+            state.visibilityHandler = () => {
+                clearTimers();
+                if (doc.visibilityState !== 'hidden') fetchSummary();
+            };
+            doc.addEventListener('visibilitychange', state.visibilityHandler);
         } else {
             startupRecoveryBanner.hide();
         }
     }
 
     function unmount() {
+        state.mountedRoot = null;
+        if (state.pageController) state.pageController.abort();
+        state.pageController = null;
+        if (state.visibilityHandler) doc.removeEventListener('visibilitychange', state.visibilityHandler);
+        state.visibilityHandler = null;
         const startupRecoveryDismissBtn = doc.getElementById('startup-recovery-dismiss-home');
         if (state.form && state.submitHandler) {
             state.form.removeEventListener('submit', state.submitHandler);

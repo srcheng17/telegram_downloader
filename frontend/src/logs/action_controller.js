@@ -31,10 +31,15 @@ function triggerNativeDownload(doc, downloadUrl) {
 }
 
 export function createLogsActionController({ api, logsApi, win, doc, state, showFeedback, fetchLogs }) {
-    async function fetchDownloadErrorMessage(downloadUrl, statusCode) {
+    function isCurrentPage(root, controller) {
+        return state.mountedRoot === root && !(controller && controller.signal.aborted);
+    }
+
+    async function fetchDownloadErrorMessage(downloadUrl, statusCode, signal) {
         const fallbackMessage = `下载失败（${statusCode}）。`;
         try {
             const { payload } = await api.getJson(downloadUrl, {
+                signal,
                 headers: { Accept: 'application/json' },
                 cache: 'no-store',
             });
@@ -45,17 +50,17 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
         }
     }
 
-    async function precheckDownload(downloadUrl) {
-        const response = await logsApi.head(downloadUrl);
+    async function precheckDownload(downloadUrl, signal) {
+        const response = await logsApi.head(downloadUrl, { signal });
         const normalized = await normalizeHeadResult(response);
         if (normalized.ok) {
             return { ok: true };
         }
-        const message = await fetchDownloadErrorMessage(downloadUrl, normalized.status);
+        const message = await fetchDownloadErrorMessage(downloadUrl, normalized.status, signal);
         return { ok: false, message };
     }
 
-    async function getDownloadActionMode() {
+    async function getDownloadActionMode(signal) {
         const cachedMode =
             win.__telegraphSettingsState && typeof win.__telegraphSettingsState.downloadActionMode === 'string'
                 ? String(win.__telegraphSettingsState.downloadActionMode).trim()
@@ -64,7 +69,8 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
             return cachedMode;
         }
         try {
-            const { response, payload } = await logsApi.getSettingsMode();
+            const { response, payload } = await logsApi.getSettingsMode({ signal });
+            if (signal && signal.aborted) return 'browser';
             if (response.ok && payload && typeof payload.download_action_mode === 'string') {
                 const resolvedMode = String(payload.download_action_mode).trim() || 'browser';
                 win.__telegraphSettingsState = {
@@ -80,6 +86,9 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
     }
 
     async function requestCancel(taskId, button) {
+        const root = state.mountedRoot;
+        const controller = state.pageController;
+        const signal = controller && controller.signal;
         if (!taskId) {
             return;
         }
@@ -90,7 +99,9 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
         try {
             const { response, payload } = await api.postJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, {}, {
                 cache: 'no-store',
+                signal,
             });
+            if (!isCurrentPage(root, controller)) return;
             const payloadMessage = extractPayloadMessage(payload);
             if (response.ok && payload && payload.ok === true) {
                 showFeedback(payloadMessage || '已提交取消请求。', 'success');
@@ -102,14 +113,18 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
             }
             showFeedback(payloadMessage || `取消任务失败（${response.status}）。`, 'error');
         } catch (error) {
+            if (!isCurrentPage(root, controller)) return;
             console.error('Error requesting cancellation:', error);
             showFeedback('取消任务失败。', 'error');
         } finally {
-            fetchLogs(state.currentPage);
+            if (isCurrentPage(root, controller)) fetchLogs(state.currentPage);
         }
     }
 
     async function requestDownload(taskId, button) {
+        const root = state.mountedRoot;
+        const controller = state.pageController;
+        const signal = controller && controller.signal;
         if (!taskId || state.downloadInProgressTaskIds.has(taskId)) {
             return;
         }
@@ -120,14 +135,17 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
         }
 
         try {
-            const mode = await getDownloadActionMode();
+            const mode = await getDownloadActionMode(signal);
+            if (!isCurrentPage(root, controller)) return;
             const result = await runSuccessTaskAction({
                 api,
                 taskId,
                 mode,
+                signal,
                 browserDownload: async (resolvedTaskId) => {
                     const downloadUrl = `/api/tasks/${encodeURIComponent(resolvedTaskId)}/download`;
-                    const precheckResult = await precheckDownload(downloadUrl);
+                    const precheckResult = await precheckDownload(downloadUrl, signal);
+                    if (!isCurrentPage(root, controller)) return;
                     if (!precheckResult.ok) {
                         throw new Error(precheckResult.message || '下载失败。');
                     }
@@ -135,6 +153,7 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
                     return { response: { ok: true }, payload: null };
                 },
             });
+            if (!isCurrentPage(root, controller)) return;
             if (mode === 'komga_copy') {
                 const targetPath = result && result.payload ? String(result.payload.target_path || '').trim() : '';
                 showFeedback(targetPath ? `已复制到 ${targetPath}` : '已复制到 Komga。', 'success');
@@ -142,10 +161,12 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
             }
             showFeedback('下载已开始。', 'success');
         } catch (error) {
+            if (!isCurrentPage(root, controller)) return;
             console.error('Error handling success task action:', error);
             showFeedback(error && error.message ? error.message : '下载启动失败，请重试。', 'error');
         } finally {
             setTimeout(() => {
+                if (!isCurrentPage(root, controller)) return;
                 state.downloadInProgressTaskIds.delete(taskId);
                 if (button && doc.body.contains(button)) {
                     button.disabled = false;
@@ -156,6 +177,9 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
     }
 
     async function requestRetry(taskId, button) {
+        const root = state.mountedRoot;
+        const controller = state.pageController;
+        const signal = controller && controller.signal;
         if (!taskId || state.retryInProgressTaskIds.has(taskId)) {
             return;
         }
@@ -165,7 +189,8 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
             button.textContent = '重试中...';
         }
         try {
-            const { response, payload } = await requestRetryTask(api, taskId);
+            const { response, payload } = await requestRetryTask(api, taskId, { signal });
+            if (!isCurrentPage(root, controller)) return;
             const payloadMessage = extractPayloadMessage(payload);
             if (response.ok && payload && payload.ok === true) {
                 showFeedback(payloadMessage || '已重新加入队列。', 'success');
@@ -173,11 +198,12 @@ export function createLogsActionController({ api, logsApi, win, doc, state, show
             }
             showFeedback(payloadMessage || `重试失败（${response.status}）。`, 'error');
         } catch (error) {
+            if (!isCurrentPage(root, controller)) return;
             console.error('Error retrying upload task:', error);
             showFeedback('重试失败，请稍后再试。', 'error');
         } finally {
-            state.retryInProgressTaskIds.delete(taskId);
-            fetchLogs(state.currentPage);
+            if (isCurrentPage(root, controller)) state.retryInProgressTaskIds.delete(taskId);
+            if (isCurrentPage(root, controller)) fetchLogs(state.currentPage);
         }
     }
 

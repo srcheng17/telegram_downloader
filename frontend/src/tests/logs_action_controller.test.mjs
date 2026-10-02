@@ -45,3 +45,24 @@ test('getDownloadActionMode prefers cached settings mode', async () => {
   const mode = await controller.getDownloadActionMode();
   assert.equal(mode, 'komga_copy');
 });
+
+
+test('late task actions cannot update or repoll a page after unmount', async () => {
+  let resolveRequest;
+  const request = new Promise((resolve) => { resolveRequest = resolve; });
+  const state = { mountedRoot: {}, pageController: new AbortController(), currentPage: 1, downloadInProgressTaskIds: new Set(), retryInProgressTaskIds: new Set() };
+  const feedback = [];
+  let refreshes = 0;
+  const controller = createLogsActionController({
+    api: { postJson: () => request }, logsApi: {}, win: {}, doc: {}, state,
+    showFeedback: (message) => feedback.push(message),
+    fetchLogs: () => { refreshes += 1; },
+  });
+  const cancel = controller.requestCancel('task-1', null);
+  state.pageController.abort();
+  state.mountedRoot = null;
+  resolveRequest({ response: { ok: true }, payload: { ok: true } });
+  await cancel;
+  assert.deepEqual(feedback, []);
+  assert.equal(refreshes, 0);
+});

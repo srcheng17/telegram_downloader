@@ -14,6 +14,6 @@ test('lint script only targets frontend source after legacy cleanup', () => {
 });
 
 test('vite build keeps bundle entry filenames stable', () => {
-  const viteConfigText = readFileSync(resolve(process.cwd(), 'vite.config.js'), 'utf8');
+  const viteConfigText = readFileSync(resolve(process.cwd(), 'vite.config.mjs'), 'utf8');
   assert.equal(viteConfigText.includes("entryFileNames: '[name].bundle.js'"), true);
 });

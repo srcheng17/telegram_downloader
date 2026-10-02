@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { submitArchive } from '../home/upload_submission.js';
+import { submitArchive, uploadArchiveSource } from '../home/upload_submission.js';
 
 test('submitArchive initializes task then streams file with xhr progress', async () => {
     const progressSnapshots = [];
@@ -74,4 +74,65 @@ test('submitArchive initializes task then streams file with xhr progress', async
     });
     assert.equal(xhrCalls[0].method, 'PUT');
     assert.equal(xhrCalls[0].url, '/api/tasks/task-upload-1/upload-source');
+});
+
+
+function createPendingUpload(options = {}) {
+    const handlers = {};
+    let sends = 0;
+    const xhr = {
+        status: 202,
+        responseText: '{"ok":true}',
+        upload: { addEventListener() {} },
+        addEventListener(name, handler) { handlers[name] = handler; },
+        open() {},
+        setRequestHeader() {},
+        send() { sends += 1; },
+        abort() { handlers.abort(); },
+    };
+    const promise = uploadArchiveSource({
+        uploadUrl: '/api/tasks/upload-1/upload-source',
+        file: { name: 'demo.zip', size: 40 },
+        createXHR: () => xhr,
+        ...options,
+    });
+    return { handlers, xhr, promise, sends: () => sends };
+}
+
+test('HTML upload errors reject and leave the submit flow able to finish', async () => {
+    const { handlers, xhr, promise } = createPendingUpload();
+    xhr.status = 413;
+    xhr.responseText = '<html>413 Request Entity Too Large</html>';
+    assert.doesNotThrow(() => handlers.load());
+    await assert.rejects(promise, /413/);
+});
+
+test('upload rejects malformed successful responses and business failures', async () => {
+    for (const responseText of ['', '<html>Bad gateway</html>', '{"ok":false,"message":"上传被拒绝。"}']) {
+        const { handlers, xhr, promise } = createPendingUpload();
+        xhr.responseText = responseText;
+        assert.doesNotThrow(() => handlers.load());
+        await assert.rejects(promise, /上传/);
+    }
+});
+
+test('upload abort and timeout events reject rather than hanging', async () => {
+    for (const event of ['abort', 'timeout']) {
+        const { handlers, xhr, promise } = createPendingUpload();
+        assert.equal(typeof handlers[event], 'function');
+        assert.ok(xhr.timeout > 0);
+        handlers[event]();
+        await assert.rejects(promise, event === 'abort' ? /取消/ : /超时/);
+    }
+});
+
+test('page abort stops an in-flight XHR and does not start an already aborted upload', { timeout: 1000 }, async () => {
+    const controller = new AbortController();
+    const { promise, sends } = createPendingUpload({ signal: controller.signal });
+    assert.equal(sends(), 1);
+    controller.abort();
+    await assert.rejects(promise, { name: 'AbortError' });
+    const aborted = createPendingUpload({ signal: controller.signal });
+    await assert.rejects(aborted.promise, { name: 'AbortError' });
+    assert.equal(aborted.sends(), 0);
 });

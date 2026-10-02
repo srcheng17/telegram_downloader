@@ -1,11 +1,12 @@
 export function createSettingsApi(api) {
     return {
-        getSettings() {
-            return api.getJson('/v2/settings', { cache: 'no-store' });
+        getSettings(options = {}) {
+            return api.getJson('/v2/settings', { cache: 'no-store', ...options });
         },
-        saveSettings(payload) {
+        saveSettings(payload, options = {}) {
             return api.putJson('/v2/settings', payload, {
-                headers: { Accept: 'application/json' },
+                ...options,
+                headers: { Accept: 'application/json', ...(options.headers || {}) },
             });
         },
     };
