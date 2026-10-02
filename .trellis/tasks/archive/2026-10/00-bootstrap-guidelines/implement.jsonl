@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Current Go/PostgreSQL conventions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Current native JavaScript/htmx conventions"}
