@@ -1,0 +1,14 @@
+services:
+  go-api:
+    image: ${TELEGRAPH_IMAGE:-ghcr.io/srcheng17/telegram_downloader:latest}
+    build: !reset null
+    pull_policy: always
+    volumes: !override
+      - ./downloaded_images:/app/downloaded_images
+      - ./temp_downloads:/app/temp_downloads
+      - ${KOMGA_LIBRARY_ROOT_HOST:-/Users/ryancheng/docker_data/komga/data/myReadingManga}:${KOMGA_LIBRARY_ROOT:-/app/komga/myReadingManga}:rw
+
+  go-worker:
+    image: ${TELEGRAPH_IMAGE:-ghcr.io/srcheng17/telegram_downloader:latest}
+    build: !reset null
+    pull_policy: always

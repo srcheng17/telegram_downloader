@@ -106,6 +106,39 @@ func TestComposeTopologyMatchesGoBackendOnly(t *testing.T) {
 	}
 }
 
+func TestComposeImageOverlayUsesPublishedAssets(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(findComposePath(t)), "docker-compose.image.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	composeText := string(content)
+	for _, service := range []string{"go-api", "go-worker"} {
+		block := extractComposeServiceBlock(t, composeText, service)
+		for _, required := range []string{
+			"image: ${TELEGRAPH_IMAGE:-ghcr.io/srcheng17/telegram_downloader:latest}",
+			"build: !reset null",
+			"pull_policy: always",
+		} {
+			if !strings.Contains(block, required) {
+				t.Fatalf("%s image overlay must include %q", service, required)
+			}
+		}
+	}
+	api := extractComposeServiceBlock(t, composeText, "go-api")
+	if !strings.Contains(api, "volumes: !override") || strings.Contains(api, "/app/static") {
+		t.Fatal("image overlay must replace API volumes without hiding image-contained static assets")
+	}
+	base, err := os.ReadFile(findComposePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(extractComposeServiceBlock(t, string(base), "go-api"), "\n") {
+		if strings.HasPrefix(line, "      - ") && !strings.Contains(line, "/app/static") && !strings.Contains(api, line) {
+			t.Fatalf("image overlay must preserve API data mount %q", line)
+		}
+	}
+}
+
 func assertComposeBlockOmitsRetiredRuntimeEnv(t *testing.T, block, serviceName string) {
 	t.Helper()
 
