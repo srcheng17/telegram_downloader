@@ -77,3 +77,14 @@ test('summarizeLaunchError strips ansi sequences from launcher output', () => {
 
   assert.equal(summary, '- [pid=40658] <process did exit: exitCode=null, signal=SIGABRT>');
 });
+
+test('getCandidateProjects reads browser override from the process environment', () => {
+  const previous = process.env.E2E_BROWSER_PROJECT;
+  process.env.E2E_BROWSER_PROJECT = 'chromium';
+  try {
+    assert.deepEqual(getCandidateProjects({ platform: 'darwin' }), ['chromium']);
+  } finally {
+    if (previous === undefined) delete process.env.E2E_BROWSER_PROJECT;
+    else process.env.E2E_BROWSER_PROJECT = previous;
+  }
+});

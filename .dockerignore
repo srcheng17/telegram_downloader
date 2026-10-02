@@ -21,3 +21,12 @@ node_modules/
 playwright-report/
 test-results/
 tests/e2e/.artifacts/
+
+# Local credentials and development bookkeeping
+.env
+.env.*
+!.env.example
+.git/
+.trellis/
+.agents/
+.codex/
