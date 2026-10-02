@@ -1,142 +1,30 @@
-# 任务生命周期基线（Baseline）
+# Task Core 任务生命周期
 
-## 目的
+当前状态以 `internal/domain/taskcore/status.go` 为准：`CREATED`、`READY`、`RUNNING`、`CANCELING`、`SUCCEEDED`、`FAILED`、`CANCELED`。页面消费 backend `status_label`、`progress` 和 `available_actions`。
 
-本文档冻结当前 URL 任务与上传任务的生命周期、状态语义和关键动作路径。它描述的是当前实现，不是重构后的目标模型。
-
-## 当前任务类型
-
-## 当前调度方式
-
-当前任务调度不再依赖外部队列服务。`go-api` 写入 PostgreSQL `task_core_*` 表后，`go-worker` 周期性领取 `READY` 任务并持有 lease；执行过程中通过 heartbeat 保持租约，异常退出后由 recovery 重新释放过期任务。
-
-### URL 任务
-
-来源：
-- 首页填写 Telegraph URL 后通过 `/download` 提交。
-
-核心特点：
-- 有 URL / Canonical URL；
-- worker 负责远程页面解析、图片抓取、CBZ 产物生成；
-- 结果可浏览器下载，或按设置复制到 Komga。
-
-### 上传任务
-
-来源：
-- 首页选择上传模式；
-- 先调用 `POST /api/tasks/upload/init` 创建任务；
-- 再调用 `PUT /api/tasks/{task_id}/upload-source` 上传源压缩包。
-
-核心特点：
-- 源文件保存在后端临时目录；
-- worker 负责解包、筛选图片、重打包为 CBZ；
-- 失败时可依赖保留源包进行重试。
-
-## 当前状态集合
-
-当前系统至少包含以下任务状态：
-
-- `UPLOADING`
-- `QUEUED`
-- `RUNNING`
-- `CANCEL_REQUESTED`
-- `SUCCESS`
-- `FAILED`
-- `CANCELED`
-
-legacy 日志层再映射为页面使用的中文/兼容状态值。
-
-## URL 任务生命周期
+## URL 与上传
 
 ```text
-提交 URL
-  -> QUEUED
-  -> RUNNING
-     -> 页面解析
-     -> 图片总数发现
-     -> 图片逐步下载（progress / total_images）
-     -> 打包 CBZ
-  -> SUCCESS | FAILED | CANCEL_REQUESTED -> CANCELED
+URL: POST /download -> READY -> RUNNING -> SUCCEEDED / FAILED
+上传: init -> CREATED -> upload-source -> READY -> RUNNING -> SUCCEEDED / FAILED
+活跃状态 -> CANCELING -> CANCELED
+FAILED / CANCELED -> retry -> READY
 ```
 
-### 当前 URL 进度语义
+同 URL 活跃任务复用；成功产物可用时返回确认态，force 新建但仍复用活跃任务。每个新任务保存创建时的下载设置快照，重试沿用原设置。
 
-- 进入 `RUNNING` 但尚未拿到图片总数前：前端显示“准备中”。
-- 一旦发现总图片数：开始按 `progress / total_images` 展示。
-- 成功后可下载 / copy to Komga。
+上传字节进度由客户端 XHR 展示；落盘完成后后端进度进入 preparing。URL 图片发现和完成回调写入 downloading current/total，打包进入 packaging，成功进入 done。不得用时间推算伪进度。
 
-## 上传任务生命周期
+## 取消与重试
 
-```text
-初始化任务
-  -> UPLOADING
-     -> 上传字节进度（loaded / total）
-  -> QUEUED
-  -> RUNNING
-     -> 解包
-     -> 图片整理
-     -> ComicInfo.xml 写入
-     -> 重新封装为 CBZ
-  -> SUCCESS | FAILED | CANCEL_REQUESTED -> CANCELED
-```
+取消接口返回 `CANCELING`，不代表执行已停止。运行中的 worker 取消 context，等 Execute 返回并清理未发布产物，再写 `CANCELED`；尚未领取任务由 recovery 确认取消。
 
-### 当前上传进度语义
+attempt 是自动恢复重试预算，手动 retry 可清零；generation 每次 claim 单调递增，不能清零。所有执行写回必须匹配 lease owner 和 generation；终态另检查 attempt。
 
-- `UPLOADING`：显示字节进度 `loaded / total`。
-- 已上传完成但 worker 处理中：显示“处理中”。
-- 成功后显示完成动作。
+上传失败或取消保留源包；成功且 Complete 提交后清理源包。未附着源包的取消任务不能执行重试，用户重新选择文件上传。
 
-## 取消路径基线
+## 下载和 Komga
 
-### URL / 上传任务取消
+成功任务经 `HEAD /api/tasks/{id}/download` 预检，再 GET 下载。路径需在 DOWNLOAD_PATH 真实边界内；物理目录为 task ID/generation，下载文件名保留元数据规则。
 
-当前取消动作走 `/api/tasks/{task_id}/cancel` 一类接口（页面按钮触发），后端按当前状态推进：
-
-- 活跃任务：`RUNNING/QUEUED/UPLOADING` 等进入 `CANCEL_REQUESTED`
-- worker 或执行链路感知取消后落为 `CANCELED`
-
-### 取消后的重试（当前已支持）
-
-当前语义已统一为：
-
-- `FAILED` 和 `CANCELED` 都可重试；
-- URL / 上传任务都支持；
-- 复用同一条任务记录；
-- 前端按钮统一显示“重试”。
-
-## 重试路径基线
-
-### URL 任务
-
-可重试条件（当前统一语义）：
-- `status ∈ {FAILED, CANCELED}`
-- URL 非空
-
-### 上传任务
-
-可重试条件（当前统一语义）：
-- `status ∈ {FAILED, CANCELED}`
-- `source_archive_path` 仍存在
-
-说明：当前日志页已经不再盲信数据库中的 `retryable` 布尔字段，而是根据当前任务状态与必要资源动态判断可重试资格。
-
-## 下载与 Komga copy 路径基线
-
-### 浏览器下载
-
-- 成功任务可通过 `HEAD /api/tasks/{id}/download` 预检；
-- 预检可用后，再执行 `GET /api/tasks/{id}/download`。
-
-### Komga copy
-
-- 设置页可将 `download_action_mode` 切换到 `komga_copy`；
-- 日志页点击下载动作时，实际触发 copy 接口；
-- 目标目录根据系列名决定：
-  - 有系列名：`<root>/<series>/file.cbz`
-  - 无系列名：`<root>/tankobon/file.cbz`
-
-## 当前已知易变点
-
-- `legacy adapter` 仍参与日志和部分动作语义映射；
-- worker / repo / adapter 之间对状态与动作能力的语义尚未完全收口；
-- 任务生命周期概念已经比较稳定，但代码落点还不是最终形态。
+`POST /api/tasks/{id}/copy-to-komga` 写入配置 root 的系列目录，无系列则 `tankobon`。前端同时检查 HTTP 和 payload.ok 才展示成功。失败保留在当前页面。

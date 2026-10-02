@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
 window.addEventListener('popstate', syncNavigationState);
 
 document.body.addEventListener('htmx:beforeSwap', (event) => {
-    if (event.detail && event.detail.target && event.detail.target.id === 'content') {
+    if (!event.defaultPrevented && event.detail && event.detail.shouldSwap !== false && event.detail.target && event.detail.target.id === 'content') {
         unmountPageModules(window);
     }
 });
@@ -22,4 +22,10 @@ document.body.addEventListener('htmx:afterSwap', (event) => {
         syncNavigationState();
         mountPageModules(window);
     }
+});
+
+document.body.addEventListener('htmx:historyRestore', () => {
+    unmountPageModules(window);
+    syncNavigationState();
+    mountPageModules(window);
 });

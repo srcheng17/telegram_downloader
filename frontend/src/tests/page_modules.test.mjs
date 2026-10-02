@@ -78,3 +78,40 @@ test('mountPageModules and unmountPageModules call page lifecycle hooks when pre
         'settings:unmount',
     ]);
 });
+
+
+test('htmx retains page modules for rejected swaps and remounts history restores', async () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const listeners = {};
+    const calls = [];
+    globalThis.window = {
+        location: { origin: 'http://localhost', pathname: '/logs' },
+        addEventListener() {},
+        TelegraphDownloaderLogs: {
+            mount() { calls.push('mount'); },
+            unmount() { calls.push('unmount'); },
+        },
+    };
+    globalThis.document = {
+        querySelectorAll() { return []; },
+        addEventListener(name, handler) { listeners[name] = handler; },
+        body: { addEventListener(name, handler) { listeners[name] = handler; } },
+    };
+    try {
+        await import('../app.js');
+        listeners.DOMContentLoaded();
+        listeners['htmx:beforeSwap']({ detail: { target: { id: 'content' }, shouldSwap: false } });
+        assert.deepEqual(calls, ['mount']);
+        listeners['htmx:beforeSwap']({ defaultPrevented: true, detail: { target: { id: 'content' }, shouldSwap: true } });
+        assert.deepEqual(calls, ['mount']);
+        listeners['htmx:beforeSwap']({ detail: { target: { id: 'content' }, shouldSwap: true } });
+        assert.deepEqual(calls, ['mount', 'unmount']);
+        assert.equal(typeof listeners['htmx:historyRestore'], 'function');
+        listeners['htmx:historyRestore']();
+        assert.deepEqual(calls, ['mount', 'unmount', 'unmount', 'mount']);
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});

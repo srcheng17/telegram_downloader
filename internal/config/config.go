@@ -10,6 +10,11 @@ import (
 )
 
 const (
+	MaxImagesPerTask       = 300
+	MaxBytesPerImage int64 = 25 << 20
+	MaxBytesPerTask  int64 = 500 << 20
+	MaxUploadBytes   int64 = 64 << 20
+
 	defaultTimeoutSeconds   = 30
 	defaultRetries          = 10
 	defaultImageConcurrency = 2

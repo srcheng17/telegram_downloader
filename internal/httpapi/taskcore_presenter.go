@@ -43,7 +43,7 @@ type taskCoreView struct {
 
 func presentTaskCoreView(view app.TaskView, komgaConfigured bool) taskCoreView {
 	hasResult := view.Result != nil && view.Result.ArtifactPath != ""
-	actions := domain.AvailableActions(view.Task.Status, hasResult, komgaConfigured)
+	actions := domain.AvailableActions(view.Task.Status, view.Input.HasSource(view.Task.Kind), hasResult, komgaConfigured)
 	outActions := make([]string, 0, len(actions))
 	for _, action := range actions {
 		outActions = append(outActions, string(action))

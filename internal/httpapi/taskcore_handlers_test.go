@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/ryancheng/telegram-downloader/internal/config"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -285,7 +287,7 @@ func TestTaskCoreHandlersCancelTask(t *testing.T) {
 }
 
 func TestTaskCoreHandlersListTasks(t *testing.T) {
-	svc := &fakeTaskCoreHTTPService{views: []app.TaskView{{Task: app.Task{ID: "task-1", Status: domain.StatusFailed}}}}
+	svc := &fakeTaskCoreHTTPService{views: []app.TaskView{{Task: app.Task{ID: "task-1", Kind: domain.KindURL, Status: domain.StatusFailed}, Input: app.Input{URL: "https://telegra.ph/retry"}}}}
 	router := newTaskCoreTestRouter(t, svc)
 	req := httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
 	rec := httptest.NewRecorder()
@@ -488,14 +490,16 @@ func newTaskCoreTestRouterWithOptions(t *testing.T, svc *fakeTaskCoreHTTPService
 	}
 	options.TaskCoreService = svc
 	return NewRouterWithOptions(&fakeTaskReader{}, RouterOptions{
-		TaskCoreService: options.TaskCoreService,
-		UploadTaskStore: options.UploadTaskStore,
-		KomgaRootDir:    options.KomgaRootDir,
-		UploadTempDir:   options.UploadTempDir,
+		TaskCoreService:  options.TaskCoreService,
+		UploadTaskStore:  options.UploadTaskStore,
+		KomgaRootDir:     options.KomgaRootDir,
+		UploadTempDir:    options.UploadTempDir,
+		SettingsProvider: options.SettingsProvider,
 	})
 }
 
 type fakeTaskCoreHTTPService struct {
+	createResult    *app.CreateURLResult
 	createURLStatus domain.Status
 	createdURL      app.CreateURLInput
 	createdTask     app.Task
@@ -508,7 +512,7 @@ type fakeTaskCoreHTTPService struct {
 	attached        app.AttachUploadSourceInput
 }
 
-func (f *fakeTaskCoreHTTPService) CreateURLTask(_ context.Context, in app.CreateURLInput) (app.Task, error) {
+func (f *fakeTaskCoreHTTPService) CreateURLTask(_ context.Context, in app.CreateURLInput) (app.CreateURLResult, error) {
 	f.createdURL = in
 	status := f.createURLStatus
 	if status == "" {
@@ -520,7 +524,12 @@ func (f *fakeTaskCoreHTTPService) CreateURLTask(_ context.Context, in app.Create
 		Input:    app.Input{TaskID: in.ID, URL: in.URL, CanonicalURL: in.CanonicalURL, Metadata: in.Metadata},
 		Progress: domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, ""),
 	}
-	return f.createdTask, nil
+	if f.createResult != nil {
+		f.view.Task = f.createResult.Task
+		f.view.Result = f.createResult.Result
+		return *f.createResult, nil
+	}
+	return app.CreateURLResult{Task: f.createdTask}, nil
 }
 
 func (f *fakeTaskCoreHTTPService) InitUploadTask(_ context.Context, in app.InitUploadInput) (app.Task, error) {
@@ -629,5 +638,154 @@ func assertOptionalHistoryValue(t *testing.T, actual *string, want string, field
 	t.Helper()
 	if actual == nil || *actual != want {
 		t.Fatalf("%s = %#v, want %q", field, actual, want)
+	}
+}
+
+func (f *fakeTaskCoreHTTPService) QueryTasks(ctx context.Context, q app.TaskQuery) (app.TaskPage, error) {
+	views, err := f.ListTasks(ctx, 0, 0)
+	if err != nil {
+		return app.TaskPage{}, err
+	}
+	selected := make([]app.TaskView, 0)
+	for _, v := range views {
+		if q.Status != "" && v.Task.Status != q.Status {
+			continue
+		}
+		if q.Keyword != "" && !taskCoreViewMatchesKeyword(v, q.Keyword) {
+			continue
+		}
+		selected = append(selected, v)
+	}
+	total := len(selected)
+	start := q.Offset
+	if start > total {
+		start = total
+	}
+	end := start + q.Limit
+	if end > total {
+		end = total
+	}
+	return app.TaskPage{Tasks: selected[start:end], Total: total}, nil
+}
+func (f *fakeTaskCoreHTTPService) StatusCounts(ctx context.Context) (map[domain.Status]int, error) {
+	views, err := f.ListTasks(ctx, 0, 0)
+	counts := map[domain.Status]int{}
+	for _, v := range views {
+		counts[v.Task.Status]++
+	}
+	return counts, err
+}
+
+func taskCoreViewMatchesKeyword(view app.TaskView, keyword string) bool {
+	needle := strings.ToLower(strings.TrimSpace(keyword))
+	if needle == "" {
+		return true
+	}
+	values := []string{
+		view.Task.ID,
+		string(view.Task.Kind),
+		string(view.Task.Status),
+		view.Task.LastError,
+		view.Input.URL,
+		view.Input.CanonicalURL,
+		view.Input.SourceArchiveName,
+		view.Input.SourceArchivePath,
+	}
+	if view.Result != nil {
+		values = append(values, view.Result.ArtifactName, view.Result.ArtifactPath, view.Result.KomgaTargetPath)
+	}
+	for _, value := range view.Input.Metadata {
+		values = append(values, value)
+	}
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(value), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+type fakeTaskSettings struct{ snapshot config.SettingsSnapshot }
+
+func (f fakeTaskSettings) GetSettings(context.Context) (config.SettingsSnapshot, error) {
+	return f.snapshot, nil
+}
+func TestTaskCoreURLSettingsForceAndConfirmation(t *testing.T) {
+	settings := config.SettingsSnapshot{Timeout: 89, Retries: 4, ImageConcurrency: 7, DownloadActionMode: "browser"}
+	svc := &fakeTaskCoreHTTPService{createResult: &app.CreateURLResult{Task: app.Task{ID: "existing", Kind: domain.KindURL, Status: domain.StatusSucceeded}, Reused: true, NeedsConfirmation: true, Result: &app.Result{ArtifactPath: "result.cbz"}}}
+	router := newTaskCoreTestRouterWithOptions(t, svc, RouterOptions{SettingsProvider: fakeTaskSettings{settings}})
+	r := httptest.NewRequest(http.MethodPost, "/download", strings.NewReader(`{"url":"https://telegra.ph/demo","force":true}`))
+	r.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+	if !svc.createdURL.Force || svc.createdURL.RuntimeSettings == nil || *svc.createdURL.RuntimeSettings != settings {
+		t.Fatalf("request=%#v", svc.createdURL)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["duplicate"] != true || response["needs_confirmation"] != true || response["download_url"] != "/api/tasks/existing/download" {
+		t.Fatalf("response=%v", response)
+	}
+}
+
+type uploadZeroReader struct{}
+
+func (uploadZeroReader) Read(p []byte) (int, error) { return len(p), nil }
+func TestTaskCoreUploadBoundaryAndCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		body   string
+		status int
+	}{
+		{"unsupported", `{"file_name":"demo.exe","file_size":1}`, http.StatusBadRequest},
+		{"too large", `{"file_name":"demo.zip","file_size":67108865}`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &fakeTaskCoreHTTPService{}
+			router := newTaskCoreTestRouter(t, svc)
+			r := httptest.NewRequest(http.MethodPost, "/api/tasks/upload/init", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, r)
+			if rec.Code != tc.status || svc.view != nil {
+				t.Fatalf("status=%d view=%v", rec.Code, svc.view)
+			}
+		})
+	}
+	t.Run("body cap", func(t *testing.T) {
+		dir := t.TempDir()
+		svc := &fakeTaskCoreHTTPService{view: &app.TaskView{Task: app.Task{ID: "upload", Kind: domain.KindUpload, Status: domain.StatusCreated}}}
+		router := newTaskCoreTestRouterWithOptions(t, svc, RouterOptions{UploadTempDir: dir})
+		r := httptest.NewRequest(http.MethodPut, "/api/tasks/upload/upload-source?file_name=demo.zip", io.LimitReader(uploadZeroReader{}, config.MaxUploadBytes+1))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, r)
+		if rec.Code != http.StatusRequestEntityTooLarge || svc.attachCalls != 0 {
+			t.Fatalf("status=%d calls=%d body=%s", rec.Code, svc.attachCalls, rec.Body.String())
+		}
+		assertDirEmpty(t, dir)
+	})
+}
+func TestTaskCoreArtifactRejectsSymlinkOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOWNLOAD_PATH", root)
+	outside := filepath.Join(t.TempDir(), "private.cbz")
+	if err := os.WriteFile(outside, []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "result.cbz")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	svc := &fakeTaskCoreHTTPService{view: &app.TaskView{Task: app.Task{ID: "task", Status: domain.StatusSucceeded}, Result: &app.Result{ArtifactPath: link}}}
+	router := newTaskCoreTestRouter(t, svc)
+	r := httptest.NewRequest(http.MethodHead, "/api/tasks/task/download", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d", rec.Code)
 	}
 }

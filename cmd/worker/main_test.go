@@ -75,7 +75,7 @@ func (s *taskCoreLoopFakeService) ClaimNext(ctx context.Context, workerID string
 	return apptaskcore.ClaimResult{}, s.claimErr
 }
 
-func (s *taskCoreLoopFakeService) Heartbeat(ctx context.Context, taskID string, workerID string) (apptaskcore.HeartbeatResult, error) {
+func (s *taskCoreLoopFakeService) Heartbeat(ctx context.Context, taskID string, workerID string, generation int64) (apptaskcore.HeartbeatResult, error) {
 	return apptaskcore.HeartbeatResult{}, nil
 }
 
@@ -87,7 +87,7 @@ func (s *taskCoreLoopFakeService) Fail(ctx context.Context, in apptaskcore.FailI
 	return nil
 }
 
-func (s *taskCoreLoopFakeService) AcknowledgeCancel(ctx context.Context, taskID string, workerID string, attempt int) error {
+func (s *taskCoreLoopFakeService) AcknowledgeCancel(ctx context.Context, taskID string, workerID string, attempt int, generation int64) error {
 	return nil
 }
 
@@ -97,6 +97,6 @@ func (s *taskCoreLoopFakeService) RecoverExpired(ctx context.Context) (apptaskco
 
 type taskCoreLoopFakeDownloader struct{}
 
-func (d *taskCoreLoopFakeDownloader) Execute(ctx context.Context, taskID string) (string, error) {
+func (d *taskCoreLoopFakeDownloader) Execute(ctx context.Context, task apptaskcore.Task) (string, error) {
 	return "", nil
 }

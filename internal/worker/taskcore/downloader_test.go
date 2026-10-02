@@ -3,199 +3,236 @@ package taskcore
 import (
 	"archive/zip"
 	"context"
+	"encoding/xml"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
-	"github.com/ryancheng/telegram-downloader/internal/domain"
+	"github.com/ryancheng/telegram-downloader/internal/config"
 	taskcoredomain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
 	godownloader "github.com/ryancheng/telegram-downloader/internal/downloader"
 )
 
-func TestTaskDownloaderUsesTaskCoreInputAndMetadata(t *testing.T) {
-	tmpDir := t.TempDir()
-	tasks := &fakeTaskViewService{
-		view: &app.TaskView{
-			Task: app.Task{ID: "task-1"},
-			Input: app.Input{
-				TaskID:       "task-1",
-				URL:          "https://example.invalid/raw",
-				CanonicalURL: "https://example.invalid/canonical",
-				Metadata: map[string]string{
-					"author":            "Author",
-					"series_name":       "Series",
-					"series_number":     "3",
-					"comic_name":        "Title",
-					"summary":           "Summary",
-					"tags":              "raw-tag",
-					"tags_normalized":   "normalized-tag",
-					"genres":            "raw-genre",
-					"genres_normalized": "normalized-genre",
-				},
-			},
-		},
-	}
-	downloads := &fakeTaskCoreDownloadService{
-		result: domain.DownloadResult{Images: []domain.DownloadedImage{{URL: "https://example.invalid/1.jpg", ContentType: "image/jpeg", Data: []byte("image")}}},
-	}
-	downloader := NewTaskDownloader(TaskDownloaderConfig{
-		Tasks:        tasks,
-		Service:      downloads,
-		DownloadRoot: tmpDir,
-		Now:          func() time.Time { return time.Unix(1700000000, 0) },
-	})
-
-	path, err := downloader.Execute(context.Background(), "task-1")
+func TestTaskDownloaderUsesSnapshotProgressAndIsolatedArtifacts(t *testing.T) {
+	var active, maxActive, requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/page" {
+			_, _ = io.WriteString(w, `<img src="/1.jpg"><img src="/2.jpg"><img src="/3.jpg">`)
+			return
+		}
+		n := active.Add(1)
+		defer active.Add(-1)
+		for old := maxActive.Load(); n > old; old = maxActive.Load() {
+			if maxActive.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		if r.URL.Path == "/1.jpg" && requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = io.WriteString(w, r.URL.Path)
+	}))
+	defer server.Close()
+	tasks := &fakeTaskViewService{view: &app.TaskView{
+		Task:  app.Task{ID: "task-a", Kind: taskcoredomain.KindURL, Status: taskcoredomain.StatusRunning, Attempt: 1, Generation: 1, LeaseOwner: "worker-a"},
+		Input: app.Input{URL: server.URL + "/page", Metadata: map[string]string{"author": "Author", "series_name": "Series", "series_number": "3", "comic_name": "Title", "tags_normalized": "tag"}, RuntimeSettings: &config.SettingsSnapshot{Timeout: 1, Retries: 1, ImageConcurrency: 1}},
+	}}
+	service := &godownloader.Service{HTTPClient: &http.Client{Timeout: time.Millisecond}, DownloadRetries: 0, ImageConcurrency: 4}
+	root := t.TempDir()
+	d := NewTaskDownloader(TaskDownloaderConfig{Tasks: tasks, Service: service, DownloadRoot: root, Now: func() time.Time { return time.Unix(1700000000, 0) }})
+	first, err := d.Execute(context.Background(), tasks.view.Task)
 	if err != nil {
-		t.Fatalf("Execute returned error: %v", err)
+		t.Fatal(err)
 	}
-	if tasks.taskID != "task-1" {
-		t.Fatalf("GetTask taskID = %q", tasks.taskID)
+	if maxActive.Load() != 1 || requests.Load() != 2 {
+		t.Fatalf("snapshot concurrency=%d retry requests=%d", maxActive.Load(), requests.Load())
 	}
-	if downloads.downloadURL != "https://example.invalid/canonical" {
-		t.Fatalf("Download URL = %q", downloads.downloadURL)
+	if service.HTTPClient.Timeout != time.Millisecond || service.ImageConcurrency != 4 || service.DownloadRetries != 0 {
+		t.Fatal("shared downloader settings mutated")
 	}
-	wantMetadata := godownloader.TaskMetadata{
-		Writer:  "Author",
-		Series:  "Series",
-		Number:  "3",
-		Title:   "Title",
-		Summary: "Summary",
-		Tags:    "normalized-tag",
-		Genre:   "normalized-genre",
+	if filepath.Base(first) != "Author_Series_Title_1700000000.cbz" || filepath.Dir(first) != filepath.Join(root, "task-a", "1") {
+		t.Fatalf("artifact path = %s", first)
 	}
-	if downloads.metadata != wantMetadata {
-		t.Fatalf("metadata = %#v, want %#v", downloads.metadata, wantMetadata)
+	var info struct{ Writer, Series, Number, Title, Tags string }
+	if err := xml.Unmarshal(readCBZEntry(t, first, "ComicInfo.xml"), &info); err != nil {
+		t.Fatal(err)
 	}
-	if filepath.Dir(path) != tmpDir {
-		t.Fatalf("output dir = %q, want %q", filepath.Dir(path), tmpDir)
+	if info.Writer != "Author" || info.Series != "Series" || info.Number != "3" || info.Title != "Title" || info.Tags != "tag" {
+		t.Fatalf("metadata=%+v", info)
 	}
-	if filepath.Base(path) != "Author_Series_Title_1700000000.cbz" {
-		t.Fatalf("output filename = %q", filepath.Base(path))
+	foundDownloading, foundPackaging := false, false
+	for _, p := range tasks.progress {
+		if p.Phase == taskcoredomain.PhaseDownloading && p.Current == 3 && p.Total == 3 {
+			foundDownloading = true
+		}
+		if p.Phase == taskcoredomain.PhasePackaging {
+			foundPackaging = true
+		}
 	}
-	if downloads.outputPath != path {
-		t.Fatalf("PackageCBZ output path = %q, want %q", downloads.outputPath, path)
+	if !foundDownloading || !foundPackaging {
+		t.Fatalf("missing real progress: %+v", tasks.progress)
+	}
+	tasks.view.Task.ID = "task-b"
+	second, err := d.Execute(context.Background(), tasks.view.Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("separate tasks share artifact")
+	}
+	tasks.view.Task.Generation = 2
+	third, err := d.Execute(context.Background(), tasks.view.Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == third {
+		t.Fatal("separate generations share artifact")
 	}
 }
 
 func TestTaskDownloaderExtractsUploadSourceArchive(t *testing.T) {
-	tmpDir := t.TempDir()
-	sourceArchive := filepath.Join(tmpDir, "source.zip")
-	writeTestZip(t, sourceArchive, map[string]string{
-		"002.jpg":      "second",
-		"001.png":      "first",
-		"notes.txt":    "ignore",
-		"nested/":      "",
-		"nested/3.gif": "third",
-	})
-	tasks := &fakeTaskViewService{
-		view: &app.TaskView{
-			Task: app.Task{ID: "task-upload-1", Kind: taskcoredomain.KindUpload},
-			Input: app.Input{
-				TaskID:            "task-upload-1",
-				SourceArchivePath: sourceArchive,
-				Metadata: map[string]string{
-					"author":      "Upload Author",
-					"series_name": "Upload Series",
-					"comic_name":  "Upload Title",
-				},
-			},
-		},
-	}
-	downloads := &fakeTaskCoreDownloadService{}
-	downloader := NewTaskDownloader(TaskDownloaderConfig{
-		Tasks:        tasks,
-		Service:      downloads,
-		DownloadRoot: tmpDir,
-		Now:          func() time.Time { return time.Unix(1700000001, 0) },
-	})
-
-	path, err := downloader.Execute(context.Background(), "task-upload-1")
+	root := t.TempDir()
+	source := filepath.Join(root, "source.zip")
+	writeTestZip(t, source, map[string]string{"002.jpg": "second", "001.png": "first", "notes.txt": "ignore", "nested/3.gif": "third"})
+	tasks := &fakeTaskViewService{view: &app.TaskView{Task: app.Task{ID: "upload-a", Kind: taskcoredomain.KindUpload, Status: taskcoredomain.StatusRunning, Attempt: 1, Generation: 1, LeaseOwner: "worker-a"}, Input: app.Input{SourceArchivePath: source}}}
+	d := NewTaskDownloader(TaskDownloaderConfig{Tasks: tasks, Service: &godownloader.Service{}, DownloadRoot: root})
+	path, err := d.Execute(context.Background(), tasks.view.Task)
 	if err != nil {
-		t.Fatalf("Execute returned error: %v", err)
+		t.Fatal(err)
 	}
-	if downloads.downloadURL != "" {
-		t.Fatalf("Download should not be called for upload task, got URL %q", downloads.downloadURL)
+	if string(readCBZEntry(t, path, "1.png")) != "first" || string(readCBZEntry(t, path, "2.jpg")) != "second" || string(readCBZEntry(t, path, "3.gif")) != "third" {
+		t.Fatal("upload images or order changed")
 	}
-	if len(downloads.images) != 3 {
-		t.Fatalf("expected 3 extracted images, got %#v", downloads.images)
+	if _, err := os.Stat(source); err != nil {
+		t.Fatal("source removed before success committed")
 	}
-	if downloads.images[0].URL != "001.png" || downloads.images[0].ContentType != "image/png" || string(downloads.images[0].Data) != "first" {
-		t.Fatalf("unexpected first image: %#v", downloads.images[0])
+}
+
+func TestTaskDownloaderRejectsStaleGenerationAndCleansCanceledOutput(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.zip")
+	writeTestZip(t, source, map[string]string{"1.jpg": "image"})
+	tasks := &fakeTaskViewService{view: &app.TaskView{Task: app.Task{ID: "upload-a", Kind: taskcoredomain.KindUpload, Status: taskcoredomain.StatusRunning, Attempt: 1, Generation: 2, LeaseOwner: "worker-a"}, Input: app.Input{SourceArchivePath: source}}}
+	d := NewTaskDownloader(TaskDownloaderConfig{Tasks: tasks, Service: &godownloader.Service{}, DownloadRoot: root})
+	stale := tasks.view.Task
+	stale.Generation = 1
+	if _, err := d.Execute(context.Background(), stale); err != app.ErrConflict {
+		t.Fatalf("stale err=%v", err)
 	}
-	if downloads.images[1].URL != "002.jpg" || downloads.images[1].ContentType != "image/jpeg" || string(downloads.images[1].Data) != "second" {
-		t.Fatalf("unexpected second image: %#v", downloads.images[1])
+	ctx, cancel := context.WithCancel(context.Background())
+	tasks.onProgress = func(p taskcoredomain.Progress) {
+		if p.Phase == taskcoredomain.PhasePackaging {
+			cancel()
+		}
 	}
-	if downloads.images[2].URL != "nested/3.gif" || downloads.images[2].ContentType != "image/gif" || string(downloads.images[2].Data) != "third" {
-		t.Fatalf("unexpected third image: %#v", downloads.images[2])
+	if _, err := d.Execute(ctx, tasks.view.Task); err != context.Canceled {
+		t.Fatalf("cancel err=%v", err)
 	}
-	if filepath.Base(path) != "Upload Author_Upload Series_Upload Title_1700000001.cbz" {
-		t.Fatalf("output filename = %q", filepath.Base(path))
-	}
-	if downloads.outputPath != path {
-		t.Fatalf("PackageCBZ output path = %q, want %q", downloads.outputPath, path)
+	matches, err := filepath.Glob(filepath.Join(root, "upload-a", "2", "*"))
+	if err != nil || len(matches) > 0 {
+		t.Fatalf("canceled outputs=%v err=%v", matches, err)
 	}
 }
 
 type fakeTaskViewService struct {
-	view   *app.TaskView
-	taskID string
+	view       *app.TaskView
+	taskID     string
+	mu         sync.Mutex
+	progress   []taskcoredomain.Progress
+	onProgress func(taskcoredomain.Progress)
 }
 
-func (s *fakeTaskViewService) GetTask(ctx context.Context, taskID string) (*app.TaskView, error) {
+func (s *fakeTaskViewService) GetTask(context context.Context, taskID string) (*app.TaskView, error) {
 	s.taskID = taskID
 	return s.view, nil
 }
-
-type fakeTaskCoreDownloadService struct {
-	result      domain.DownloadResult
-	downloadURL string
-	metadata    godownloader.TaskMetadata
-	outputPath  string
-	images      []domain.DownloadedImage
-}
-
-func (s *fakeTaskCoreDownloadService) Download(ctx context.Context, pageURL string) (domain.DownloadResult, error) {
-	s.downloadURL = pageURL
-	return s.result, nil
-}
-
-func (s *fakeTaskCoreDownloadService) PackageCBZ(images []domain.DownloadedImage, metadata godownloader.TaskMetadata, outputPath string) error {
-	s.metadata = metadata
-	s.outputPath = outputPath
-	s.images = append([]domain.DownloadedImage(nil), images...)
+func (s *fakeTaskViewService) ReportProgress(_ context.Context, _ string, _ string, _ int64, p taskcoredomain.Progress) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.progress = append(s.progress, p)
+	if s.onProgress != nil {
+		s.onProgress(p)
+	}
 	return nil
 }
-
 func writeTestZip(t *testing.T, path string, files map[string]string) {
 	t.Helper()
 	file, err := os.Create(path)
 	if err != nil {
-		t.Fatalf("create zip: %v", err)
+		t.Fatal(err)
 	}
-	writer := zip.NewWriter(file)
+	w := zip.NewWriter(file)
 	for name, content := range files {
-		if filepath.Base(name) == "." || name[len(name)-1:] == "/" {
-			_, err = writer.Create(name)
-			if err != nil {
-				t.Fatalf("create zip dir %s: %v", name, err)
-			}
-			continue
-		}
-		entry, err := writer.Create(name)
+		entry, err := w.Create(name)
 		if err != nil {
-			t.Fatalf("create zip entry %s: %v", name, err)
+			t.Fatal(err)
 		}
-		if _, err := entry.Write([]byte(content)); err != nil {
-			t.Fatalf("write zip entry %s: %v", name, err)
+		if _, err := io.WriteString(entry, content); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close zip writer: %v", err)
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {
-		t.Fatalf("close zip file: %v", err)
+		t.Fatal(err)
+	}
+}
+func readCBZEntry(t *testing.T, path, name string) []byte {
+	t.Helper()
+	z, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer z.Close()
+	for _, f := range z.File {
+		if strings.EqualFold(f.Name, name) {
+			r, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			data, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return data
+		}
+	}
+	t.Fatalf("missing %s", name)
+	return nil
+}
+
+func TestCleanupSourceOnlyAfterSuccessfulCompletion(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TEMP_PATH", root)
+	source := filepath.Join(root, "source.zip")
+	writeTestZip(t, source, map[string]string{"1.jpg": "image"})
+	task := app.Task{ID: "upload-a", Kind: taskcoredomain.KindUpload, Status: taskcoredomain.StatusCanceled, Generation: 1}
+	tasks := &fakeTaskViewService{view: &app.TaskView{Task: task, Input: app.Input{SourceArchivePath: source}}}
+	d := NewTaskDownloader(TaskDownloaderConfig{Tasks: tasks, Service: &godownloader.Service{}})
+	if err := d.CleanupSource(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Fatal("canceled task source removed")
+	}
+	tasks.view.Task.Status = taskcoredomain.StatusSucceeded
+	if err := d.CleanupSource(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("successful task source remains: %v", err)
 	}
 }

@@ -67,7 +67,10 @@ func CanCancel(status Status) bool {
 	}
 }
 
-func CanRetry(status Status) bool {
+func CanRetry(status Status, hasSource bool) bool {
+	if !hasSource {
+		return false
+	}
 	switch status {
 	case StatusFailed, StatusCanceled:
 		return true
@@ -80,12 +83,12 @@ func CanAccessResult(status Status, hasResult bool) bool {
 	return status == StatusSucceeded && hasResult
 }
 
-func AvailableActions(status Status, hasResult bool, komgaConfigured bool) []Action {
+func AvailableActions(status Status, hasSource bool, hasResult bool, komgaConfigured bool) []Action {
 	actions := make([]Action, 0, 4)
 	if CanCancel(status) {
 		actions = append(actions, ActionCancel)
 	}
-	if CanRetry(status) {
+	if CanRetry(status, hasSource) {
 		actions = append(actions, ActionRetry)
 	}
 	if CanAccessResult(status, hasResult) {
@@ -128,8 +131,10 @@ func transitionAllowed(from Status, to Status, actor Actor) bool {
 		}
 	case StatusRunning:
 		switch to {
-		case StatusSucceeded, StatusFailed:
+		case StatusSucceeded:
 			return actor == ActorWorker
+		case StatusFailed:
+			return actor == ActorWorker || actor == ActorRecovery
 		case StatusCanceling:
 			return actor == ActorAPI
 		case StatusReady:

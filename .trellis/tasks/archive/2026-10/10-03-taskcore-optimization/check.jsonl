@@ -1,0 +1,6 @@
+{"file": "docs/development/module-boundaries.md", "reason": "Project boundaries and runtime regression requirements"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Project boundaries and runtime regression requirements"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Project boundaries and runtime regression requirements"}
+{"file": ".trellis/tasks/10-03-taskcore-optimization/prd.md", "reason": "Project boundaries and runtime regression requirements"}
+{"file": ".trellis/tasks/10-03-taskcore-optimization/design.md", "reason": "Project boundaries and runtime regression requirements"}
+{"file": ".trellis/tasks/10-03-taskcore-optimization/implement.md", "reason": "Project boundaries and runtime regression requirements"}

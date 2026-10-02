@@ -17,3 +17,9 @@ Release validation is `bash scripts/verify_release_gates.sh`. Its E2E phase
 starts and cleans up a Compose test environment; it is not a requirement for
 documentation-only or Trellis initialization changes. Report unrun checks as
 not run; never infer success from a command being listed in a document.
+
+Set isolated TEST_DATABASE_URL for actual PG tests; CI must fail if missing.
+Do not run duplicate PG test suites concurrently against fixed task IDs. Bundle
+verification compares rebuilds to the Git index; stage correct generated output
+before a local release gate. E2E must exercise image-contained static resources
+and real upload/worker/CBZ output, not only intercepted API responses.

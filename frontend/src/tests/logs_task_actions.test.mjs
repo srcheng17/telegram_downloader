@@ -98,3 +98,11 @@ test('legacy retry action still requires retryable url or source archive data', 
     false,
   );
 });
+
+
+test('Komga copy rejects HTTP and business failures instead of reporting success', async () => {
+  for (const [status, payload] of [[404, { ok: false, message: '缓存文件不可用。' }], [409, { ok: false }], [500, null], [200, { ok: false }]]) {
+    const api = { postJson: async () => ({ response: { ok: status === 200, status }, payload }) };
+    await assert.rejects(runSuccessTaskAction({ api, taskId: 'task-1', mode: 'komga_copy' }), /缓存文件不可用|复制失败/);
+  }
+});

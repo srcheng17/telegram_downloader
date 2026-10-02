@@ -19,12 +19,15 @@ import (
 
 	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
 	apptasks "github.com/ryancheng/telegram-downloader/internal/app/tasks"
+	"github.com/ryancheng/telegram-downloader/internal/config"
 	domain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
 	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
 )
 
 type TaskCoreService interface {
-	CreateURLTask(ctx context.Context, in app.CreateURLInput) (app.Task, error)
+	CreateURLTask(ctx context.Context, in app.CreateURLInput) (app.CreateURLResult, error)
+	QueryTasks(ctx context.Context, query app.TaskQuery) (app.TaskPage, error)
+	StatusCounts(ctx context.Context) (map[domain.Status]int, error)
 	InitUploadTask(ctx context.Context, in app.InitUploadInput) (app.Task, error)
 	AttachUploadSource(ctx context.Context, in app.AttachUploadSourceInput) (app.Task, error)
 	RequestCancel(ctx context.Context, taskID string) (app.Task, error)
@@ -39,15 +42,18 @@ type taskCoreHandlers struct {
 	komgaConfigured      bool
 	uploadTempDir        string
 	komgaRootDir         string
+	settingsProvider     TaskSettingsProvider
+	defaultSettings      *config.SettingsSnapshot
 }
 
-func newTaskCoreHandlers(service TaskCoreService, metadataHistoryStore UploadTaskStore, komgaConfigured bool, uploadTempDir string, komgaRootDir string) *taskCoreHandlers {
+func newTaskCoreHandlers(service TaskCoreService, metadataHistoryStore UploadTaskStore, komgaConfigured bool, uploadTempDir string, komgaRootDir string, settingsProvider TaskSettingsProvider, defaultSettings *config.SettingsSnapshot) *taskCoreHandlers {
 	return &taskCoreHandlers{
 		service:              service,
 		metadataHistoryStore: metadataHistoryStore,
 		komgaConfigured:      komgaConfigured,
 		uploadTempDir:        strings.TrimSpace(uploadTempDir),
 		komgaRootDir:         strings.TrimSpace(komgaRootDir),
+		settingsProvider:     settingsProvider, defaultSettings: defaultSettings,
 	}
 }
 
@@ -64,7 +70,8 @@ func (h *taskCoreHandlers) registerRoutes(router chi.Router) {
 }
 
 func (h *taskCoreHandlers) handleCreateURLTask(w http.ResponseWriter, r *http.Request) {
-	rawURL, _, metadata, err := extractDownloadRequest(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	rawURL, force, metadata, err := extractDownloadRequest(r)
 	if err != nil || rawURL == "" {
 		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Please provide a Telegraph URL.", nil)
 		return
@@ -78,24 +85,54 @@ func (h *taskCoreHandlers) handleCreateURLTask(w http.ResponseWriter, r *http.Re
 		canonicalURL = rawURL
 	}
 
-	task, err := h.service.CreateURLTask(r.Context(), app.CreateURLInput{
+	settings, err := h.taskSettings(r.Context())
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	result, err := h.service.CreateURLTask(r.Context(), app.CreateURLInput{
 		ID:           uuid.NewString(),
 		URL:          rawURL,
 		CanonicalURL: canonicalURL,
 		Metadata:     taskCoreMetadataMap(metadata),
+		Force:        force, RuntimeSettings: settings,
 	})
 	if err != nil {
 		h.writeServiceError(w, err)
 		return
 	}
+	task := result.Task
 	h.recordMetadataHistory(r.Context(), "url", rawURL, metadata)
 
 	view := app.TaskView{
 		Task:     task,
 		Input:    app.Input{TaskID: task.ID, URL: rawURL, CanonicalURL: canonicalURL, Metadata: taskCoreMetadataMap(metadata)},
 		Progress: domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, "准备下载"),
+		Result:   result.Result,
 	}
-	writeJSON(w, http.StatusAccepted, h.taskPayload(view))
+	if result.Reused {
+		existing, err := h.service.GetTask(r.Context(), task.ID)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		if existing != nil {
+			view = *existing
+		}
+	}
+	payload := h.taskPayload(view)
+	payload["logs_url"] = "/logs"
+	if result.Reused {
+		payload["duplicate"] = true
+		payload["active"] = !result.NeedsConfirmation
+		if result.NeedsConfirmation {
+			payload["needs_confirmation"] = true
+			payload["download_url"] = "/api/tasks/" + url.PathEscape(task.ID) + "/download"
+			writeJSON(w, http.StatusOK, payload)
+			return
+		}
+	}
+	writeJSON(w, http.StatusAccepted, payload)
 }
 
 func (h *taskCoreHandlers) handleListTasks(w http.ResponseWriter, r *http.Request) {
@@ -110,22 +147,25 @@ func (h *taskCoreHandlers) handleListTasks(w http.ResponseWriter, r *http.Reques
 	if page <= 0 {
 		page = 1
 	}
+	if page > int(^uint(0)>>1)/limit {
+		page = int(^uint(0)>>1) / limit
+	}
 	offset := (page - 1) * limit
 
-	views, err := h.service.ListTasks(r.Context(), limit, offset)
+	result, err := h.service.QueryTasks(r.Context(), app.TaskQuery{Limit: limit, Offset: offset})
 	if err != nil {
 		h.writeServiceError(w, err)
 		return
 	}
 
-	out := make([]taskCoreView, 0, len(views))
-	for _, view := range views {
+	out := make([]taskCoreView, 0, len(result.Tasks))
+	for _, view := range result.Tasks {
 		out = append(out, presentTaskCoreView(view, h.komgaConfigured))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":       true,
 		"tasks":    out,
-		"total":    len(out),
+		"total":    result.Total,
 		"page":     page,
 		"per_page": limit,
 	})
@@ -232,6 +272,7 @@ func (h *taskCoreHandlers) handleCopyToKomga(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var payload map[string]any
 	decoder := json.NewDecoder(r.Body)
 	decoder.UseNumber()
@@ -241,9 +282,27 @@ func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Reque
 	}
 	_, _, metadata := extractFromMap(payload)
 	fileName := taskCoreUploadArchiveBaseName(normalizePayloadText(payload["file_name"], maxMetadataFieldLength))
+	if !supportedArchiveName(fileName) {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "请选择 ZIP、RAR 或 7Z 文件。", nil)
+		return
+	}
+	if raw, ok := payload["file_size"]; ok {
+		n, valid := raw.(json.Number)
+		size, err := n.Int64()
+		if !valid || err != nil || size < 0 || size > config.MaxUploadBytes {
+			writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "上传文件不得超过 64 MiB。", nil)
+			return
+		}
+	}
+	settings, err := h.taskSettings(r.Context())
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
 	task, err := h.service.InitUploadTask(r.Context(), app.InitUploadInput{
-		ID:       uuid.NewString(),
-		Metadata: taskCoreMetadataMap(metadata),
+		ID:              uuid.NewString(),
+		Metadata:        taskCoreMetadataMap(metadata),
+		RuntimeSettings: settings,
 	})
 	if err != nil {
 		h.writeServiceError(w, err)
@@ -286,9 +345,24 @@ func (h *taskCoreHandlers) handleUploadSource(w http.ResponseWriter, r *http.Req
 	}
 
 	archiveName := h.uploadArchiveName(r, taskID)
+	if !supportedArchiveName(archiveName) {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "请选择 ZIP、RAR 或 7Z 文件。", nil)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, config.MaxUploadBytes)
 	path, size, err := h.saveUploadSource(r, taskID, archiveName)
 	if err != nil {
-		writeInternalError(w, err)
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeAPIErrorResponse(w, http.StatusRequestEntityTooLarge, apiErrorCodeValidation, "上传文件不得超过 64 MiB。", nil)
+		} else {
+			writeInternalError(w, err)
+		}
+		return
+	}
+	if size == 0 {
+		_ = os.Remove(path)
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "上传文件不能为空。", nil)
 		return
 	}
 
@@ -387,6 +461,9 @@ func (h *taskCoreHandlers) saveUploadSource(r *http.Request, taskID string, arch
 	defer file.Close()
 
 	size, err := io.Copy(file, r.Body)
+	if err == nil {
+		err = file.Close()
+	}
 	if err != nil {
 		_ = os.Remove(path)
 		return "", 0, err
@@ -490,7 +567,7 @@ func sameTaskCoreMetadataHistoryEntry(left postgres.MetadataHistoryEntry, right 
 
 func taskCoreActionAvailable(view app.TaskView, action domain.Action, komgaConfigured bool) bool {
 	hasResult := view.Result != nil && strings.TrimSpace(view.Result.ArtifactPath) != ""
-	for _, candidate := range domain.AvailableActions(view.Task.Status, hasResult, komgaConfigured) {
+	for _, candidate := range domain.AvailableActions(view.Task.Status, view.Input.HasSource(view.Task.Kind), hasResult, komgaConfigured) {
 		if candidate == action {
 			return true
 		}
@@ -503,38 +580,38 @@ func taskCoreCanAttachUploadSource(view app.TaskView) bool {
 }
 
 func safeTaskCoreArtifactPath(view app.TaskView) (string, string, error) {
-	if view.Result == nil {
-		return "", "", errors.New("missing artifact")
+	artifact, err := taskCoreArtifact(view)
+	if err != nil {
+		return "", "", err
 	}
-	artifactPath := strings.TrimSpace(view.Result.ArtifactPath)
-	if !isSafeExistingDownloadFile(artifactPath) {
-		return "", "", errors.New("artifact unavailable")
-	}
-	fileName := strings.TrimSpace(view.Result.ArtifactName)
-	if fileName == "" {
-		fileName = filepath.Base(artifactPath)
-	}
-	return artifactPath, fileName, nil
+	defer artifact.Close()
+	return artifact.File.Name(), artifact.FileName, nil
 }
-
+func taskCoreArtifact(view app.TaskView) (*apptasks.OpenedArtifact, error) {
+	if view.Result == nil {
+		return nil, apptasks.ErrArtifactUnavailable
+	}
+	access := apptasks.NewArtifactAccess(apptasks.ArtifactAccessConfig{DownloadRoot: os.Getenv("DOWNLOAD_PATH")})
+	artifact, err := access.Open(view.Result.ArtifactPath)
+	if err != nil {
+		return nil, err
+	}
+	if name := strings.TrimSpace(view.Result.ArtifactName); name != "" {
+		artifact.FileName = filepath.Base(name)
+	}
+	return artifact, nil
+}
 func openTaskCoreArtifact(view app.TaskView) (*os.File, os.FileInfo, string, error) {
-	artifactPath, fileName, err := safeTaskCoreArtifactPath(view)
+	artifact, err := taskCoreArtifact(view)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	file, err := os.Open(artifactPath)
+	info, err := artifact.File.Stat()
 	if err != nil {
+		_ = artifact.Close()
 		return nil, nil, "", err
 	}
-	info, err := file.Stat()
-	if err != nil || info.IsDir() {
-		_ = file.Close()
-		if err != nil {
-			return nil, nil, "", err
-		}
-		return nil, nil, "", errors.New("artifact is directory")
-	}
-	return file, info, fileName, nil
+	return artifact.File, info, artifact.FileName, nil
 }
 
 func taskCoreSeriesName(view app.TaskView) string {
@@ -542,4 +619,28 @@ func taskCoreSeriesName(view app.TaskView) string {
 		return ""
 	}
 	return strings.TrimSpace(view.Input.Metadata["series_name"])
+}
+
+func supportedArchiveName(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".zip", ".rar", ".7z":
+		return true
+	default:
+		return false
+	}
+}
+func (h *taskCoreHandlers) taskSettings(ctx context.Context) (*config.SettingsSnapshot, error) {
+	snapshot := config.DefaultSettingsSnapshot()
+	if h.defaultSettings != nil {
+		snapshot = *h.defaultSettings
+	}
+	if h.settingsProvider != nil {
+		var err error
+		snapshot, err = h.settingsProvider.GetSettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	snapshot = config.NormalizeSettingsSnapshot(snapshot)
+	return &snapshot, nil
 }

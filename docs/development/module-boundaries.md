@@ -57,7 +57,7 @@
 
 **应该做：**
 - 仓储实现
-- Redis Streams 队列实现
+- PostgreSQL Task Core 调度、lease 与执行代际检查
 - 压缩包处理
 - 文件存储
 - Telegraph 下载器与外部依赖实现
@@ -69,7 +69,7 @@
 ### Worker runtime
 
 **应该做：**
-- 取消息
+- 领取 PostgreSQL READY 任务
 - 调用应用用例或执行器
 - 上报进度
 - 推进状态变更
@@ -81,7 +81,7 @@
 
 ## 当前特殊约束
 
-### legacy adapter 约束
+### legacy-facing HTTP 兼容约束
 
 当前项目还保留 legacy-facing 接口与日志 payload，因此允许 adapter 层存在，但必须满足：
 

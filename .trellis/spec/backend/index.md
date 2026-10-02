@@ -17,6 +17,7 @@ current code; [README](../../../README.md) owns the broader project overview.
 | [Database](./database-guidelines.md) | pgx, transactions, migrations |
 | [Errors](./error-handling.md) | Service errors and HTTP contracts |
 | [Logging](./logging-guidelines.md) | Standard-library logging and redaction |
+| [Task runtime contracts](./task-runtime-contract.md) | Execution, uploads, settings and CI |
 | [Quality](./quality-guidelines.md) | Regression checks and review |
 
 ## Quality Check

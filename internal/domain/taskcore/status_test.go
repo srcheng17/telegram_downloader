@@ -55,6 +55,7 @@ func TestTransitionAllowsApprovedLifecycle(t *testing.T) {
 		{name: "cancel acknowledged", from: StatusCanceling, to: StatusCanceled, actor: ActorWorker},
 		{name: "failed retry", from: StatusFailed, to: StatusReady, actor: ActorAPI},
 		{name: "canceled retry", from: StatusCanceled, to: StatusReady, actor: ActorAPI},
+		{name: "expired lease failure", from: StatusRunning, to: StatusFailed, actor: ActorRecovery},
 		{name: "expired lease requeue", from: StatusRunning, to: StatusReady, actor: ActorRecovery},
 	}
 
@@ -111,14 +112,14 @@ func TestActionsComeFromDomainStateAndArtifacts(t *testing.T) {
 		}
 	}
 
-	if !CanRetry(StatusFailed) || !CanRetry(StatusCanceled) {
+	if !CanRetry(StatusFailed, true) || !CanRetry(StatusCanceled, true) {
 		t.Fatalf("failed and canceled tasks must be retryable")
 	}
-	if CanRetry(StatusSucceeded) || CanRetry(StatusReady) || CanRetry(StatusRunning) || CanRetry(StatusCanceling) || CanRetry(StatusCreated) {
+	if CanRetry(StatusSucceeded, true) || CanRetry(StatusReady, true) || CanRetry(StatusRunning, true) || CanRetry(StatusCanceling, true) || CanRetry(StatusCreated, true) {
 		t.Fatalf("only failed and canceled tasks must be retryable")
 	}
 
-	actions := AvailableActions(StatusSucceeded, true, true)
+	actions := AvailableActions(StatusSucceeded, true, true, true)
 	want := []Action{ActionDownload, ActionCopyToKomga}
 	if len(actions) != len(want) {
 		t.Fatalf("AvailableActions(succeeded, hasResult=true, komgaConfigured=true) len = %d, want %d", len(actions), len(want))
@@ -129,7 +130,7 @@ func TestActionsComeFromDomainStateAndArtifacts(t *testing.T) {
 		}
 	}
 
-	actions = AvailableActions(StatusSucceeded, true, false)
+	actions = AvailableActions(StatusSucceeded, true, true, false)
 	want = []Action{ActionDownload}
 	if len(actions) != len(want) {
 		t.Fatalf("AvailableActions(succeeded, hasResult=true, komgaConfigured=false) len = %d, want %d", len(actions), len(want))
@@ -140,11 +141,23 @@ func TestActionsComeFromDomainStateAndArtifacts(t *testing.T) {
 		}
 	}
 
-	if got := AvailableActions(StatusSucceeded, false, true); len(got) != 0 {
+	if got := AvailableActions(StatusSucceeded, true, false, true); len(got) != 0 {
 		t.Fatalf("AvailableActions(succeeded, hasResult=false, komgaConfigured=true) = %v, want no result actions", got)
 	}
 
-	if got := AvailableActions(StatusReady, false, true); len(got) != 1 || got[0] != ActionCancel {
+	if got := AvailableActions(StatusReady, false, false, true); len(got) != 1 || got[0] != ActionCancel {
 		t.Fatalf("AvailableActions(ready, hasResult=false, komgaConfigured=true) = %v, want [cancel]", got)
+	}
+}
+
+func TestRetryRequiresSource(t *testing.T) {
+	t.Parallel()
+	for _, status := range []Status{StatusFailed, StatusCanceled} {
+		if CanRetry(status, false) {
+			t.Fatalf("CanRetry(%s, false) = true", status)
+		}
+		if got := AvailableActions(status, false, false, false); len(got) != 0 {
+			t.Fatalf("AvailableActions(%s, false, false, false) = %v, want none", status, got)
+		}
 	}
 }

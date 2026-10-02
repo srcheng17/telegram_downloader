@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export INTERNAL_ENQUEUE_TOKEN="${INTERNAL_ENQUEUE_TOKEN:-local-e2e-token}"
+export INTERNAL_ENQUEUE_TOKEN=local-e2e-token
+export POSTGRES_DB=taskcore_e2e
+export POSTGRES_USER=taskcore_e2e
+export POSTGRES_PASSWORD=e2e-test-password
+export APP_UID="$(id -u)"
+export APP_GID="$(id -g)"
 
-if [[ -z "${COMPOSE_PROJECT_NAME:-}" ]]; then
-  export COMPOSE_PROJECT_NAME="telegraph_e2e_${RANDOM}_${RANDOM}"
-fi
+export COMPOSE_PROJECT_NAME="telegraph_e2e_${RANDOM}_${RANDOM}"
 
 if [[ -z "${APP_PORT:-}" ]]; then
   export APP_PORT="$(
@@ -19,7 +22,7 @@ sock.close()
 PY
   )"
 fi
-export E2E_BASE_URL="${E2E_BASE_URL:-http://127.0.0.1:${APP_PORT}}"
+export E2E_BASE_URL="http://127.0.0.1:${APP_PORT}"
 artifacts_dir="${E2E_ARTIFACTS_DIR:-tests/e2e/.artifacts}"
 rm -rf "${artifacts_dir}"
 mkdir -p "${artifacts_dir}"
@@ -39,7 +42,8 @@ temp_compose_override="$(mktemp)"
 
 mkdir -p \
   "${temp_data_root}/downloaded_images" \
-  "${temp_data_root}/temp_downloads"
+  "${temp_data_root}/temp_downloads" \
+  "${temp_data_root}/komga"
 
 cat > "${temp_compose_override}" <<EOF
 services:
@@ -47,13 +51,19 @@ services:
     volumes:
       - e2e_postgres:/var/lib/postgresql/data
   go-api:
-    volumes:
-      - ${temp_data_root}/downloaded_images:/app/downloaded_images
-      - ./web/static:/app/static:ro
-  go-worker:
-    volumes:
+    environment:
+      KOMGA_LIBRARY_ROOT: /app/komga
+    volumes: !override
       - ${temp_data_root}/downloaded_images:/app/downloaded_images
       - ${temp_data_root}/temp_downloads:/app/temp_downloads
+      - ${temp_data_root}/komga:/app/komga
+  go-worker:
+    volumes: !override
+      - ${temp_data_root}/downloaded_images:/app/downloaded_images
+      - ${temp_data_root}/temp_downloads:/app/temp_downloads
+  gateway:
+    ports: !override
+      - "127.0.0.1:${APP_PORT}:80"
 volumes:
   e2e_postgres: {}
 EOF
@@ -93,7 +103,12 @@ PY
 fi
 
 cleanup() {
-  compose down --volumes --remove-orphans
+  result_code=$?
+  if [[ "$result_code" -ne 0 || "${E2E_CAPTURE_LOGS_ALWAYS:-0}" == "1" ]]; then
+    compose ps > "${artifacts_dir}/compose-ps.on-exit.txt" || true
+    compose logs --no-color > "${artifacts_dir}/compose-logs.on-exit.txt" || true
+  fi
+  compose down --rmi local --volumes --remove-orphans || true
   if [[ -n "${temp_docker_config}" && -d "${temp_docker_config}" ]]; then
     rm -rf "${temp_docker_config}"
   fi
@@ -122,11 +137,6 @@ for i in $(seq 1 120); do
 done
 
 playwright_exit=0
-npx playwright test --config tests/e2e/playwright.config.ts --project "${PLAYWRIGHT_PROJECT}" || playwright_exit=$?
-
-if [[ "${playwright_exit}" -ne 0 || "${E2E_CAPTURE_LOGS_ALWAYS:-0}" == "1" ]]; then
-  compose ps > "${artifacts_dir}/compose-ps.on-exit.txt" || true
-  compose logs --no-color > "${artifacts_dir}/compose-logs.on-exit.txt" || true
-fi
+npx playwright test --config tests/e2e/playwright.config.ts --project="${PLAYWRIGHT_PROJECT}" "$@" || playwright_exit=$?
 
 exit "${playwright_exit}"

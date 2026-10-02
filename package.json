@@ -10,8 +10,8 @@
     "e2e:test": "bash tests/e2e/run-e2e.sh"
   },
   "devDependencies": {
-    "@playwright/test": "^1.53.0",
+    "@playwright/test": "^1.63.0",
     "eslint": "^8.57.1",
-    "vite": "^5.4.19"
+    "vite": "^8.3.2"
   }
 }

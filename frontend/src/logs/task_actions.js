@@ -1,3 +1,5 @@
+import { localizeServerMessage } from '../shared/server_messages.js';
+
 function normalizeActionName(action) {
     return String(action || '')
         .trim()
@@ -58,9 +60,13 @@ function canUseTaskAction(task, action) {
     return hasLegacyAction(task, action);
 }
 
-export async function runSuccessTaskAction({ api, taskId, mode, browserDownload }) {
+export async function runSuccessTaskAction({ api, taskId, mode, browserDownload, signal }) {
     if (String(mode || '').trim() === 'komga_copy') {
-        return api.postJson(`/api/tasks/${encodeURIComponent(taskId)}/copy-to-komga`, {});
+        const result = await api.postJson(`/api/tasks/${encodeURIComponent(taskId)}/copy-to-komga`, {}, { signal });
+        if (!result.response.ok || !result.payload || result.payload.ok !== true) {
+            throw new Error(localizeServerMessage(result.payload && result.payload.message, 'logs') || `复制失败（${result.response.status}）。`);
+        }
+        return result;
     }
     if (typeof browserDownload !== 'function') {
         throw new Error('browser download action is required');
@@ -68,8 +74,8 @@ export async function runSuccessTaskAction({ api, taskId, mode, browserDownload 
     return browserDownload(taskId);
 }
 
-export async function requestRetryTask(api, taskId) {
-    return api.postJson(`/api/tasks/${encodeURIComponent(taskId)}/retry`, {});
+export async function requestRetryTask(api, taskId, options = {}) {
+    return api.postJson(`/api/tasks/${encodeURIComponent(taskId)}/retry`, {}, options);
 }
 
 export function canCancelTaskAction(task) {

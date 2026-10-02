@@ -285,6 +285,10 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 }
 
 func (s Service) PackageCBZ(images []domain.DownloadedImage, metadata TaskMetadata, outputPath string) error {
+	return s.PackageCBZContext(context.Background(), images, metadata, outputPath)
+}
+
+func (s Service) PackageCBZContext(ctx context.Context, images []domain.DownloadedImage, metadata TaskMetadata, outputPath string) error {
 	localImages := make([]LocalImage, 0, len(images))
 	for index, image := range images {
 		localImages = append(localImages, LocalImage{
@@ -298,7 +302,7 @@ func (s Service) PackageCBZ(images []domain.DownloadedImage, metadata TaskMetada
 		return err
 	}
 
-	return PackCBZ(localImages, comicInfo, outputPath)
+	return PackCBZContext(ctx, localImages, comicInfo, outputPath)
 }
 
 func TaskMetadataFromTask(task domain.TaskLog) TaskMetadata {

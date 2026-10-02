@@ -19,7 +19,7 @@ function isTruthy(value) {
 }
 
 function getCandidateProjects(options = {}) {
-  const env = options.env || {};
+  const env = options.env || process.env;
   const platform = options.platform || process.platform;
   const ci = options.ci === undefined ? isTruthy(env.CI) : Boolean(options.ci);
   const explicitProject = normalizeProjectName(env.E2E_BROWSER_PROJECT || env.PLAYWRIGHT_PROJECT);

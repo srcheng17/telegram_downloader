@@ -3,9 +3,13 @@ package taskcore
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/google/uuid"
+	"github.com/ryancheng/telegram-downloader/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,7 +43,7 @@ func TestHeartbeatRequiresLeaseOwner(t *testing.T) {
 		t.Fatalf("ClaimNext: %v", err)
 	}
 
-	_, err = store.Heartbeat(ctx, claimed.ID, "worker-b", time.Minute)
+	_, err = store.Heartbeat(ctx, claimed.ID, "worker-b", claimed.Generation, time.Minute)
 	if !errors.Is(err, app.ErrConflict) {
 		t.Fatalf("heartbeat by stale worker err = %v, want ErrConflict", err)
 	}
@@ -53,12 +57,12 @@ func TestCompleteRequiresMatchingWorkerAndAttempt(t *testing.T) {
 		t.Fatalf("ClaimNext: %v", err)
 	}
 
-	staleWorker := app.CompleteInput{TaskID: claimed.ID, WorkerID: "worker-b", Attempt: claimed.Attempt, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz", ArtifactSize: 1}
+	staleWorker := app.CompleteInput{TaskID: claimed.ID, WorkerID: "worker-b", Attempt: claimed.Attempt, Generation: claimed.Generation, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz", ArtifactSize: 1}
 	if err := store.Complete(ctx, staleWorker); !errors.Is(err, app.ErrConflict) {
 		t.Fatalf("complete with stale worker err = %v, want ErrConflict", err)
 	}
 
-	staleAttempt := app.CompleteInput{TaskID: claimed.ID, WorkerID: "worker-a", Attempt: claimed.Attempt + 1, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz", ArtifactSize: 1}
+	staleAttempt := app.CompleteInput{TaskID: claimed.ID, WorkerID: "worker-a", Attempt: claimed.Attempt + 1, Generation: claimed.Generation, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz", ArtifactSize: 1}
 	if err := store.Complete(ctx, staleAttempt); !errors.Is(err, app.ErrConflict) {
 		t.Fatalf("complete with stale attempt err = %v, want ErrConflict", err)
 	}
@@ -135,6 +139,46 @@ func TestRetryResetsAttemptAndClearsErrorLeaseAndResult(t *testing.T) {
 	}
 }
 
+func TestRetryRequiresExecutableSourceWhileLocked(t *testing.T) {
+	ctx, store := openTaskCoreTestStore(t)
+	for _, kind := range []domain.Kind{domain.KindUpload, domain.KindURL} {
+		for _, status := range []domain.Status{domain.StatusFailed, domain.StatusCanceled, domain.StatusCreated} {
+			for _, hasSource := range []bool{false, true} {
+				t.Run(string(kind)+"/"+string(status)+"/source="+fmt.Sprint(hasSource), func(t *testing.T) {
+					id := uuid.NewString()
+					cleanupTaskCoreRows(t, ctx, store, id)
+					input := app.Input{TaskID: id, URL: " ", CanonicalURL: " ", SourceArchivePath: " "}
+					if hasSource {
+						if kind == domain.KindUpload {
+							input.SourceArchivePath = "/tmp/source.zip"
+						} else {
+							input.CanonicalURL = "https://telegra.ph/retry"
+						}
+					}
+					_, err := store.CreateTask(ctx, app.Task{ID: id, Kind: kind, Status: status}, input, domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, ""))
+					if err != nil {
+						t.Fatal(err)
+					}
+					got, err := store.Retry(ctx, id, domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, ""))
+					if hasSource && status != domain.StatusCreated {
+						if err != nil || got.Status != domain.StatusReady {
+							t.Fatalf("Retry with source = %#v, %v, want READY", got, err)
+						}
+					} else {
+						if !errors.Is(err, app.ErrConflict) {
+							t.Fatalf("Retry without source err = %v, want ErrConflict", err)
+						}
+						view, err := store.GetTask(ctx, id)
+						if err != nil || view.Task.Status != status {
+							t.Fatalf("Rejected retry mutated task = %#v, %v", view, err)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestCompletePersistsResultForGetTask(t *testing.T) {
 	ctx, store := openTaskCoreTestStore(t)
 	const taskID = "99999999-9999-9999-9999-999999999992"
@@ -148,6 +192,7 @@ func TestCompletePersistsResultForGetTask(t *testing.T) {
 		TaskID:       claimed.ID,
 		WorkerID:     "worker-complete",
 		Attempt:      claimed.Attempt,
+		Generation:   claimed.Generation,
 		ArtifactPath: "/tmp/complete.cbz",
 		ArtifactName: "complete.cbz",
 		ArtifactSize: 42,
@@ -195,6 +240,13 @@ func openTaskCoreTestStore(t *testing.T) (context.Context, *Store) {
 		t.Fatalf("apply task core migration: %v", err)
 	}
 
+	executionMigration, err := os.ReadFile(filepath.Join("..", "migrations", "014_task_core_execution_settings.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(executionMigration)); err != nil {
+		t.Fatal(err)
+	}
 	store := NewStore(pool)
 	cleanupTaskCoreRows(t, ctx, store,
 		"44444444-4444-4444-4444-444444444444",
@@ -286,5 +338,174 @@ func insertFailedTaskWithResult(t *testing.T, ctx context.Context, store *Store,
 	`, id, expiresAt)
 	if err != nil {
 		t.Fatalf("insert result for task %s: %v", id, err)
+	}
+}
+
+func TestCreateURLTaskAtomicallyReusesActiveAndConfirmsSuccess(t *testing.T) {
+	ctx, store := openTaskCoreTestStore(t)
+	ids := make([]string, 12)
+	for i := range ids {
+		ids[i] = uuid.NewString()
+	}
+	cleanupTaskCoreRows(t, ctx, store, ids...)
+	canonical := "https://telegra.ph/dedupe-" + ids[0]
+	results := make(chan app.CreateURLResult, len(ids))
+	errs := make(chan error, len(ids))
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			result, err := store.CreateURLTask(ctx, app.Task{ID: id, Kind: domain.KindURL, Status: domain.StatusReady}, app.Input{CanonicalURL: canonical, URL: canonical, RuntimeSettings: &config.SettingsSnapshot{Timeout: 17, Retries: 0, ImageConcurrency: 3}}, domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, "ready"), true)
+			if err != nil {
+				errs <- err
+			} else {
+				results <- result
+			}
+		}(id)
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	winner := ""
+	created := 0
+	for result := range results {
+		if winner == "" {
+			winner = result.Task.ID
+		}
+		if result.Task.ID != winner {
+			t.Fatalf("duplicate task %s != %s", result.Task.ID, winner)
+		}
+		if !result.Reused {
+			created++
+		}
+	}
+	if created != 1 {
+		t.Fatalf("created=%d", created)
+	}
+	view, err := store.GetTask(ctx, winner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Input.RuntimeSettings == nil || view.Input.RuntimeSettings.Timeout != 17 || view.Input.RuntimeSettings.Retries != 0 || view.Input.RuntimeSettings.ImageConcurrency != 3 {
+		t.Fatalf("snapshot=%+v", view.Input.RuntimeSettings)
+	}
+	claim, err := store.ClaimNext(ctx, "worker-a", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(ctx, app.CompleteInput{TaskID: claim.ID, WorkerID: "worker-a", Attempt: claim.Attempt, Generation: claim.Generation, ArtifactPath: "downloaded_images/result.cbz", ArtifactName: "result.cbz", ArtifactSize: 7}); err != nil {
+		t.Fatal(err)
+	}
+	nextID := uuid.NewString()
+	cleanupTaskCoreRows(t, ctx, store, nextID)
+	task := app.Task{ID: nextID, Kind: domain.KindURL, Status: domain.StatusReady}
+	input := app.Input{URL: canonical, CanonicalURL: canonical}
+	progress := domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, "ready")
+	confirmed, err := store.CreateURLTask(ctx, task, input, progress, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed.NeedsConfirmation || !confirmed.Reused || confirmed.Result == nil || confirmed.Task.ID != winner {
+		t.Fatalf("confirmation=%+v", confirmed)
+	}
+	forced, err := store.CreateURLTask(ctx, task, input, progress, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forced.Reused || forced.NeedsConfirmation || forced.Task.ID != nextID {
+		t.Fatalf("force=%+v", forced)
+	}
+}
+
+func TestExecutionGenerationFencesSameOwnerAfterRetry(t *testing.T) {
+	ctx, store := openTaskCoreTestStore(t)
+	id := uuid.NewString()
+	cleanupTaskCoreRows(t, ctx, store, id)
+	insertTaskCoreReadyTask(t, ctx, store, id)
+	old, err := store.ClaimNext(ctx, "same-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Fail(ctx, app.FailInput{TaskID: id, WorkerID: "same-worker", Attempt: old.Attempt, Generation: old.Generation, Message: "first failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Retry(ctx, id, domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, "retry")); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.ClaimNext(ctx, "same-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Attempt != 1 || current.Generation <= old.Generation {
+		t.Fatalf("retry reused generation: old=%+v current=%+v", old, current)
+	}
+	if _, err := store.Heartbeat(ctx, id, "same-worker", old.Generation, time.Minute); !errors.Is(err, app.ErrConflict) {
+		t.Fatalf("stale heartbeat err=%v", err)
+	}
+	p := domain.NewProgress(domain.PhaseDownloading, 2, 4, domain.UnitImages, "old")
+	if err := store.UpdateProgress(ctx, id, "same-worker", old.Generation, p); !errors.Is(err, app.ErrConflict) {
+		t.Fatalf("stale progress err=%v", err)
+	}
+	if err := store.Complete(ctx, app.CompleteInput{TaskID: id, WorkerID: "same-worker", Attempt: old.Attempt, Generation: old.Generation, ArtifactPath: "old.cbz", ArtifactName: "old.cbz"}); !errors.Is(err, app.ErrConflict) {
+		t.Fatalf("stale complete err=%v", err)
+	}
+	if err := store.Fail(ctx, app.FailInput{TaskID: id, WorkerID: "same-worker", Attempt: old.Attempt, Generation: old.Generation, Message: "stale"}); !errors.Is(err, app.ErrConflict) {
+		t.Fatalf("stale fail err=%v", err)
+	}
+	if err := store.UpdateProgress(ctx, id, "same-worker", current.Generation, domain.NewProgress(domain.PhaseDownloading, 1, 3, domain.UnitImages, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Transition(ctx, id, domain.StatusCanceling, domain.ActorAPI, "cancel"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AcknowledgeCancel(ctx, id, "same-worker", old.Attempt, old.Generation); !errors.Is(err, app.ErrConflict) {
+		t.Fatalf("stale cancel err=%v", err)
+	}
+	if err := store.AcknowledgeCancel(ctx, id, "same-worker", current.Attempt, current.Generation); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQueryTasksCountsAndFindsRowsPastOldScanLimit(t *testing.T) {
+	ctx, store := openTaskCoreTestStore(t)
+	marker := "query-" + uuid.NewString()
+	t.Cleanup(func() {
+		if _, err := store.pool.Exec(context.Background(), `DELETE FROM task_core_tasks WHERE id IN (SELECT task_id FROM task_core_inputs WHERE url = $1)`, marker); err != nil {
+			t.Fatal(err)
+		}
+	})
+	_, err := store.pool.Exec(ctx, `WITH inserted AS (
+ INSERT INTO task_core_tasks(id,kind,status,created_at)
+ SELECT md5($1 || n::text)::uuid,'url',CASE WHEN n=1 THEN 'FAILED' ELSE 'SUCCEEDED' END,now()+n*interval '1 second'
+ FROM generate_series(1,10005) n RETURNING id)
+ INSERT INTO task_core_inputs(task_id,url,canonical_url,metadata)
+ SELECT id,$1,$1,jsonb_build_object('comic_name',CASE WHEN id=md5($1||'1')::uuid THEN 'needle_%' ELSE 'other' END) FROM inserted`, marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.QueryTasks(ctx, app.TaskQuery{Status: domain.StatusFailed, Keyword: "needle_%", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Tasks) != 1 || page.Tasks[0].Input.Metadata["comic_name"] != "needle_%" {
+		t.Fatalf("filtered=%+v", page)
+	}
+	page, err = store.QueryTasks(ctx, app.TaskQuery{Keyword: marker, Limit: 5, Offset: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 10005 || len(page.Tasks) != 5 {
+		t.Fatalf("page total=%d rows=%d", page.Total, len(page.Tasks))
+	}
+	counts, err := store.StatusCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[domain.StatusSucceeded] != 10004 || counts[domain.StatusFailed] != 1 {
+		t.Fatalf("counts=%+v", counts)
 	}
 }

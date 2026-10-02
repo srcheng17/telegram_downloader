@@ -25,6 +25,7 @@ import {
 export function createLogsModule(win, doc) {
     const state = win.__telegraphLogsState || {
         mountedRoot: null,
+        pageController: null,
         currentPage: 1,
         totalPages: 1,
         perPage: 25,
@@ -479,6 +480,10 @@ export function createLogsModule(win, doc) {
                 buildLogsUrl(state.filters, page, state.perPage),
                 { signal: controller.signal },
             );
+            if (controller.signal.aborted || state.inflightController !== controller) {
+                shouldSchedule = false;
+                return;
+            }
             if (!response.ok) {
                 const httpError = new Error(`HTTP ${response.status}`);
                 httpError.statusCode = response.status;
@@ -503,7 +508,7 @@ export function createLogsModule(win, doc) {
             state.consecutiveFailures = 0;
             nextDelayMs = resolveNextPollDelay(Boolean(data.has_active_tasks));
         } catch (error) {
-            if (error && error.name === 'AbortError') {
+            if (controller.signal.aborted || state.inflightController !== controller || (error && error.name === 'AbortError')) {
                 shouldSchedule = false;
                 return;
             }
@@ -520,9 +525,7 @@ export function createLogsModule(win, doc) {
         } finally {
             if (state.inflightController === controller) {
                 state.inflightController = null;
-            }
-            if (shouldSchedule) {
-                scheduleNextFetch(nextDelayMs);
+                if (shouldSchedule) scheduleNextFetch(nextDelayMs);
             }
         }
     }
@@ -569,6 +572,7 @@ export function createLogsModule(win, doc) {
         }
 
         state.mountedRoot = root;
+        state.pageController = new AbortController();
         state.currentPage = 1;
         state.totalPages = 1;
         state.filters = { status: '', q: '' };
@@ -685,6 +689,10 @@ export function createLogsModule(win, doc) {
     }
 
     function unmount() {
+        if (state.pageController) state.pageController.abort();
+        state.pageController = null;
+        state.downloadInProgressTaskIds.clear();
+        state.retryInProgressTaskIds.clear();
         const filterForm = doc.getElementById('logs-filter-form');
         const clearBtn = doc.getElementById('clear-filters');
         const prevBtn = doc.getElementById('prev-page');

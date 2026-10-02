@@ -31,6 +31,7 @@
 
 卷：
 - `./downloaded_images:/app/downloaded_images`
+- `./temp_downloads:/app/temp_downloads`
 - `./web/static:/app/static:ro`
 - `${KOMGA_LIBRARY_ROOT_HOST:-/Users/ryancheng/docker_data/komga/data/myReadingManga}:${KOMGA_LIBRARY_ROOT:-/app/komga/myReadingManga}:rw`
 
@@ -103,23 +104,18 @@
 
 ### 1. 前端源码修改后必须同步更新 bundle
 
-当前 Compose / 运行链路不会自动执行 `vite build`。因此：
+Docker 构建阶段会执行 `vite build`，镜像包含静态资源；默认 Compose 的只读资源挂载会覆盖镜像目录。因此：
 
 - 改了 `frontend/src/`
 - 必须同时更新 `web/static/dist/*.bundle.js`
 
 否则容器里仍会运行旧前端逻辑。
 
-### 2. gateway 有时需要跟着 go-api 一起重启
+### 2. gateway 使用 Docker DNS 动态解析
 
-在某些本地 Docker 环境下，`go-api` 重建后 nginx 可能短时间保留旧 upstream IP，导致：
-
-- `/logs` 等页面偶发 `502`
-
-经验性解决办法通常是：
-- 额外执行一次 `docker compose restart gateway`
-
-这说明当前网关刷新语义仍带有环境依赖。
+当前 nginx upstream 使用 `server go-api:5000 resolve`、共享 zone 和
+`resolver 127.0.0.11 valid=10s`。重建 API 后会刷新地址；如出现 502，应检查
+API 健康、Docker DNS 和网关日志，不把重启 gateway 当作根因证明。
 
 ### 3. Komga copy 依赖容器挂载，而不是宿主机直写
 
@@ -146,3 +142,7 @@
 - 更稳定的开发/运行脚本；
 - 更标准化的 runbook；
 - 更少依赖经验记忆的发布与排障过程。
+
+## 下载设置与权限
+
+`APP_UID`/`APP_GID` 控制 API/worker 用户，默认 10001:10001；本地启动脚本使用宿主用户 ID。共享下载、临时、Komga 目录必须可写。新任务保存 app_settings 的超时、重试和图片并发快照；旧无快照任务使用 worker 环境默认值。当前没有任务并发与日志/文件到期清理设置。

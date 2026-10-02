@@ -3,13 +3,9 @@ package httpv2
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"sync"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/ryancheng/telegram-downloader/internal/config"
 )
@@ -89,121 +85,4 @@ func (h *SettingsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, snapshot)
-}
-
-type appSettingsExecer interface {
-	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
-}
-
-var appSettingsInit sync.Map
-
-func (s *PostgresTaskStore) GetSettings(ctx context.Context) (config.SettingsSnapshot, error) {
-	if err := s.ensureAppSettingsDefaultRow(ctx); err != nil {
-		return config.SettingsSnapshot{}, err
-	}
-
-	var snapshot config.SettingsSnapshot
-	err := s.db.QueryRow(
-		ctx,
-		`
-		SELECT timeout, retries, image_concurrency, download_action_mode
-		FROM app_settings
-		WHERE id = 1
-		`,
-	).Scan(&snapshot.Timeout, &snapshot.Retries, &snapshot.ImageConcurrency, &snapshot.DownloadActionMode)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return config.DefaultSettingsSnapshot(), nil
-		}
-		return config.SettingsSnapshot{}, err
-	}
-	return config.NormalizeSettingsSnapshot(snapshot), nil
-}
-
-func (s *PostgresTaskStore) UpdateSettings(ctx context.Context, snapshot config.SettingsSnapshot) (config.SettingsSnapshot, error) {
-	if err := s.ensureAppSettingsDefaultRow(ctx); err != nil {
-		return config.SettingsSnapshot{}, err
-	}
-
-	normalized := config.NormalizeSettingsSnapshot(snapshot)
-	execer, err := s.settingsExecer()
-	if err != nil {
-		return config.SettingsSnapshot{}, err
-	}
-
-	_, err = execer.Exec(
-		ctx,
-		`
-		INSERT INTO app_settings (
-			id, timeout, retries, image_concurrency, download_action_mode, updated_at
-		) VALUES (
-			1, $1, $2, $3, $4, NOW()
-		)
-		ON CONFLICT (id) DO UPDATE
-		SET
-			timeout = EXCLUDED.timeout,
-			retries = EXCLUDED.retries,
-			image_concurrency = EXCLUDED.image_concurrency,
-			download_action_mode = EXCLUDED.download_action_mode,
-			updated_at = NOW()
-		`,
-		normalized.Timeout,
-		normalized.Retries,
-		normalized.ImageConcurrency,
-		normalized.DownloadActionMode,
-	)
-	if err != nil {
-		return config.SettingsSnapshot{}, err
-	}
-
-	return normalized, nil
-}
-
-func (s *PostgresTaskStore) ensureAppSettingsDefaultRow(ctx context.Context) error {
-	if s == nil || s.db == nil {
-		return errors.New("v2 task database is not configured")
-	}
-	execer, err := s.settingsExecer()
-	if err != nil {
-		return err
-	}
-
-	key := execer
-	if _, ok := appSettingsInit.Load(key); ok {
-		return nil
-	}
-
-	defaults := config.DefaultSettingsSnapshot()
-	_, err = execer.Exec(
-		ctx,
-		`
-		INSERT INTO app_settings (
-			id, timeout, retries, image_concurrency, download_action_mode, updated_at
-		) VALUES (
-			1, $1, $2, $3, $4, NOW()
-		)
-		ON CONFLICT (id) DO NOTHING
-		`,
-		defaults.Timeout,
-		defaults.Retries,
-		defaults.ImageConcurrency,
-		defaults.DownloadActionMode,
-	)
-	if err != nil {
-		return err
-	}
-	appSettingsInit.Store(key, struct{}{})
-	return nil
-}
-
-func (s *PostgresTaskStore) settingsExecer() (appSettingsExecer, error) {
-	if s == nil || s.db == nil {
-		return nil, errors.New("v2 task database is not configured")
-	}
-
-	execer, ok := s.db.(appSettingsExecer)
-	if !ok {
-		return nil, errors.New("v2 task database does not support settings writes")
-	}
-	return execer, nil
 }

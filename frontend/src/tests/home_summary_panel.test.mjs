@@ -44,6 +44,8 @@ test('createHomeModule mount loads summary without throwing', async () => {
   };
   const doc = {
     body: {},
+    addEventListener() {},
+    removeEventListener() {},
     getElementById(id) { return Object.prototype.hasOwnProperty.call(nodes, id) ? nodes[id] : null; },
     querySelector() { return null; },
   };
@@ -54,8 +56,8 @@ test('createHomeModule mount loads summary without throwing', async () => {
     sessionStorage: { getItem() { return null; }, setItem() {} },
     addEventListener() {},
     removeEventListener() {},
-    setInterval() { return 1; },
-    clearInterval() {},
+    setTimeout() { return 1; },
+    clearTimeout() {},
   };
 
   const module = createHomeModule(win, doc);

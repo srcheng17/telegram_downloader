@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
+	"github.com/ryancheng/telegram-downloader/internal/config"
 	domain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
 )
 
@@ -35,27 +36,79 @@ type executor interface {
 }
 
 func (s *Store) CreateTask(ctx context.Context, task app.Task, input app.Input, progress domain.Progress) (app.Task, error) {
-	now := s.clock()
-	if task.CreatedAt.IsZero() {
-		task.CreatedAt = now
-	}
-	task.UpdatedAt = now
-	if task.Attempt < 0 {
-		task.Attempt = 0
-	}
-	input.TaskID = task.ID
-
-	metadata, err := encodeMetadata(input.Metadata)
-	if err != nil {
-		return app.Task{}, err
-	}
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return app.Task{}, err
 	}
 	defer rollback(ctx, tx)
+	created, err := s.insertTask(ctx, tx, task, input, progress)
+	if err != nil {
+		return app.Task{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return app.Task{}, err
+	}
+	return created, nil
+}
 
+func (s *Store) CreateURLTask(ctx context.Context, task app.Task, input app.Input, progress domain.Progress, force bool) (app.CreateURLResult, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return app.CreateURLResult{}, err
+	}
+	defer rollback(ctx, tx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, input.CanonicalURL); err != nil {
+		return app.CreateURLResult{}, err
+	}
+	view, err := scanTaskView(tx.QueryRow(ctx, taskViewQuery()+`
+ WHERE t.kind = 'url' AND i.canonical_url = $1 AND t.status IN ('READY', 'RUNNING', 'CANCELING')
+ ORDER BY t.created_at DESC, t.id DESC LIMIT 1`, input.CanonicalURL))
+	if err == nil {
+		return app.CreateURLResult{Task: view.Task, Reused: true, Result: view.Result}, tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return app.CreateURLResult{}, err
+	}
+	if !force {
+		view, err = scanTaskView(tx.QueryRow(ctx, taskViewQuery()+`
+ WHERE t.kind = 'url' AND i.canonical_url = $1 AND t.status = 'SUCCEEDED' AND r.task_id IS NOT NULL
+ ORDER BY t.created_at DESC, t.id DESC LIMIT 1`, input.CanonicalURL))
+		if err == nil {
+			return app.CreateURLResult{Task: view.Task, Reused: true, NeedsConfirmation: true, Result: view.Result}, tx.Commit(ctx)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return app.CreateURLResult{}, err
+		}
+	}
+	created, err := s.insertTask(ctx, tx, task, input, progress)
+	if err != nil {
+		return app.CreateURLResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return app.CreateURLResult{}, err
+	}
+	return app.CreateURLResult{Task: created}, nil
+}
+
+func (s *Store) insertTask(ctx context.Context, tx pgx.Tx, task app.Task, input app.Input, progress domain.Progress) (app.Task, error) {
+	now := s.clock()
+	if task.CreatedAt.IsZero() {
+		task.CreatedAt = now
+	}
+	task.UpdatedAt = now
+	input.TaskID = task.ID
+	metadata, err := encodeMetadata(input.Metadata)
+	if err != nil {
+		return app.Task{}, err
+	}
+	var runtimeSettings any
+	if input.RuntimeSettings != nil {
+		encoded, err := json.Marshal(input.RuntimeSettings)
+		if err != nil {
+			return app.Task{}, err
+		}
+		runtimeSettings = string(encoded)
+	}
 	var readyAt *time.Time
 	if task.Status == domain.StatusReady {
 		readyAt = &now
@@ -72,9 +125,9 @@ func (s *Store) CreateTask(ctx context.Context, task app.Task, input app.Input, 
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO task_core_inputs (
-			task_id, url, canonical_url, source_archive_name, source_archive_path, source_archive_size, metadata
-		) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7::jsonb)
-	`, input.TaskID, input.URL, input.CanonicalURL, input.SourceArchiveName, input.SourceArchivePath, nullablePositiveSize(input.SourceArchiveSize), string(metadata))
+			task_id, url, canonical_url, source_archive_name, source_archive_path, source_archive_size, metadata, runtime_settings
+		) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7::jsonb, $8::jsonb)
+	`, input.TaskID, input.URL, input.CanonicalURL, input.SourceArchiveName, input.SourceArchivePath, nullablePositiveSize(input.SourceArchiveSize), string(metadata), runtimeSettings)
 	if err != nil {
 		return app.Task{}, mapPgError(err)
 	}
@@ -86,9 +139,6 @@ func (s *Store) CreateTask(ctx context.Context, task app.Task, input app.Input, 
 		return app.Task{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return app.Task{}, err
-	}
 	return task, nil
 }
 
@@ -131,7 +181,7 @@ func (s *Store) Transition(ctx context.Context, taskID string, to domain.Status,
 		    finished_at = CASE WHEN $2 IN ('SUCCEEDED', 'FAILED', 'CANCELED') THEN $3 ELSE finished_at END,
 		    last_error = CASE WHEN $2 = 'FAILED' THEN NULLIF($4, '') ELSE last_error END
 		WHERE id = $1
-		RETURNING id, kind, status, attempt, last_error, lease_owner, lease_expires_at, created_at, updated_at
+		RETURNING id, kind, status, attempt, generation, last_error, lease_owner, lease_expires_at, created_at, updated_at
 	`, taskID, string(to), now, strings.TrimSpace(message)))
 	if err != nil {
 		return app.Task{}, err
@@ -189,7 +239,7 @@ func (s *Store) AttachUploadSource(ctx context.Context, input app.AttachUploadSo
 		UPDATE task_core_tasks
 		SET status = 'READY', ready_at = $2, updated_at = $2
 		WHERE id = $1
-		RETURNING id, kind, status, attempt, last_error, lease_owner, lease_expires_at, created_at, updated_at
+		RETURNING id, kind, status, attempt, generation, last_error, lease_owner, lease_expires_at, created_at, updated_at
 	`, input.TaskID, now))
 	if err != nil {
 		return app.Task{}, err
@@ -215,14 +265,18 @@ func (s *Store) Retry(ctx context.Context, taskID string, progress domain.Progre
 	}
 	defer rollback(ctx, tx)
 
-	current, err := lockTaskStatus(ctx, tx, taskID)
+	view, err := scanTaskView(tx.QueryRow(ctx, taskViewQuery()+` WHERE t.id = $1 FOR UPDATE OF t`, taskID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return app.Task{}, app.ErrNotFound
+	}
 	if err != nil {
 		return app.Task{}, err
 	}
-	to := domain.StatusReady
-	if err := domain.ValidateTransition(current, to, domain.ActorAPI); err != nil {
+	if !domain.CanRetry(view.Task.Status, view.Input.HasSource(view.Task.Kind)) {
 		return app.Task{}, app.ErrConflict
 	}
+	current := view.Task.Status
+	to := domain.StatusReady
 
 	_, err = tx.Exec(ctx, `DELETE FROM task_core_results WHERE task_id = $1`, taskID)
 	if err != nil {
@@ -244,7 +298,7 @@ func (s *Store) Retry(ctx context.Context, taskID string, progress domain.Progre
 		    heartbeat_at = NULL,
 		    updated_at = $2
 		WHERE id = $1
-		RETURNING id, kind, status, attempt, last_error, lease_owner, lease_expires_at, created_at, updated_at
+		RETURNING id, kind, status, attempt, generation, last_error, lease_owner, lease_expires_at, created_at, updated_at
 	`, taskID, now))
 	if err != nil {
 		return app.Task{}, err
@@ -285,6 +339,7 @@ func (s *Store) ClaimNext(ctx context.Context, workerID string, leaseTTL time.Du
 		UPDATE task_core_tasks t
 		SET status = 'RUNNING',
 		    attempt = candidate.attempt + 1,
+ generation = t.generation + 1,
 		    started_at = $3::timestamptz,
 		    updated_at = $3::timestamptz,
 		    lease_owner = $1,
@@ -292,7 +347,7 @@ func (s *Store) ClaimNext(ctx context.Context, workerID string, leaseTTL time.Du
 		    heartbeat_at = $3::timestamptz
 		FROM candidate
 		WHERE t.id = candidate.id
-		RETURNING t.id, t.kind, t.status, t.attempt, t.last_error, t.lease_owner, t.lease_expires_at, t.created_at, t.updated_at
+		RETURNING t.id, t.kind, t.status, t.attempt, t.generation, t.last_error, t.lease_owner, t.lease_expires_at, t.created_at, t.updated_at
 	`, workerID, intervalString(leaseTTL), now))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -312,7 +367,7 @@ func (s *Store) ClaimNext(ctx context.Context, workerID string, leaseTTL time.Du
 	return &task, nil
 }
 
-func (s *Store) Heartbeat(ctx context.Context, taskID string, workerID string, leaseTTL time.Duration) (app.HeartbeatResult, error) {
+func (s *Store) Heartbeat(ctx context.Context, taskID string, workerID string, generation int64, leaseTTL time.Duration) (app.HeartbeatResult, error) {
 	now := s.clock()
 	var status string
 	err := s.pool.QueryRow(ctx, `
@@ -320,9 +375,9 @@ func (s *Store) Heartbeat(ctx context.Context, taskID string, workerID string, l
 		SET lease_expires_at = $4::timestamptz + $3::interval,
 		    heartbeat_at = $4::timestamptz,
 		    updated_at = $4::timestamptz
-		WHERE id = $1 AND lease_owner = $2 AND status IN ('RUNNING', 'CANCELING')
+		WHERE id = $1 AND lease_owner = $2 AND generation = $5 AND status IN ('RUNNING', 'CANCELING')
 		RETURNING status
-	`, taskID, workerID, intervalString(leaseTTL), now).Scan(&status)
+	`, taskID, workerID, intervalString(leaseTTL), now, generation).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if exists, existsErr := taskExists(ctx, s.pool, taskID); existsErr != nil {
 			return app.HeartbeatResult{}, existsErr
@@ -337,15 +392,24 @@ func (s *Store) Heartbeat(ctx context.Context, taskID string, workerID string, l
 	return app.HeartbeatResult{CancelRequested: domain.Status(status) == domain.StatusCanceling}, nil
 }
 
-func (s *Store) UpdateProgress(ctx context.Context, taskID string, progress domain.Progress) error {
-	exists, err := taskExists(ctx, s.pool, taskID)
+func (s *Store) UpdateProgress(ctx context.Context, taskID string, workerID string, generation int64, progress domain.Progress) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return app.ErrNotFound
+	defer rollback(ctx, tx)
+	var id string
+	err = tx.QueryRow(ctx, `SELECT id FROM task_core_tasks WHERE id = $1 AND lease_owner = $2 AND generation = $3 AND status = 'RUNNING' FOR UPDATE`, taskID, workerID, generation).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return conditionalUpdateError(ctx, tx, taskID)
 	}
-	return upsertProgress(ctx, s.pool, taskID, progress, s.clock())
+	if err != nil {
+		return err
+	}
+	if err := upsertProgress(ctx, tx, taskID, progress, s.clock()); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) Complete(ctx context.Context, in app.CompleteInput) error {
@@ -361,7 +425,7 @@ func (s *Store) Complete(ctx context.Context, in app.CompleteInput) error {
 
 	from := domain.StatusRunning
 	to := domain.StatusSucceeded
-	if err := updateWorkerTerminal(ctx, tx, in.TaskID, in.WorkerID, in.Attempt, to, "", now); err != nil {
+	if err := updateWorkerTerminal(ctx, tx, in.TaskID, in.WorkerID, in.Attempt, in.Generation, to, "", now); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `
@@ -403,7 +467,7 @@ func (s *Store) Fail(ctx context.Context, in app.FailInput) error {
 
 	from := domain.StatusRunning
 	to := domain.StatusFailed
-	if err := updateWorkerTerminal(ctx, tx, in.TaskID, in.WorkerID, in.Attempt, to, message, now); err != nil {
+	if err := updateWorkerTerminal(ctx, tx, in.TaskID, in.WorkerID, in.Attempt, in.Generation, to, message, now); err != nil {
 		return err
 	}
 	if err := insertEvent(ctx, tx, in.TaskID, "TASK_FAILED", &from, &to, domain.ActorWorker, message, map[string]any{"worker_id": in.WorkerID, "attempt": in.Attempt}, now); err != nil {
@@ -412,7 +476,7 @@ func (s *Store) Fail(ctx context.Context, in app.FailInput) error {
 	return tx.Commit(ctx)
 }
 
-func (s *Store) AcknowledgeCancel(ctx context.Context, taskID string, workerID string, attempt int) error {
+func (s *Store) AcknowledgeCancel(ctx context.Context, taskID string, workerID string, attempt int, generation int64) error {
 	if err := domain.ValidateTransition(domain.StatusCanceling, domain.StatusCanceled, domain.ActorWorker); err != nil {
 		return err
 	}
@@ -431,8 +495,8 @@ func (s *Store) AcknowledgeCancel(ctx context.Context, taskID string, workerID s
 		    heartbeat_at = NULL,
 		    finished_at = $4,
 		    updated_at = $4
-		WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND status = 'CANCELING'
-	`, taskID, workerID, attempt, now)
+		WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND generation = $5 AND status = 'CANCELING'
+	`, taskID, workerID, attempt, now, generation)
 	if err != nil {
 		return err
 	}
@@ -495,6 +559,9 @@ func (s *Store) RecoverExpired(ctx context.Context, maxAttempts int) (app.Recove
 			continue
 		}
 
+		if err := domain.ValidateTransition(domain.StatusRunning, domain.StatusFailed, domain.ActorRecovery); err != nil {
+			return app.RecoveryResult{}, err
+		}
 		_, err := tx.Exec(ctx, `
 			UPDATE task_core_tasks
 			SET status = 'FAILED',
@@ -586,7 +653,7 @@ func expiredRunningTasks(ctx context.Context, q executor, now time.Time) ([]runn
 		SELECT id, attempt
 		FROM task_core_tasks
 		WHERE status = 'RUNNING' AND lease_expires_at < $1
-		FOR UPDATE
+		FOR UPDATE SKIP LOCKED
 	`, now)
 	if err != nil {
 		return nil, err
@@ -608,9 +675,9 @@ func staleCancelingTasks(ctx context.Context, q executor, cutoff time.Time) ([]s
 	rows, err := q.Query(ctx, `
 		SELECT id
 		FROM task_core_tasks
-		WHERE status = 'CANCELING' AND updated_at < $1
-		FOR UPDATE
-	`, cutoff)
+		WHERE status = 'CANCELING' AND (lease_expires_at IS NULL OR lease_expires_at < $2) AND cancel_requested_at < $1
+		FOR UPDATE SKIP LOCKED
+	`, cutoff, cutoff.Add(2*time.Minute))
 	if err != nil {
 		return nil, err
 	}
@@ -627,7 +694,7 @@ func staleCancelingTasks(ctx context.Context, q executor, cutoff time.Time) ([]s
 	return ids, rows.Err()
 }
 
-func updateWorkerTerminal(ctx context.Context, tx pgx.Tx, taskID, workerID string, attempt int, to domain.Status, lastError string, now time.Time) error {
+func updateWorkerTerminal(ctx context.Context, tx pgx.Tx, taskID, workerID string, attempt int, generation int64, to domain.Status, lastError string, now time.Time) error {
 	command, err := tx.Exec(ctx, `
 		UPDATE task_core_tasks
 		SET status = $4,
@@ -637,8 +704,8 @@ func updateWorkerTerminal(ctx context.Context, tx pgx.Tx, taskID, workerID strin
 		    heartbeat_at = NULL,
 		    finished_at = $6,
 		    updated_at = $6
-		WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND status = 'RUNNING'
-	`, taskID, workerID, attempt, string(to), lastError, now)
+		WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND generation = $7 AND status = 'RUNNING'
+	`, taskID, workerID, attempt, string(to), lastError, now, generation)
 	if err != nil {
 		return err
 	}
@@ -707,8 +774,8 @@ func insertEvent(ctx context.Context, q executor, taskID, eventType string, from
 func taskViewQuery() string {
 	return `
 		SELECT
-			t.id, t.kind, t.status, t.attempt, t.last_error, t.lease_owner, t.lease_expires_at, t.created_at, t.updated_at,
-			i.task_id, i.url, i.canonical_url, i.source_archive_name, i.source_archive_path, i.source_archive_size, i.metadata::text,
+			t.id, t.kind, t.status, t.attempt, t.generation, t.last_error, t.lease_owner, t.lease_expires_at, t.created_at, t.updated_at,
+			i.task_id, i.url, i.canonical_url, i.source_archive_name, i.source_archive_path, i.source_archive_size, i.metadata::text, i.runtime_settings::text,
 			p.phase, p.current, p.total, p.unit, p.message,
 			r.task_id, r.artifact_path, r.artifact_name, r.artifact_size, r.artifact_kind, r.komga_target_path
 		FROM task_core_tasks t
@@ -732,6 +799,7 @@ func scanTaskView(row rowScanner) (app.TaskView, error) {
 		&taskScan.kind,
 		&taskScan.status,
 		&view.Task.Attempt,
+		&view.Task.Generation,
 		&taskScan.lastError,
 		&taskScan.leaseOwner,
 		&taskScan.leaseExpiresAt,
@@ -744,6 +812,7 @@ func scanTaskView(row rowScanner) (app.TaskView, error) {
 		&inputScan.sourceArchivePath,
 		&inputScan.sourceArchiveSize,
 		&inputScan.metadata,
+		&inputScan.runtimeSettings,
 		&progressScan.phase,
 		&progressScan.current,
 		&progressScan.total,
@@ -799,6 +868,7 @@ func scanTask(row rowScanner) (app.Task, error) {
 		&scan.kind,
 		&scan.status,
 		&task.Attempt,
+		&task.Generation,
 		&scan.lastError,
 		&scan.leaseOwner,
 		&scan.leaseExpiresAt,
@@ -818,6 +888,7 @@ type dbInputScan struct {
 	sourceArchivePath sql.NullString
 	sourceArchiveSize sql.NullInt64
 	metadata          string
+	runtimeSettings   sql.NullString
 }
 
 func (s *dbInputScan) apply(input *app.Input) error {
@@ -835,6 +906,12 @@ func (s *dbInputScan) apply(input *app.Input) error {
 	}
 	if s.sourceArchiveSize.Valid {
 		input.SourceArchiveSize = s.sourceArchiveSize.Int64
+	}
+	if s.runtimeSettings.Valid {
+		input.RuntimeSettings = &config.SettingsSnapshot{}
+		if err := json.Unmarshal([]byte(s.runtimeSettings.String), input.RuntimeSettings); err != nil {
+			return err
+		}
 	}
 	input.Metadata = map[string]string{}
 	if strings.TrimSpace(s.metadata) == "" {
@@ -941,4 +1018,61 @@ func mapPgError(err error) error {
 		return app.ErrConflict
 	}
 	return err
+}
+
+func (s *Store) QueryTasks(ctx context.Context, query app.TaskQuery) (app.TaskPage, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return app.TaskPage{}, err
+	}
+	defer rollback(ctx, tx)
+	const filter = ` WHERE ($1 = '' OR t.status = $1) AND ($2 = '' OR strpos(lower(concat_ws(' ',
+ t.id::text, t.kind, t.status, t.last_error, i.url, i.canonical_url, i.source_archive_name, i.source_archive_path,
+ i.metadata::text, r.artifact_name, r.artifact_path, r.komga_target_path)), lower($2)) > 0)`
+	page := app.TaskPage{Tasks: make([]app.TaskView, 0)}
+	err = tx.QueryRow(ctx, `SELECT count(*) FROM task_core_tasks t
+ JOIN task_core_inputs i ON i.task_id = t.id LEFT JOIN task_core_results r ON r.task_id = t.id`+filter,
+		string(query.Status), query.Keyword).Scan(&page.Total)
+	if err != nil {
+		return app.TaskPage{}, err
+	}
+	rows, err := tx.Query(ctx, taskViewQuery()+filter+` ORDER BY t.created_at DESC, t.id DESC LIMIT $3 OFFSET $4`,
+		string(query.Status), query.Keyword, query.Limit, query.Offset)
+	if err != nil {
+		return app.TaskPage{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		view, err := scanTaskView(rows)
+		if err != nil {
+			return app.TaskPage{}, err
+		}
+		page.Tasks = append(page.Tasks, view)
+	}
+	if err := rows.Err(); err != nil {
+		return app.TaskPage{}, err
+	}
+	rows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return app.TaskPage{}, err
+	}
+	return page, nil
+}
+
+func (s *Store) StatusCounts(ctx context.Context) (map[domain.Status]int, error) {
+	rows, err := s.pool.Query(ctx, `SELECT status, count(*) FROM task_core_tasks GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := make(map[domain.Status]int)
+	for rows.Next() {
+		var status domain.Status
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		counts[status] = count
+	}
+	return counts, rows.Err()
 }

@@ -24,7 +24,7 @@
             <a class="nav-link{{ if eq .CurrentPath "/logs" }} active{{ end }}" href="/logs" hx-get="/logs" hx-target="#content" hx-push-url="true">日志</a>
             <a class="nav-link{{ if eq .CurrentPath "/settings" }} active{{ end }}" href="/settings" hx-get="/settings" hx-target="#content" hx-push-url="true">设置</a>
         </nav>
-        <main id="content">
+        <main id="content" hx-history-elt>
             <div class="card">
                 {{ template "content" . }}
             </div>

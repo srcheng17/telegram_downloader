@@ -9,6 +9,8 @@ mkdir -p "$ROOT_DIR/downloaded_images" "$ROOT_DIR/temp_downloads" "$ROOT_DIR/dat
 
 export INTERNAL_ENQUEUE_TOKEN="${INTERNAL_ENQUEUE_TOKEN:-local-dev-token}"
 export APP_PORT
+export APP_UID="${APP_UID:-$(id -u)}"
+export APP_GID="${APP_GID:-$(id -g)}"
 
 docker compose up -d --build
 docker compose ps
