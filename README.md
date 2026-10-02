@@ -228,6 +228,28 @@ curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/readyz
 
 返回体中 `service` 为 `go-backend` 表示网关已命中 Go 主线。
 
+## 自动发布镜像与 Dockhand 部署
+
+`main` 的 CI 门禁通过后，GitHub Actions 自动向 GHCR 发布 `ghcr.io/srcheng17/telegram_downloader:latest` 和 `sha-<完整提交 SHA>`，支持 `linux/amd64`、`linux/arm64`。PR 只运行检查，不覆盖 `latest`。
+
+预构建镜像部署使用 `docker-compose.image.yml` 覆盖本地构建配置（需要 Docker Compose 2.24.4+）。API 与 worker 使用同一镜像，静态资源直接来自镜像，数据和 Komga 挂载保留：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.image.yml pull go-api go-worker
+docker compose -f docker-compose.yml -f docker-compose.image.yml up -d --no-build
+```
+
+Dockhand 使用单个 Compose 文件时，先生成合并配置：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.image.yml \
+  config --no-interpolate --no-path-resolution > /tmp/telegraph-dockhand.yml
+```
+
+将生成内容放入 Dockhand 的现有 Stack；保留原 Stack 名称与环境变量，设置 `INTERNAL_ENQUEUE_TOKEN`、目录权限和宿主挂载路径，并让网关的 `deploy/nginx/canary-go-full.conf` 指向宿主已有文件。此命令保留变量及相对路径；Dockhand 的工作目录可能不同，部署前核对各宿主路径。GHCR 首次发布的 package 默认私有；可在 GitHub 的 Package settings 将其设置为 Public 以免登录拉取，或在 Dockhand 配置具有拉取权限的 Registry 凭据。
+
+发布新 `latest` 后，在 Dockhand 对该 Stack 拉取镜像并重新部署，API 与 worker 一起更新到同一版本；`pull_policy: always` 在部署时拉取，不会自行创建定时更新任务。回滚时将 `TELEGRAPH_IMAGE` 设置为 `ghcr.io/srcheng17/telegram_downloader:sha-<完整提交 SHA>`，再拉取并重新部署。
+
 ## SQLite 迁移到 Postgres（停机迁移）
 
 1. 停止旧服务（冻结写入）。
