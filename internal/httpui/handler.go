@@ -32,12 +32,9 @@ type pageData struct {
 }
 
 type Settings struct {
-	TaskConcurrency    int
 	ImageConcurrency   int
 	Timeout            int
 	Retries            int
-	LogRetentionDays   int
-	FileRetentionDays  int
 	DownloadActionMode string
 }
 
@@ -247,9 +244,6 @@ func resolveStaticDir(configured string) string {
 }
 
 func normalizeSettings(settings Settings) Settings {
-	if settings.TaskConcurrency <= 0 {
-		settings.TaskConcurrency = 2
-	}
 	if settings.ImageConcurrency <= 0 {
 		settings.ImageConcurrency = 2
 	}
@@ -258,12 +252,6 @@ func normalizeSettings(settings Settings) Settings {
 	}
 	if settings.Retries < 0 {
 		settings.Retries = 10
-	}
-	if settings.LogRetentionDays <= 0 {
-		settings.LogRetentionDays = 7
-	}
-	if settings.FileRetentionDays <= 0 {
-		settings.FileRetentionDays = 7
 	}
 	if settings.DownloadActionMode == "" {
 		settings.DownloadActionMode = "browser"

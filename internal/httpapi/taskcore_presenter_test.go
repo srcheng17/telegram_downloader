@@ -36,7 +36,8 @@ func TestPresentTaskCoreViewExposesRetryForFailedAndCanceledTasks(t *testing.T) 
 			t.Parallel()
 
 			view := presentTaskCoreView(app.TaskView{
-				Task: app.Task{ID: "task-1", Status: status},
+				Task:  app.Task{ID: "task-1", Kind: domain.KindUpload, Status: status},
+				Input: app.Input{SourceArchivePath: "/tmp/source.zip"},
 			}, true)
 
 			if !containsAction(view.AvailableActions, "retry") {
@@ -62,5 +63,23 @@ func TestPresentTaskCoreViewExposesCancelForActiveTasks(t *testing.T) {
 				t.Fatalf("actions = %#v, want cancel", view.AvailableActions)
 			}
 		})
+	}
+}
+
+func TestPresentTaskCoreViewHidesRetryWithoutSource(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []domain.Kind{domain.KindUpload, domain.KindURL} {
+		for _, status := range []domain.Status{domain.StatusFailed, domain.StatusCanceled} {
+			t.Run(string(kind)+"/"+string(status), func(t *testing.T) {
+				input := app.TaskView{Task: app.Task{ID: "task-1", Kind: kind, Status: status}}
+				view := presentTaskCoreView(input, true)
+				if view.Retryable || containsAction(view.AvailableActions, "retry") {
+					t.Fatalf("actions = %#v, retryable = %v, want no retry", view.AvailableActions, view.Retryable)
+				}
+				if taskCoreActionAvailable(input, domain.ActionRetry, true) {
+					t.Fatal("action helper allowed retry without source")
+				}
+			})
+		}
 	}
 }

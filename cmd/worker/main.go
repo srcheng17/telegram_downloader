@@ -20,9 +20,6 @@ import (
 )
 
 const (
-	maxImagesPerTask   = 300
-	maxBytesPerImage   = 25 << 20
-	maxBytesPerTask    = 500 << 20
 	defaultDownloadDir = "downloaded_images"
 )
 
@@ -64,9 +61,9 @@ func main() {
 		},
 		DownloadRetries:  cfg.DownloadRetries,
 		ImageConcurrency: cfg.ImageConcurrency,
-		MaxImages:        maxImagesPerTask,
-		MaxImageBytes:    maxBytesPerImage,
-		MaxTotalBytes:    maxBytesPerTask,
+		MaxImages:        config.MaxImagesPerTask,
+		MaxImageBytes:    config.MaxBytesPerImage,
+		MaxTotalBytes:    config.MaxBytesPerTask,
 	}
 
 	taskCoreStore := pgtaskcore.NewStore(pool)

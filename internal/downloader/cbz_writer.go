@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -61,6 +62,13 @@ func WriteComicInfoXML(meta TaskMetadata) ([]byte, error) {
 }
 
 func PackCBZ(images []LocalImage, comicInfo []byte, outputPath string) error {
+	return PackCBZContext(context.Background(), images, comicInfo, outputPath)
+}
+
+func PackCBZContext(ctx context.Context, images []LocalImage, comicInfo []byte, outputPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	outputPath = strings.TrimSpace(outputPath)
 	if outputPath == "" {
 		return errors.New("cbz output path is required")
@@ -93,6 +101,11 @@ func PackCBZ(images []LocalImage, comicInfo []byte, outputPath string) error {
 		}
 	}
 	for index, image := range images {
+		if err := ctx.Err(); err != nil {
+			_ = zipWriter.Close()
+			_ = tmpFile.Close()
+			return err
+		}
 		entryName := normalizeArchiveImageName(image.Name, index)
 		if err := writeZipEntry(zipWriter, entryName, image.Data); err != nil {
 			_ = zipWriter.Close()
@@ -106,6 +119,9 @@ func PackCBZ(images []LocalImage, comicInfo []byte, outputPath string) error {
 	}
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("close cbz file: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := os.Rename(tmpPath, outputPath); err != nil {
 		return fmt.Errorf("move cbz into place: %w", err)

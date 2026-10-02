@@ -3,7 +3,11 @@ package taskcore
 import (
 	"context"
 	"errors"
+	"github.com/ryancheng/telegram-downloader/internal/config"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,14 +100,14 @@ func TestClaimHeartbeatAndCompleteRequireLeaseAttempt(t *testing.T) {
 		t.Fatalf("claim = %#v, want running attempt 1", claimed.Task)
 	}
 
-	if _, err := svc.Heartbeat(context.Background(), claimed.Task.ID, "worker-a"); err != nil {
+	if _, err := svc.Heartbeat(context.Background(), claimed.Task.ID, "worker-a", claimed.Task.Generation); err != nil {
 		t.Fatalf("Heartbeat: %v", err)
 	}
-	if _, err := svc.Heartbeat(context.Background(), claimed.Task.ID, "worker-b"); !errors.Is(err, ErrConflict) {
+	if _, err := svc.Heartbeat(context.Background(), claimed.Task.ID, "worker-b", claimed.Task.Generation); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale worker heartbeat err = %v, want ErrConflict", err)
 	}
 
-	complete := CompleteInput{TaskID: claimed.Task.ID, WorkerID: "worker-a", Attempt: 1, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz", ArtifactSize: 7}
+	complete := CompleteInput{TaskID: claimed.Task.ID, WorkerID: "worker-a", Attempt: 1, Generation: 1, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz", ArtifactSize: 7}
 	staleWorker := complete
 	staleWorker.WorkerID = "worker-b"
 	if err := svc.Complete(context.Background(), staleWorker); !errors.Is(err, ErrConflict) {
@@ -148,7 +152,7 @@ func TestRequestCancelCreatedReadyAndRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateURLTask: %v", err)
 	}
-	ready, err = svc.RequestCancel(context.Background(), ready.ID)
+	ready.Task, err = svc.RequestCancel(context.Background(), ready.ID)
 	if err != nil {
 		t.Fatalf("RequestCancel(ready): %v", err)
 	}
@@ -168,14 +172,14 @@ func TestRequestCancelCreatedReadyAndRunning(t *testing.T) {
 	if running.Status != domain.StatusCanceling {
 		t.Fatalf("running cancel status = %s, want CANCELING", running.Status)
 	}
-	heartbeat, err := svc.Heartbeat(context.Background(), claimed.Task.ID, "worker-c")
+	heartbeat, err := svc.Heartbeat(context.Background(), claimed.Task.ID, "worker-c", claimed.Task.Generation)
 	if err != nil {
 		t.Fatalf("Heartbeat after cancel request: %v", err)
 	}
 	if !heartbeat.CancelRequested {
 		t.Fatalf("heartbeat CancelRequested = false, want true")
 	}
-	if err := svc.AcknowledgeCancel(context.Background(), claimed.Task.ID, "worker-c", claimed.Task.Attempt); err != nil {
+	if err := svc.AcknowledgeCancel(context.Background(), claimed.Task.ID, "worker-c", claimed.Task.Attempt, claimed.Task.Generation); err != nil {
 		t.Fatalf("AcknowledgeCancel: %v", err)
 	}
 	if repo.tasks[claimed.Task.ID].Status != domain.StatusCanceled {
@@ -194,7 +198,7 @@ func TestRetryResetsFailedAndCanceledTasksToReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimNext failed task: %v", err)
 	}
-	if err := svc.Fail(context.Background(), FailInput{TaskID: failedClaim.Task.ID, WorkerID: "worker-f", Attempt: failedClaim.Task.Attempt}); err != nil {
+	if err := svc.Fail(context.Background(), FailInput{TaskID: failedClaim.Task.ID, WorkerID: "worker-f", Attempt: failedClaim.Task.Attempt, Generation: failedClaim.Task.Generation}); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 	failedRetry, err := svc.Retry(context.Background(), failedClaim.Task.ID)
@@ -216,7 +220,7 @@ func TestRetryResetsFailedAndCanceledTasksToReady(t *testing.T) {
 	if _, err := svc.RequestCancel(context.Background(), canceledClaim.Task.ID); err != nil {
 		t.Fatalf("RequestCancel: %v", err)
 	}
-	if err := svc.AcknowledgeCancel(context.Background(), canceledClaim.Task.ID, "worker-x", canceledClaim.Task.Attempt); err != nil {
+	if err := svc.AcknowledgeCancel(context.Background(), canceledClaim.Task.ID, "worker-x", canceledClaim.Task.Attempt, canceledClaim.Task.Generation); err != nil {
 		t.Fatalf("AcknowledgeCancel: %v", err)
 	}
 	canceledRetry, err := svc.Retry(context.Background(), canceledClaim.Task.ID)
@@ -225,6 +229,46 @@ func TestRetryResetsFailedAndCanceledTasksToReady(t *testing.T) {
 	}
 	if canceledRetry.Status != domain.StatusReady || canceledRetry.Attempt != 0 || canceledRetry.LeaseOwner != "" || canceledRetry.LeaseExpiresAt != nil {
 		t.Fatalf("canceled retry task = %#v, want READY with lease cleared", canceledRetry)
+	}
+}
+
+func TestRetryRejectsTasksWithoutExecutableSource(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []domain.Kind{domain.KindUpload, domain.KindURL} {
+		for _, status := range []domain.Status{domain.StatusFailed, domain.StatusCanceled} {
+			t.Run(string(kind)+"/"+string(status), func(t *testing.T) {
+				repo := newMemoryRepo()
+				const taskID = "missing-source"
+				repo.tasks[taskID] = Task{ID: taskID, Kind: kind, Status: status}
+				repo.inputs[taskID] = Input{TaskID: taskID, URL: " ", CanonicalURL: "\t", SourceArchivePath: " "}
+				_, err := NewService(repo, Config{}).Retry(context.Background(), taskID)
+				if !errors.Is(err, ErrConflict) {
+					t.Fatalf("Retry without source err = %v, want ErrConflict", err)
+				}
+				if repo.tasks[taskID].Status != status {
+					t.Fatalf("Retry changed status to %s", repo.tasks[taskID].Status)
+				}
+			})
+		}
+	}
+}
+
+func TestRetryPreservesAttachedUploadSource(t *testing.T) {
+	t.Parallel()
+	for _, status := range []domain.Status{domain.StatusFailed, domain.StatusCanceled} {
+		t.Run(string(status), func(t *testing.T) {
+			repo := newMemoryRepo()
+			const taskID = "attached-source"
+			repo.tasks[taskID] = Task{ID: taskID, Kind: domain.KindUpload, Status: status}
+			repo.inputs[taskID] = Input{TaskID: taskID, SourceArchivePath: "/tmp/source.zip"}
+			got, err := NewService(repo, Config{}).Retry(context.Background(), taskID)
+			if err != nil || got.Status != domain.StatusReady {
+				t.Fatalf("Retry with source = %#v, %v, want READY", got, err)
+			}
+			if repo.inputs[taskID].SourceArchivePath != "/tmp/source.zip" {
+				t.Fatal("Retry removed attached source")
+			}
+		})
 	}
 }
 
@@ -261,17 +305,17 @@ func TestServiceRejectsMalformedInputs(t *testing.T) {
 			return err
 		}},
 		{name: "blank heartbeat worker id", run: func() error {
-			_, err := svc.Heartbeat(ctx, claimed.Task.ID, " ")
+			_, err := svc.Heartbeat(ctx, claimed.Task.ID, " ", claimed.Task.Generation)
 			return err
 		}},
 		{name: "blank progress task id", run: func() error {
-			return svc.ReportProgress(ctx, " ", domain.NewProgress(domain.PhaseDownloading, 1, 2, domain.UnitImages, "downloading"))
+			return svc.ReportProgress(ctx, " ", "worker-v", 1, domain.NewProgress(domain.PhaseDownloading, 1, 2, domain.UnitImages, "downloading"))
 		}},
 		{name: "complete invalid attempt", run: func() error {
 			return svc.Complete(ctx, CompleteInput{TaskID: claimed.Task.ID, WorkerID: "worker-v", Attempt: 0, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz"})
 		}},
 		{name: "complete blank worker", run: func() error {
-			return svc.Complete(ctx, CompleteInput{TaskID: claimed.Task.ID, WorkerID: " ", Attempt: 1, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz"})
+			return svc.Complete(ctx, CompleteInput{TaskID: claimed.Task.ID, WorkerID: " ", Attempt: 1, Generation: 1, ArtifactPath: "/tmp/out.cbz", ArtifactName: "out.cbz"})
 		}},
 		{name: "fail blank task", run: func() error {
 			return svc.Fail(ctx, FailInput{TaskID: " ", WorkerID: "worker-v", Attempt: 1})
@@ -280,10 +324,10 @@ func TestServiceRejectsMalformedInputs(t *testing.T) {
 			return svc.Fail(ctx, FailInput{TaskID: claimed.Task.ID, WorkerID: "worker-v", Attempt: 0})
 		}},
 		{name: "ack blank worker", run: func() error {
-			return svc.AcknowledgeCancel(ctx, claimed.Task.ID, " ", 1)
+			return svc.AcknowledgeCancel(ctx, claimed.Task.ID, " ", 1, 1)
 		}},
 		{name: "ack invalid attempt", run: func() error {
-			return svc.AcknowledgeCancel(ctx, claimed.Task.ID, "worker-v", 0)
+			return svc.AcknowledgeCancel(ctx, claimed.Task.ID, "worker-v", 0, 1)
 		}},
 		{name: "get blank task", run: func() error {
 			_, err := svc.GetTask(ctx, " ")
@@ -475,6 +519,7 @@ func (r *memoryRepo) ClaimNext(ctx context.Context, workerID string, leaseTTL ti
 		expires := time.Now().Add(leaseTTL)
 		task.Status = domain.StatusRunning
 		task.Attempt++
+		task.Generation++
 		task.LeaseOwner = workerID
 		task.LeaseExpiresAt = &expires
 		task.UpdatedAt = time.Now()
@@ -485,12 +530,12 @@ func (r *memoryRepo) ClaimNext(ctx context.Context, workerID string, leaseTTL ti
 	return nil, nil
 }
 
-func (r *memoryRepo) Heartbeat(ctx context.Context, taskID string, workerID string, leaseTTL time.Duration) (HeartbeatResult, error) {
+func (r *memoryRepo) Heartbeat(ctx context.Context, taskID string, workerID string, generation int64, leaseTTL time.Duration) (HeartbeatResult, error) {
 	task, ok := r.tasks[taskID]
 	if !ok {
 		return HeartbeatResult{}, ErrNotFound
 	}
-	if task.LeaseOwner != workerID {
+	if task.LeaseOwner != workerID || task.Generation != generation {
 		return HeartbeatResult{}, ErrConflict
 	}
 	if task.Status == domain.StatusCanceling {
@@ -506,9 +551,13 @@ func (r *memoryRepo) Heartbeat(ctx context.Context, taskID string, workerID stri
 	return HeartbeatResult{}, nil
 }
 
-func (r *memoryRepo) UpdateProgress(ctx context.Context, taskID string, progress domain.Progress) error {
+func (r *memoryRepo) UpdateProgress(ctx context.Context, taskID string, workerID string, generation int64, progress domain.Progress) error {
 	if _, ok := r.tasks[taskID]; !ok {
 		return ErrNotFound
+	}
+	task := r.tasks[taskID]
+	if task.LeaseOwner != workerID || task.Generation != generation || task.Status != domain.StatusRunning {
+		return ErrConflict
 	}
 	r.progress[taskID] = progress
 	return nil
@@ -519,7 +568,7 @@ func (r *memoryRepo) Complete(ctx context.Context, in CompleteInput) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if task.LeaseOwner != in.WorkerID || task.Attempt != in.Attempt {
+	if task.LeaseOwner != in.WorkerID || task.Attempt != in.Attempt || task.Generation != in.Generation {
 		return ErrConflict
 	}
 	if err := domain.ValidateTransition(task.Status, domain.StatusSucceeded, domain.ActorWorker); err != nil {
@@ -540,7 +589,7 @@ func (r *memoryRepo) Fail(ctx context.Context, in FailInput) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if task.LeaseOwner != in.WorkerID || task.Attempt != in.Attempt {
+	if task.LeaseOwner != in.WorkerID || task.Attempt != in.Attempt || task.Generation != in.Generation {
 		return ErrConflict
 	}
 	if err := domain.ValidateTransition(task.Status, domain.StatusFailed, domain.ActorWorker); err != nil {
@@ -555,12 +604,12 @@ func (r *memoryRepo) Fail(ctx context.Context, in FailInput) error {
 	return nil
 }
 
-func (r *memoryRepo) AcknowledgeCancel(ctx context.Context, taskID string, workerID string, attempt int) error {
+func (r *memoryRepo) AcknowledgeCancel(ctx context.Context, taskID string, workerID string, attempt int, generation int64) error {
 	task, ok := r.tasks[taskID]
 	if !ok {
 		return ErrNotFound
 	}
-	if task.LeaseOwner != workerID || task.Attempt != attempt {
+	if task.LeaseOwner != workerID || task.Attempt != attempt || task.Generation != generation {
 		return ErrConflict
 	}
 	if err := domain.ValidateTransition(task.Status, domain.StatusCanceled, domain.ActorWorker); err != nil {
@@ -582,7 +631,7 @@ func (r *memoryRepo) RecoverExpired(ctx context.Context, maxAttempts int) (Recov
 			continue
 		}
 		if task.Attempt >= maxAttempts {
-			if err := domain.ValidateTransition(task.Status, domain.StatusFailed, domain.ActorWorker); err != nil {
+			if err := domain.ValidateTransition(task.Status, domain.StatusFailed, domain.ActorRecovery); err != nil {
 				return RecoveryResult{}, ErrConflict
 			}
 			task.Status = domain.StatusFailed
@@ -623,4 +672,139 @@ func (r *memoryRepo) ListTasks(ctx context.Context, limit int, offset int) ([]Ta
 		views = append(views, TaskView{Task: r.tasks[id], Input: r.inputs[id], Progress: r.progress[id], Result: r.results[id]})
 	}
 	return views, nil
+}
+
+func (r *memoryRepo) CreateURLTask(ctx context.Context, task Task, input Input, progress domain.Progress, force bool) (CreateURLResult, error) {
+	for id, existing := range r.tasks {
+		if existing.Kind != domain.KindURL || r.inputs[id].CanonicalURL != input.CanonicalURL {
+			continue
+		}
+		if !domain.IsTerminal(existing.Status) {
+			return CreateURLResult{Task: existing, Reused: true}, nil
+		}
+		if existing.Status == domain.StatusSucceeded && !force && r.results[id] != nil {
+			return CreateURLResult{Task: existing, Reused: true, NeedsConfirmation: true, Result: r.results[id]}, nil
+		}
+	}
+	created, err := r.CreateTask(ctx, task, input, progress)
+	return CreateURLResult{Task: created}, err
+}
+func (r *memoryRepo) QueryTasks(ctx context.Context, query TaskQuery) (TaskPage, error) {
+	views, err := r.ListTasks(ctx, len(r.tasks), 0)
+	if err != nil {
+		return TaskPage{}, err
+	}
+	filtered := []TaskView{}
+	for _, view := range views {
+		if query.Status != "" && view.Task.Status != query.Status {
+			continue
+		}
+		if query.Keyword != "" && !strings.Contains(view.Input.URL, query.Keyword) {
+			continue
+		}
+		filtered = append(filtered, view)
+	}
+	page := TaskPage{Total: len(filtered), Tasks: []TaskView{}}
+	if query.Offset < len(filtered) {
+		end := query.Offset + query.Limit
+		if end > len(filtered) {
+			end = len(filtered)
+		}
+		page.Tasks = filtered[query.Offset:end]
+	}
+	return page, nil
+}
+func (r *memoryRepo) StatusCounts(context.Context) (map[domain.Status]int, error) {
+	counts := map[domain.Status]int{}
+	for _, task := range r.tasks {
+		counts[task.Status]++
+	}
+	return counts, nil
+}
+
+func TestURLConfirmationRequiresSafeExistingArtifactAndSnapshotsAreCopied(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOWNLOAD_PATH", root)
+	path := filepath.Join(root, "existing.cbz")
+	if err := os.WriteFile(path, []byte("artifact"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	repo := newMemoryRepo()
+	svc := NewService(repo, Config{})
+	snapshot := config.SettingsSnapshot{Timeout: 13, Retries: 0, ImageConcurrency: 2}
+	created, err := svc.CreateURLTask(context.Background(), CreateURLInput{ID: "first", URL: "https://telegra.ph/snapshot", RuntimeSettings: &snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Timeout = 100
+	if repo.inputs[created.ID].RuntimeSettings.Timeout != 13 {
+		t.Fatal("task snapshot aliases caller settings")
+	}
+	claimed, err := svc.ClaimNext(context.Background(), "worker-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Complete(context.Background(), CompleteInput{TaskID: created.ID, WorkerID: "worker-a", Attempt: claimed.Task.Attempt, Generation: claimed.Task.Generation, ArtifactPath: path, ArtifactName: "existing.cbz", ArtifactSize: 8}); err != nil {
+		t.Fatal(err)
+	}
+	confirmed, err := svc.CreateURLTask(context.Background(), CreateURLInput{ID: "second", URL: "https://telegra.ph/snapshot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed.Reused || !confirmed.NeedsConfirmation || confirmed.ID != created.ID {
+		t.Fatalf("confirmation=%+v", confirmed)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := svc.CreateURLTask(context.Background(), CreateURLInput{ID: "third", URL: "https://telegra.ph/snapshot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.Reused || replacement.NeedsConfirmation || replacement.ID != "third" {
+		t.Fatalf("missing artifact not replaced: %+v", replacement)
+	}
+	forced, err := svc.CreateURLTask(context.Background(), CreateURLInput{ID: "fourth", URL: "https://telegra.ph/snapshot", Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !forced.Reused || forced.ID != replacement.ID {
+		t.Fatalf("force duplicated active task: %+v", forced)
+	}
+}
+
+func TestInputSourceMatchesTaskKind(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		kind  domain.Kind
+		input Input
+		want  bool
+	}{
+		{name: "upload source", kind: domain.KindUpload, input: Input{SourceArchivePath: "/tmp/a.zip"}, want: true},
+		{name: "upload without source", kind: domain.KindUpload, input: Input{URL: "https://telegra.ph/a"}},
+		{name: "url original", kind: domain.KindURL, input: Input{URL: "https://telegra.ph/a"}, want: true},
+		{name: "url canonical", kind: domain.KindURL, input: Input{CanonicalURL: "https://telegra.ph/a"}, want: true},
+		{name: "url without url", kind: domain.KindURL, input: Input{SourceArchivePath: "/tmp/a.zip"}},
+		{name: "unknown kind", kind: "unknown", input: Input{URL: "https://telegra.ph/a", SourceArchivePath: "/tmp/a.zip"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.input.HasSource(tc.kind); got != tc.want {
+				t.Fatalf("HasSource(%s) = %v, want %v", tc.kind, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRetryCannotPromoteCreatedUpload(t *testing.T) {
+	t.Parallel()
+	repo := newMemoryRepo()
+	const taskID = "created-upload"
+	repo.tasks[taskID] = Task{ID: taskID, Kind: domain.KindUpload, Status: domain.StatusCreated}
+	repo.inputs[taskID] = Input{TaskID: taskID, SourceArchivePath: "/tmp/source.zip"}
+	_, err := NewService(repo, Config{}).Retry(context.Background(), taskID)
+	if !errors.Is(err, ErrConflict) || repo.tasks[taskID].Status != domain.StatusCreated {
+		t.Fatalf("Retry(created) err = %v, status = %s, want ErrConflict and CREATED", err, repo.tasks[taskID].Status)
+	}
 }

@@ -82,12 +82,9 @@ func TestBaseTemplateLoadsDistBundles(t *testing.T) {
 func TestSettingsPageUsesDynamicSettingsValues(t *testing.T) {
 	router := NewRouterWithConfig(Config{
 		Settings: Settings{
-			TaskConcurrency:    7,
 			ImageConcurrency:   9,
 			Timeout:            45,
 			Retries:            12,
-			LogRetentionDays:   15,
-			FileRetentionDays:  21,
 			DownloadActionMode: "komga_copy",
 		},
 	})
@@ -101,12 +98,12 @@ func TestSettingsPageUsesDynamicSettingsValues(t *testing.T) {
 	}
 
 	body := recorder.Body.String()
-	assertContains(t, body, `name="task_concurrency" value="7"`)
+	assertNotContains(t, body, `name="task_concurrency"`)
 	assertContains(t, body, `name="image_concurrency" value="9"`)
 	assertContains(t, body, `name="timeout" value="45"`)
 	assertContains(t, body, `name="retries" value="12"`)
-	assertContains(t, body, `name="log_retention_days" value="15"`)
-	assertContains(t, body, `name="file_retention_days" value="21"`)
+	assertNotContains(t, body, `name="log_retention_days"`)
+	assertNotContains(t, body, `name="file_retention_days"`)
 	assertContains(t, body, `name="download_action_mode" value="komga_copy" checked`)
 }
 
@@ -206,12 +203,9 @@ func TestHTMXRequestReturnsPageFragment(t *testing.T) {
 func TestSettingsPageKeepsZeroRetriesValue(t *testing.T) {
 	router := NewRouterWithConfig(Config{
 		Settings: Settings{
-			TaskConcurrency:    2,
 			ImageConcurrency:   2,
 			Timeout:            30,
 			Retries:            0,
-			LogRetentionDays:   7,
-			FileRetentionDays:  7,
 			DownloadActionMode: "browser",
 		},
 	})
@@ -290,12 +284,9 @@ func TestSettingsPageUsesSettingsStoreSnapshotValues(t *testing.T) {
 	}
 	router := NewRouterWithConfig(Config{
 		Settings: Settings{
-			TaskConcurrency:    2,
 			ImageConcurrency:   3,
 			Timeout:            30,
 			Retries:            10,
-			LogRetentionDays:   7,
-			FileRetentionDays:  7,
 			DownloadActionMode: "browser",
 		},
 		SettingsStore: store,

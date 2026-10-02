@@ -4,9 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	apptasks "github.com/ryancheng/telegram-downloader/internal/app/tasks"
+	"github.com/ryancheng/telegram-downloader/internal/config"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
@@ -21,11 +26,7 @@ const defaultDownloadRoot = "downloaded_images"
 
 type TaskViewService interface {
 	GetTask(ctx context.Context, taskID string) (*app.TaskView, error)
-}
-
-type DownloadService interface {
-	Download(ctx context.Context, pageURL string) (domain.DownloadResult, error)
-	PackageCBZ(images []domain.DownloadedImage, metadata godownloader.TaskMetadata, outputPath string) error
+	ReportProgress(ctx context.Context, taskID string, workerID string, generation int64, progress taskcoredomain.Progress) error
 }
 
 type ArchiveExtractor interface {
@@ -34,7 +35,7 @@ type ArchiveExtractor interface {
 
 type TaskDownloaderConfig struct {
 	Tasks        TaskViewService
-	Service      DownloadService
+	Service      *godownloader.Service
 	Extractor    ArchiveExtractor
 	DownloadRoot string
 	Now          func() time.Time
@@ -42,7 +43,7 @@ type TaskDownloaderConfig struct {
 
 type TaskDownloader struct {
 	tasks        TaskViewService
-	service      DownloadService
+	service      *godownloader.Service
 	extractor    ArchiveExtractor
 	downloadRoot string
 	now          func() time.Time
@@ -58,52 +59,130 @@ func NewTaskDownloader(cfg TaskDownloaderConfig) *TaskDownloader {
 	}
 }
 
-func (d *TaskDownloader) Execute(ctx context.Context, taskID string) (string, error) {
-	if d == nil {
-		return "", errors.New("task core downloader is required")
+func (d *TaskDownloader) Execute(ctx context.Context, task app.Task) (outputPath string, err error) {
+	if d == nil || d.tasks == nil || d.service == nil {
+		return "", errors.New("task core downloader requires task and download services")
 	}
-	if d.tasks == nil {
-		return "", errors.New("task core downloader requires task service")
+	taskID := strings.TrimSpace(task.ID)
+	if taskID == "" || filepath.Base(taskID) != taskID || taskID == "." || taskID == ".." || task.Generation <= 0 || task.LeaseOwner == "" {
+		return "", errors.New("task core downloader requires a claimed execution")
 	}
-	if d.service == nil {
-		return "", errors.New("task core downloader requires download service")
-	}
-
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" {
-		return "", errors.New("task core downloader requires task id")
-	}
-
 	view, err := d.tasks.GetTask(ctx, taskID)
 	if err != nil {
 		return "", fmt.Errorf("load task core task: %w", err)
 	}
 	if view == nil {
-		return "", fmt.Errorf("task core task %s not found", taskID)
+		return "", app.ErrNotFound
 	}
-
+	if view.Task.Generation != task.Generation || view.Task.LeaseOwner != task.LeaseOwner || view.Task.Status != taskcoredomain.StatusRunning {
+		return "", app.ErrConflict
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var progressMu sync.Mutex
+	var progressErr error
+	report := func(progress taskcoredomain.Progress) error {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		if progressErr != nil {
+			return progressErr
+		}
+		progressErr = d.tasks.ReportProgress(runCtx, taskID, task.LeaseOwner, task.Generation, progress)
+		if progressErr != nil {
+			cancel()
+		}
+		return progressErr
+	}
+	service := *d.service
+	if view.Input.RuntimeSettings != nil {
+		settings := config.NormalizeSettingsSnapshot(*view.Input.RuntimeSettings)
+		client := http.Client{}
+		if service.HTTPClient != nil {
+			client = *service.HTTPClient
+		}
+		client.Timeout = time.Duration(settings.Timeout) * time.Second
+		service.HTTPClient = &client
+		service.DownloadRetries = settings.Retries
+		service.ImageConcurrency = settings.ImageConcurrency
+	}
+	service.OnTotalImagesDiscovered = func(total int) {
+		_ = report(taskcoredomain.NewProgress(taskcoredomain.PhaseDownloading, 0, int64(total), taskcoredomain.UnitImages, "下载图片"))
+	}
+	service.OnImageDownloaded = func(current, total int) {
+		_ = report(taskcoredomain.NewProgress(taskcoredomain.PhaseDownloading, int64(current), int64(total), taskcoredomain.UnitImages, "下载图片"))
+	}
+	if err := report(taskcoredomain.NewProgress(taskcoredomain.PhasePreparing, 0, 0, taskcoredomain.UnitNone, "准备处理")); err != nil {
+		return "", err
+	}
 	metadata := metadataFromInput(view.Input)
-	images, err := d.loadImages(ctx, *view)
+	images, err := d.loadImages(runCtx, *view, &service)
+	progressMu.Lock()
+	capturedProgressErr := progressErr
+	progressMu.Unlock()
+	if capturedProgressErr != nil {
+		return "", capturedProgressErr
+	}
 	if err != nil {
 		return "", err
 	}
-
-	downloadRoot := d.downloadRoot
-	if downloadRoot == "" {
-		downloadRoot = defaultDownloadRoot
-	}
-	if err := os.MkdirAll(downloadRoot, 0o755); err != nil {
-		return "", fmt.Errorf("create task core download output root: %w", err)
-	}
-
-	outputPath := filepath.Join(downloadRoot, buildTaskCoreDownloadFilename(metadata, d.clock().Unix()))
-	if err := d.service.PackageCBZ(images, metadata, outputPath); err != nil {
+	if err := report(taskcoredomain.NewProgress(taskcoredomain.PhasePackaging, 0, int64(len(images)), taskcoredomain.UnitImages, "打包 CBZ")); err != nil {
 		return "", err
 	}
-	return outputPath, nil
+	root := d.downloadRoot
+	if root == "" {
+		root = defaultDownloadRoot
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, taskID, strconv.FormatInt(task.Generation, 10))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create task output directory: %w", err)
+	}
+	path := filepath.Join(dir, buildTaskCoreDownloadFilename(metadata, d.clock().Unix()))
+	defer func() {
+		if err != nil {
+			_ = os.Remove(path)
+			_ = os.Remove(dir)
+		}
+	}()
+	if err := service.PackageCBZContext(runCtx, images, metadata, path); err != nil {
+		return "", err
+	}
+	if err := runCtx.Err(); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
-func (d *TaskDownloader) loadImages(ctx context.Context, view app.TaskView) ([]domain.DownloadedImage, error) {
+func (d *TaskDownloader) CleanupSource(ctx context.Context, task app.Task) error {
+	view, err := d.tasks.GetTask(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	if view == nil || view.Task.Generation != task.Generation || view.Task.Status != taskcoredomain.StatusSucceeded || view.Task.Kind != taskcoredomain.KindUpload {
+		return nil
+	}
+	root := strings.TrimSpace(os.Getenv("TEMP_PATH"))
+	if root == "" {
+		root = "temp_downloads"
+	}
+	opened, err := apptasks.NewArtifactAccess(apptasks.ArtifactAccessConfig{DownloadRoot: root}).Open(view.Input.SourceArchivePath)
+	if errors.Is(err, apptasks.ErrArtifactUnavailable) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	path := opened.File.Name()
+	if err := opened.Close(); err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+func (d *TaskDownloader) loadImages(ctx context.Context, view app.TaskView, service *godownloader.Service) ([]domain.DownloadedImage, error) {
 	pageURL := firstNonEmpty(view.Input.CanonicalURL, view.Input.URL)
 	if view.Task.Kind == taskcoredomain.KindUpload || pageURL == "" {
 		source := strings.TrimSpace(view.Input.SourceArchivePath)
@@ -129,7 +208,7 @@ func (d *TaskDownloader) loadImages(ctx context.Context, view app.TaskView) ([]d
 		return images, nil
 	}
 
-	result, err := d.service.Download(ctx, pageURL)
+	result, err := service.Download(ctx, pageURL)
 	if err != nil {
 		return nil, err
 	}

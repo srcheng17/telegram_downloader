@@ -45,7 +45,7 @@ func main() {
 	}
 
 	store := postgres.NewStore(pool)
-	v2Store := httpv2.NewPostgresTaskStore(pool)
+	settingsStore := postgres.NewSettingsStore(pool)
 	uploadTaskStore := postgres.NewUploadTaskStore(pool)
 	taskCoreStore := pgtaskcore.NewStore(pool)
 	taskCoreService := apptaskcore.NewService(taskCoreStore, apptaskcore.Config{LeaseTTL: 30 * time.Second, MaxAttempts: 3})
@@ -55,6 +55,7 @@ func main() {
 
 	legacyRouterOptions := buildLegacyRouterOptions(cfg, uploadTaskStore)
 	legacyRouterOptions.TaskCoreService = taskCoreService
+	legacyRouterOptions.SettingsProvider = settingsStore
 	legacyRouterOptions.ReadyzChecker = func(ctx context.Context) (bool, error) {
 		pending, err := pgmigrations.PendingCount(ctx, pool)
 		if err != nil {
@@ -64,8 +65,8 @@ func main() {
 	}
 	legacyRouter := httpapi.NewRouterWithOptions(store, legacyRouterOptions)
 	rootRouter := chi.NewRouter()
-	httpui.RegisterRoutesWithConfig(rootRouter, buildUIConfig(cfg, v2Store))
-	httpv2.RegisterSettings(rootRouter, httpv2.NewSettingsHandler(v2Store))
+	httpui.RegisterRoutesWithConfig(rootRouter, buildUIConfig(cfg, settingsStore))
+	httpv2.RegisterSettings(rootRouter, httpv2.NewSettingsHandler(settingsStore))
 	rootRouter.Mount("/", legacyRouter)
 
 	server := &http.Server{
@@ -97,18 +98,15 @@ func main() {
 func buildUIConfig(cfg config.Config, settingsStore httpui.SettingsStore) httpui.Config {
 	return httpui.Config{
 		Settings: httpui.Settings{
-			TaskConcurrency:   2,
-			ImageConcurrency:  cfg.ImageConcurrency,
-			Timeout:           cfg.DownloadTimeout,
-			Retries:           cfg.DownloadRetries,
-			LogRetentionDays:  7,
-			FileRetentionDays: 7,
+			ImageConcurrency: cfg.ImageConcurrency,
+			Timeout:          cfg.DownloadTimeout,
+			Retries:          cfg.DownloadRetries,
 		},
 		Guardrails: httpui.Guardrails{
 			AllowedDomains: []string{"telegra.ph", "www.telegra.ph", "graph.org", "www.graph.org"},
-			MaxImages:      300,
-			MaxImageBytes:  25 * 1024 * 1024,
-			MaxTotalBytes:  500 * 1024 * 1024,
+			MaxImages:      config.MaxImagesPerTask,
+			MaxImageBytes:  config.MaxBytesPerImage,
+			MaxTotalBytes:  config.MaxBytesPerTask,
 		},
 		StaticDir:     resolveUIStaticDir(),
 		SettingsStore: settingsStore,

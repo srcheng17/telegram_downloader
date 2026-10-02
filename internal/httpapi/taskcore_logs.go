@@ -10,11 +10,6 @@ import (
 	taskcoredomain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
 )
 
-const (
-	taskCoreLogsBatchSize = 500
-	taskCoreLogsMaxScan   = 10000
-)
-
 type taskCoreLogsResponse struct {
 	Logs           []taskCoreView                     `json:"logs"`
 	Total          int                                `json:"total"`
@@ -28,48 +23,35 @@ type taskCoreLogsResponse struct {
 }
 
 func (a *API) readTaskCoreLogs(ctx context.Context, query legacydomain.LogQuery, rawStatus string) (taskCoreLogsResponse, error) {
-	views, err := a.listAllTaskCoreViews(ctx)
-	if err != nil {
-		return taskCoreLogsResponse{}, err
-	}
 
 	statusFilter := normalizeTaskCoreStatusFilter(taskCoreFirstNonEmpty(rawStatus, query.Status))
 	keyword := strings.TrimSpace(query.Keyword)
-	filtered := make([]app.TaskView, 0, len(views))
-	for _, view := range views {
-		if statusFilter != "" && view.Task.Status != statusFilter {
-			continue
-		}
-		if keyword != "" && !taskCoreViewMatchesKeyword(view, keyword) {
-			continue
-		}
-		filtered = append(filtered, view)
-	}
-
-	page := clampInt(query.Page, 1, math.MaxInt)
 	perPage := clampInt(query.PerPage, 1, legacydomain.MaxLogsPerPage)
-	total := len(filtered)
+	page := clampInt(query.Page, 1, math.MaxInt/perPage)
+	result, err := a.taskCoreService.QueryTasks(ctx, app.TaskQuery{Status: statusFilter, Keyword: keyword, Limit: perPage, Offset: (page - 1) * perPage})
+	if err != nil {
+		return taskCoreLogsResponse{}, err
+	}
+	total := result.Total
 	totalPages := 1
 	if total > 0 {
-		totalPages = (total + perPage - 1) / perPage
+		totalPages = (total-1)/perPage + 1
 	}
 	if page > totalPages {
 		page = totalPages
+		result, err = a.taskCoreService.QueryTasks(ctx, app.TaskQuery{Status: statusFilter, Keyword: keyword, Limit: perPage, Offset: (page - 1) * perPage})
+		if err != nil {
+			return taskCoreLogsResponse{}, err
+		}
 	}
-	start := (page - 1) * perPage
-	end := start + perPage
-	if end > total {
-		end = total
-	}
-	if start > end {
-		start = end
-	}
-
-	logs := make([]taskCoreView, 0, end-start)
-	for _, view := range filtered[start:end] {
+	logs := make([]taskCoreView, 0, len(result.Tasks))
+	for _, view := range result.Tasks {
 		logs = append(logs, presentTaskCoreView(view, strings.TrimSpace(a.komgaRootDir) != ""))
 	}
-	summary := buildTaskCoreSummaryFromViews(views)
+	summary, err := a.buildTaskCoreSummary(ctx)
+	if err != nil {
+		return taskCoreLogsResponse{}, err
+	}
 
 	return taskCoreLogsResponse{
 		Logs:           logs,
@@ -88,60 +70,30 @@ func (a *API) readTaskCoreLogs(ctx context.Context, query legacydomain.LogQuery,
 }
 
 func (a *API) buildTaskCoreSummary(ctx context.Context) (legacydomain.Summary, error) {
-	views, err := a.listAllTaskCoreViews(ctx)
+	counts, err := a.taskCoreService.StatusCounts(ctx)
 	if err != nil {
 		return legacydomain.Summary{}, err
 	}
-	return buildTaskCoreSummaryFromViews(views), nil
-}
-
-func (a *API) listAllTaskCoreViews(ctx context.Context) ([]app.TaskView, error) {
-	if a == nil || a.taskCoreService == nil {
-		return nil, nil
-	}
-	views := make([]app.TaskView, 0)
-	for offset := 0; offset < taskCoreLogsMaxScan; {
-		limit := taskCoreLogsBatchSize
-		if remaining := taskCoreLogsMaxScan - offset; remaining < limit {
-			limit = remaining
-		}
-		page, err := a.taskCoreService.ListTasks(ctx, limit, offset)
-		if err != nil {
-			return nil, err
-		}
-		views = append(views, page...)
-		if len(page) < limit {
-			break
-		}
-		offset += len(page)
-		if len(page) == 0 {
-			break
-		}
-	}
-	return views, nil
-}
-
-func buildTaskCoreSummaryFromViews(views []app.TaskView) legacydomain.Summary {
-	counts := map[string]int{}
-	for _, view := range views {
-		switch view.Task.Status {
+	legacyCounts := map[string]int{}
+	for status, count := range counts {
+		switch status {
 		case taskcoredomain.StatusCreated, taskcoredomain.StatusReady:
-			counts[legacydomain.StatusPending]++
+			legacyCounts[legacydomain.StatusPending] += count
 		case taskcoredomain.StatusRunning:
-			counts[legacydomain.StatusInProgress]++
+			legacyCounts[legacydomain.StatusInProgress] += count
 		case taskcoredomain.StatusCanceling:
-			counts[legacydomain.StatusCancelRequested]++
+			legacyCounts[legacydomain.StatusCancelRequested] += count
 		case taskcoredomain.StatusSucceeded:
-			counts[legacydomain.StatusSuccess]++
+			legacyCounts[legacydomain.StatusSuccess] += count
 		case taskcoredomain.StatusFailed:
-			counts[legacydomain.StatusFailed]++
+			legacyCounts[legacydomain.StatusFailed] += count
 		case taskcoredomain.StatusCanceled:
-			counts[legacydomain.StatusCanceled]++
+			legacyCounts[legacydomain.StatusCanceled] += count
 		default:
-			counts[string(view.Task.Status)]++
+			legacyCounts[string(status)] += count
 		}
 	}
-	return buildSummaryFromCounts(counts, legacydomain.DefaultStartupRecovery())
+	return buildSummaryFromCounts(legacyCounts, legacydomain.DefaultStartupRecovery()), nil
 }
 
 func normalizeTaskCoreStatusFilter(raw string) taskcoredomain.Status {
@@ -173,35 +125,6 @@ func normalizeTaskCoreStatusFilter(raw string) taskcoredomain.Status {
 	default:
 		return ""
 	}
-}
-
-func taskCoreViewMatchesKeyword(view app.TaskView, keyword string) bool {
-	needle := strings.ToLower(strings.TrimSpace(keyword))
-	if needle == "" {
-		return true
-	}
-	values := []string{
-		view.Task.ID,
-		string(view.Task.Kind),
-		string(view.Task.Status),
-		view.Task.LastError,
-		view.Input.URL,
-		view.Input.CanonicalURL,
-		view.Input.SourceArchiveName,
-		view.Input.SourceArchivePath,
-	}
-	if view.Result != nil {
-		values = append(values, view.Result.ArtifactName, view.Result.ArtifactPath, view.Result.KomgaTargetPath)
-	}
-	for _, value := range view.Input.Metadata {
-		values = append(values, value)
-	}
-	for _, value := range values {
-		if strings.Contains(strings.ToLower(value), needle) {
-			return true
-		}
-	}
-	return false
 }
 
 func taskCoreFirstNonEmpty(values ...string) string {

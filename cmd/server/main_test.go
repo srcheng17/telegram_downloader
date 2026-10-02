@@ -24,12 +24,9 @@ func TestBuildUIConfigUsesRuntimeValues(t *testing.T) {
 	got := buildUIConfig(input, nil)
 	want := httpui.Config{
 		Settings: httpui.Settings{
-			TaskConcurrency:   2,
-			ImageConcurrency:  6,
-			Timeout:           88,
-			Retries:           0,
-			LogRetentionDays:  7,
-			FileRetentionDays: 7,
+			ImageConcurrency: 6,
+			Timeout:          88,
+			Retries:          0,
 		},
 		Guardrails: httpui.Guardrails{
 			AllowedDomains: []string{"telegra.ph", "www.telegra.ph", "graph.org", "www.graph.org"},

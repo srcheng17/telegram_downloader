@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ryancheng/telegram-downloader/internal/config"
 	"github.com/ryancheng/telegram-downloader/internal/domain"
 )
 
@@ -75,6 +76,10 @@ type DownloadSettingsProvider interface {
 
 type ReadyzChecker func(ctx context.Context) (bool, error)
 
+type TaskSettingsProvider interface {
+	GetSettings(ctx context.Context) (config.SettingsSnapshot, error)
+}
+
 type API struct {
 	store                   TaskReader
 	taskCoreService         TaskCoreService
@@ -96,6 +101,7 @@ type RouterOptions struct {
 	HTTPClient              *http.Client
 	DownloadSubmitter       DownloadSubmitter
 	TaskCoreService         TaskCoreService
+	SettingsProvider        TaskSettingsProvider
 	UploadTaskStore         UploadTaskStore
 	RuntimeSettingsProvider DownloadSettingsProvider
 	InternalToken           string
@@ -160,6 +166,8 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 			strings.TrimSpace(options.KomgaRootDir) != "",
 			api.uploadTempDirOrDefault(),
 			strings.TrimSpace(options.KomgaRootDir),
+			options.SettingsProvider,
+			&config.SettingsSnapshot{Timeout: api.downloadTimeout, Retries: api.downloadRetries, ImageConcurrency: api.imageConcurrency},
 		)
 		taskCore.registerRoutes(router)
 	}
