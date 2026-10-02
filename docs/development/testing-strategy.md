@@ -44,7 +44,7 @@
 ### Interface / API tests
 
 适合覆盖：
-- legacy adapter 的字段映射
+- Task Core 到 legacy-facing 日志 payload 的字段映射
 - task actions 接口的状态码与响应体
 - 页面 handler 的关键分支
 - v2 handler 的查询与输入验证
@@ -58,7 +58,7 @@
 适合覆盖：
 - PostgreSQL repo
 - migrations
-- Redis Streams queue
+- PostgreSQL lease、generation fencing 与任务 SQL 查询
 - archive / downloader 的实现正确性
 
 要求：
@@ -91,6 +91,8 @@
 要求：
 - 只覆盖最重要的端到端路径
 - 用来发现跨层集成问题，不替代单测/契约测试
+
+数据库集成测试必须使用隔离的 `TEST_DATABASE_URL`，不得指向运行中的业务库；CI 缺少变量时直接失败。真实上传 E2E 通过镜像内静态资源、API、PostgreSQL 和 worker，检查下载 CBZ 的图片字节与 XML 元数据，并执行 Komga copy。其余 UI mock 用例只证明交互契约，不代表实际外部下载成功。
 
 ## 重构任务的最低回归要求
 

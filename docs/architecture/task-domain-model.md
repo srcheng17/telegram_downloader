@@ -1,5 +1,7 @@
 # 任务领域模型（Baseline to Target）
 
+本文保留历史重构目标。当前 Task Core 状态、执行代际和输入资格以 [任务生命周期](task-lifecycle-baseline.md) 及 `.trellis/spec/backend/task-runtime-contract.md` 为准。
+
 ## 目的
 
 本文档用于把当前项目中与“任务”有关的核心概念、状态、动作资格、进度语义和结果语义统一描述出来。它既总结当前实现，也为后续把规则收口到 `domain/app` 提供迁移目标。

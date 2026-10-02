@@ -25,9 +25,9 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 *   **任务看板与筛选**：首页/日志页提供任务概览指标；移动端默认折叠概览卡，日志支持按状态与关键词筛选，便于快速定位问题任务。
 *   **准确取消反馈**：取消操作为异步流程，前端会按后端真实响应显示状态与提示，减少误导。
 *   **可配置性**：
-    *   可自定义并发数、下载超时和重试次数。
-    *   可配置日志保留时间。
-    *   可配置结果文件缓存保留时间（到期自动清理）。
+    *   可自定义图片并发数、下载超时和重试次数。
+    *   可选择浏览器下载或复制到 Komga。新任务固定保存创建时的下载设置；修改设置作用于后续新任务。
+    *   当前没有自动清理日志和结果文件的定时机制。
 *   **动态前端**：前端使用 htmx + 原生 JS 模块，实现无刷新页面切换；除项目名外页面文案均为中文。
 *   **Docker 支持**：项目已完全容器化，并支持通过环境变量和卷挂载自定义下载路径。
 
@@ -96,16 +96,20 @@ tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose
 
 - `frontend/src/` 是首页、日志页、设置页和应用壳层的源码入口；Vite 从这里构建运行时 bundle。
 - 页面模板只直接引用 `web/static/dist/*.bundle.js`。
-- 当前 Docker/Compose 运行链路不会在启动时自动执行 `vite build`，因此变更前端源码时，必须同时提交更新后的 `web/static/dist/*.bundle.js`。
+- Docker 构建阶段使用 Node 24 执行 `npm ci` 和 `vite build`，镜像自带完整静态资源。默认 Compose 保留宿主静态目录挂载，因此前端源码和 `web/static/dist/` 必须一起更新；发布门禁验证重新构建结果与 Git 一致。Vite 配置为 `vite.config.mjs`。
 
 ## 运行测试
 
 ### Go 单元与竞态测试
 
 ```bash
-go test ./...
-go test -race ./...
+export TEST_DATABASE_URL="postgresql://<test-user>:<test-password>@127.0.0.1:<test-port>/<test-db>?sslmode=disable"
+go test ./... -count=1
+go test -race ./... -count=1
+go vet ./...
 ```
+
+`TEST_DATABASE_URL` 必须指向隔离的测试数据库；未设置时本地 PostgreSQL 集成测试会跳过，CI 则直接失败。使用 Go 1.27.1 和 Node 24。
 
 ### 前端检查与构建
 
@@ -124,7 +128,7 @@ npm run e2e:install
 npm run e2e:test
 ```
 
-> `npm run e2e:test` 会自动执行 `docker compose up -d --build`，等待 `/readyz`，执行 Playwright，然后自动 `docker compose down` 清理容器。
+> `npm run e2e:test` 会自动执行 `docker compose up -d --build`，等待 `/readyz`，执行 Playwright，然后自动清理容器、测试卷和临时文件。每次使用独立 Compose 项目、本地端口及合成凭据，不挂载生产下载或 Komga 目录。真实上传测试不拦截 API，校验 worker 生成 CBZ 的图片字节和 ComicInfo 元数据；其余部分 UI 测试使用 mock 验证错误、取消和导航反馈。
 >
 > 本地运行前会先做一次 Playwright 浏览器 preflight：
 > - macOS 本地默认优先尝试 `chrome`，再回退到 `chromium`
@@ -132,7 +136,7 @@ npm run e2e:test
 > - 如需跳过 preflight，使用 `E2E_SKIP_BROWSER_PREFLIGHT=1 npm run e2e:test`
 > - 若 preflight 报 `Permission denied (1100)` / `SIGABRT`，通常表示当前 macOS 会话不允许该 shell 启动浏览器自动化
 
-### 发布级验收（2026-03-18）
+### 发布级验收
 
 推荐直接运行统一门禁脚本：
 
@@ -143,12 +147,16 @@ bash scripts/verify_release_gates.sh
 脚本会顺序执行：
 
 ```bash
-go test ./... && go test -race ./...
+go test ./... -count=1
+go test -race ./... -count=1
+go vet ./...
+node --test tests/e2e/browser_preflight.test.cjs
 npm run test:frontend && npm run lint && npm run build
+git diff --exit-code -- web/static/dist
 npm run e2e:test
 ```
 
-若在 sibling worktree 复用仓库根虚拟环境，脚本会自动回退到 `../.venv/bin/pytest`。
+本地门禁前先配置隔离 `TEST_DATABASE_URL`，并将正确的源码和构建产物暂存到 Git；门禁比较工作区与暂存区，CI 比较检出提交。未跟踪的构建产物也会被拒绝。
 
 如需额外做显式 Compose smoke：
 
@@ -163,7 +171,7 @@ docker compose down
 >
 > 迁移步骤、回滚方案与已知问题见：`docs/runbooks/2026-03-16-fullstack-refactor-migration.md` 与 `docs/runbooks/2026-03-18-project-refactor-rollout.md`。
 
-## 关键接口说明（新增）
+## 关键接口说明
 
 *   `POST /download`
     *   支持元数据字段：`author`、`series_name`、`comic_name`、`summary`、`tags`、`genres`（表单或 JSON）。
@@ -174,6 +182,8 @@ docker compose down
     *   下载任务产物（新任务为 CBZ；历史任务可为 ZIP）。
 *   `HEAD /api/tasks/<task_id>/download`
     *   仅做下载可用性预检（前端用来避免错误时离开 Logs 页面）。
+
+上传源包最多 64 MiB；解包最多 300 张图片、单图 25 MiB、总常规文件 500 MiB。ZIP 在读取中检查取消，RAR/7Z 使用 bsdtar 转换为 tar 流逐成员读取，不展开整包到磁盘。产物存放于 `DOWNLOAD_PATH/<task_id>/<generation>/`，显示文件名保留原规则。成功后删除上传源；失败和取消保留源包供重试。未附着完整源包的上传任务不能从日志重试，需重新选择文件上传。迁移 014 与发布步骤见 [优化发布说明](docs/runbooks/2026-10-03-taskcore-optimization.md)。
 
 ## 如何运行
 
@@ -187,9 +197,10 @@ cp .env.example .env
 ### 2. 启动 Compose 单主线（Go）
 
 ```bash
-docker compose up -d --build
-docker compose ps
+bash scripts/start_local.sh
 ```
+
+本地脚本创建共享目录并以当前用户 UID/GID 启动 API 和 worker。直接运行 Compose 时，在 `.env` 设置 `APP_UID`/`APP_GID`（默认 `10001:10001`），提前创建下载、临时及 Komga 目录，并使它们可由该 UID/GID 写入。已有部署只调整所需目录权限，避免递归更改无关数据。
 
 ### 3. 访问应用
 

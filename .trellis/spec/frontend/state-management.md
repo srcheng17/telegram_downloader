@@ -26,3 +26,8 @@ Current states/actions are defined in `internal/domain/taskcore/status.go` and p
 Older lifecycle documents contain legacy statuses; consult current source when task payloads change.
 Reset stale filters, handlers, and request state through the existing mount/unmount paths.
 Test mappings with `frontend/src/tests/logs_view_model.test.mjs` and `frontend/src/tests/settings_state.test.mjs`.
+
+Supported settings are timeout, retries, image_concurrency and download_action_mode.
+New-task download settings are captured by the backend; UI action mode may change
+for existing successful results. Do not expose task concurrency or retention
+controls without a corresponding runtime implementation.
