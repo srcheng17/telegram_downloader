@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/ryancheng/telegram-downloader/internal/config"
+	pgmigrations "github.com/ryancheng/telegram-downloader/internal/store/postgres/migrations"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -231,21 +231,8 @@ func openTaskCoreTestStore(t *testing.T) (context.Context, *Store) {
 	}
 	t.Cleanup(func() { pool.Close() })
 
-	migrationPath := filepath.Join("..", "migrations", "011_task_core_schema.sql")
-	migration, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read migration %s: %v", migrationPath, err)
-	}
-	if _, err := pool.Exec(ctx, string(migration)); err != nil {
-		t.Fatalf("apply task core migration: %v", err)
-	}
-
-	executionMigration, err := os.ReadFile(filepath.Join("..", "migrations", "014_task_core_execution_settings.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, string(executionMigration)); err != nil {
-		t.Fatal(err)
+	if err := pgmigrations.Run(ctx, pool); err != nil {
+		t.Fatalf("migrate test database: %v", err)
 	}
 	store := NewStore(pool)
 	cleanupTaskCoreRows(t, ctx, store,
@@ -263,12 +250,18 @@ func openTaskCoreTestStore(t *testing.T) (context.Context, *Store) {
 func cleanupTaskCoreRows(t *testing.T, ctx context.Context, store *Store, ids ...string) {
 	t.Helper()
 	for _, id := range ids {
+		if _, err := store.pool.Exec(ctx, `DELETE FROM metadata_history WHERE task_id = $1`, id); err != nil {
+			t.Fatalf("cleanup task history %s: %v", id, err)
+		}
 		if _, err := store.pool.Exec(ctx, `DELETE FROM task_core_tasks WHERE id = $1`, id); err != nil {
 			t.Fatalf("cleanup task %s: %v", id, err)
 		}
 	}
 	t.Cleanup(func() {
 		for _, id := range ids {
+			if _, err := store.pool.Exec(context.Background(), `DELETE FROM metadata_history WHERE task_id = $1`, id); err != nil {
+				t.Fatalf("cleanup task history %s: %v", id, err)
+			}
 			if _, err := store.pool.Exec(context.Background(), `DELETE FROM task_core_tasks WHERE id = $1`, id); err != nil {
 				t.Fatalf("cleanup task %s: %v", id, err)
 			}
@@ -467,6 +460,173 @@ func TestExecutionGenerationFencesSameOwnerAfterRetry(t *testing.T) {
 	}
 	if err := store.AcknowledgeCancel(ctx, id, "same-worker", current.Attempt, current.Generation); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRetryRejectsAnotherActiveURLTask(t *testing.T) {
+	ctx, store := openTaskCoreTestStore(t)
+	for _, status := range []domain.Status{domain.StatusReady, domain.StatusRunning, domain.StatusCanceling} {
+		t.Run(string(status), func(t *testing.T) {
+			oldID, activeID := uuid.NewString(), uuid.NewString()
+			cleanupTaskCoreRows(t, ctx, store, oldID, activeID)
+			insertFailedTaskWithResult(t, ctx, store, oldID, 3)
+			canonical := "https://telegra.ph/retry-" + oldID
+			if _, err := store.pool.Exec(ctx, `UPDATE task_core_inputs SET canonical_url = $2 WHERE task_id = $1`, oldID, canonical); err != nil {
+				t.Fatal(err)
+			}
+			progress := domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, "ready")
+			created, err := store.CreateURLTask(ctx, app.Task{ID: activeID, Kind: domain.KindURL, Status: status}, app.Input{URL: canonical, CanonicalURL: canonical}, progress, true)
+			if err != nil || created.Task.ID != activeID || created.Reused {
+				t.Fatalf("create replacement = %+v, %v", created, err)
+			}
+			if _, err := store.Retry(ctx, oldID, progress); !errors.Is(err, app.ErrConflict) {
+				t.Fatalf("retry while another task is %s: %v, want ErrConflict", status, err)
+			}
+			view, err := store.GetTask(ctx, oldID)
+			if err != nil || view.Task.Status != domain.StatusFailed || view.Task.Attempt != 3 || view.Result == nil || view.Task.LastError != "previous failure" {
+				t.Fatalf("rejected retry mutated old task: %+v, %v", view, err)
+			}
+			var retryEvents int
+			if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM task_core_events WHERE task_id = $1 AND event_type = 'TASK_RETRIED'`, oldID).Scan(&retryEvents); err != nil {
+				t.Fatal(err)
+			}
+			if retryEvents != 0 {
+				t.Fatalf("rejected retry wrote %d retry events", retryEvents)
+			}
+		})
+	}
+}
+
+func TestRetrySerializesWithCanonicalURLWriters(t *testing.T) {
+	for _, otherOperation := range []string{"create", "retry"} {
+		t.Run(otherOperation, func(t *testing.T) {
+			ctx, store := openTaskCoreTestStore(t)
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			firstID, secondID := uuid.NewString(), uuid.NewString()
+			cleanupTaskCoreRows(t, ctx, store, firstID, secondID)
+			canonical := "https://telegra.ph/race-" + firstID
+			input := app.Input{URL: canonical, CanonicalURL: canonical}
+			progress := domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, "ready")
+			if _, err := store.CreateTask(ctx, app.Task{ID: firstID, Kind: domain.KindURL, Status: domain.StatusFailed}, input, progress); err != nil {
+				t.Fatal(err)
+			}
+			if otherOperation == "retry" {
+				if _, err := store.CreateTask(ctx, app.Task{ID: secondID, Kind: domain.KindURL, Status: domain.StatusCanceled}, input, progress); err != nil {
+					t.Fatal(err)
+				}
+			}
+			blocker, err := store.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer blocker.Rollback(context.Background())
+			if _, err := blocker.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, canonical); err != nil {
+				t.Fatal(err)
+			}
+			type outcome struct {
+				id  string
+				err error
+			}
+			first := make(chan outcome, 1)
+			second := make(chan outcome, 1)
+			go func() {
+				task, err := store.Retry(ctx, firstID, progress)
+				first <- outcome{task.ID, err}
+			}()
+			go func() {
+				if otherOperation == "retry" {
+					task, err := store.Retry(ctx, secondID, progress)
+					second <- outcome{task.ID, err}
+					return
+				}
+				result, err := store.CreateURLTask(ctx, app.Task{ID: secondID, Kind: domain.KindURL, Status: domain.StatusReady}, input, progress, true)
+				second <- outcome{result.Task.ID, err}
+			}()
+			// Both operations must wait on the same URL lock before either can publish READY.
+			waitForAdvisoryWaiters(t, ctx, store, 2)
+			if err := blocker.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			a, b := <-first, <-second
+			for _, result := range []outcome{a, b} {
+				if result.err != nil && !errors.Is(result.err, app.ErrConflict) {
+					t.Fatalf("unexpected writer error: %v", result.err)
+				}
+			}
+			if otherOperation == "retry" {
+				if (a.err == nil) == (b.err == nil) {
+					t.Fatalf("retry race must have one winner: %+v, %+v", a, b)
+				}
+			} else if b.err != nil || (a.err == nil && a.id != b.id) {
+				t.Fatalf("create must create or reuse the single winner: %+v, %+v", a, b)
+			}
+			var active int
+			if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM task_core_tasks WHERE id IN ($1, $2) AND status IN ('READY', 'RUNNING', 'CANCELING')`, firstID, secondID).Scan(&active); err != nil {
+				t.Fatal(err)
+			}
+			if active != 1 {
+				t.Fatalf("active task count = %d, want 1", active)
+			}
+		})
+	}
+}
+
+func TestRetryURLOnlySourceSharesActiveDedupe(t *testing.T) {
+	ctx, store := openTaskCoreTestStore(t)
+	for _, legacyCanonical := range []string{"null", "empty"} {
+		t.Run(legacyCanonical, func(t *testing.T) {
+			oldID, newID := uuid.NewString(), uuid.NewString()
+			cleanupTaskCoreRows(t, ctx, store, oldID, newID)
+			canonical := "https://telegra.ph/legacy-" + oldID
+			progress := domain.NewProgress(domain.PhasePreparing, 0, 0, domain.UnitNone, "ready")
+			if _, err := store.CreateTask(ctx, app.Task{ID: oldID, Kind: domain.KindURL, Status: domain.StatusFailed}, app.Input{URL: " " + canonical + " "}, progress); err != nil {
+				t.Fatal(err)
+			}
+			if legacyCanonical == "empty" {
+				if _, err := store.pool.Exec(ctx, `UPDATE task_core_inputs SET canonical_url = '' WHERE task_id = $1`, oldID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := store.Retry(ctx, oldID, progress); err != nil {
+				t.Fatal(err)
+			}
+			task := app.Task{ID: newID, Kind: domain.KindURL, Status: domain.StatusReady}
+			input := app.Input{URL: canonical, CanonicalURL: canonical}
+			reused, err := store.CreateURLTask(ctx, task, input, progress, true)
+			if err != nil || !reused.Reused || reused.Task.ID != oldID {
+				t.Fatalf("force must reuse retried URL-only task: %+v, %v", reused, err)
+			}
+			if _, err := store.Transition(ctx, oldID, domain.StatusFailed, domain.ActorAPI, "failed before execution"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.CreateURLTask(ctx, task, input, progress, true); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Retry(ctx, oldID, progress); !errors.Is(err, app.ErrConflict) {
+				t.Fatalf("URL-only retry with another active task = %v, want ErrConflict", err)
+			}
+		})
+	}
+}
+
+func waitForAdvisoryWaiters(t *testing.T, ctx context.Context, store *Store, want int) {
+	t.Helper()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var count int
+		if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count == want {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("waiting URL writers = %d, want %d: %v", count, want, ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }
 

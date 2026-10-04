@@ -1,0 +1,34 @@
+{
+  "/health:anonymous": {
+    "status": 200
+  },
+  "/v1/models:anonymous": {
+    "status": 401
+  },
+  "/v1/models:auth": {
+    "status": 200,
+    "models": [
+      "qwen2.5-1.5b-instruct-q4"
+    ]
+  },
+  "container": {
+    "state": "running",
+    "health": "healthy",
+    "memory_limit": 3670016000,
+    "nano_cpus": 4000000000,
+    "port_bindings": {
+      "8080/tcp": [
+        {
+          "HostIp": "127.0.0.1",
+          "HostPort": "18085"
+        }
+      ]
+    },
+    "read_only": true,
+    "user": "10001:10001",
+    "image_id": "sha256:8011114f35c5f30b32f0491ef541b3d805e1a23ec642ef0c1961c54e220e5557"
+  },
+  "runtime_evidence": [
+    "0.02.932.879 I srv  llama_server: listening on http://0.0.0.0:8080"
+  ]
+}

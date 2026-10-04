@@ -1,0 +1,16 @@
+{
+  "cpu_count": 4,
+  "memory_limit_bytes": 3670016000,
+  "oom_killed": false,
+  "memory.current": "881434624",
+  "memory.peak": "884342784",
+  "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+  "cpu.stat": "usage_usec 268834656\nuser_usec 265683809\nsystem_usec 3150847\ncore_sched.force_idle_usec 0\nnr_periods 733\nnr_throttled 109\nthrottled_usec 223860\nnr_bursts 0\nburst_usec 0",
+  "process_memory": {
+    "VmHWM": "1293756 kB",
+    "VmRSS": "1293756 kB",
+    "RssAnon": "191244 kB",
+    "RssFile": "1102512 kB"
+  },
+  "host_available_kib": 6853652
+}

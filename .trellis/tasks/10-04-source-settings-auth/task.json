@@ -1,0 +1,44 @@
+{
+  "id": "source-settings-auth",
+  "name": "source-settings-auth",
+  "title": "Add protected provider and AI configuration",
+  "description": "Administrator boundary, per-source credentials, provider capabilities, safe configuration and model discovery",
+  "status": "review",
+  "dev_type": "fullstack",
+  "scope": "admin-source-settings",
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": "creepy-kiwi",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-04-clipboard-ocr-tdl-ui",
+  "relatedFiles": [
+    ".trellis/tasks/10-04-source-settings-auth/prd.md",
+    ".trellis/tasks/10-04-source-settings-auth/design.md",
+    ".trellis/tasks/10-04-source-settings-auth/implement.md",
+    ".trellis/tasks/10-04-source-settings-auth/implement.jsonl",
+    ".trellis/tasks/10-04-source-settings-auth/check.jsonl"
+  ],
+  "notes": "Batch 1 implemented and passed the frozen-source full release gate, including real PostgreSQL and 18 browser tests. Awaiting review; uncommitted, not deployed. Existing runtime fixes preserved.",
+  "meta": {
+    "batch": 1,
+    "depends_on": [],
+    "owner_role": "source-settings-auth",
+    "exclusive_scope": "internal/app/adminauth; internal/app/sourcesettings; internal/credentials; internal/modelapi; dedicated stores/handlers; frontend settings integrations/admin_session",
+    "max_parallel_workers": 3,
+    "contract_dependencies": [
+      "10-04-clipboard-ocr-tdl-ui/design.md"
+    ],
+    "implementation_state": "validated_pending_review",
+    "verification_report": "../10-04-clipboard-ocr-tdl-ui/batch-1-verification.md",
+    "validation": "full_release_gate_passed"
+  }
+}

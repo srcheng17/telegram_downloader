@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Appropriate backend, repository and worker verification"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend regression, lint, build and dist review"}
+{"file": "docs/development/testing-strategy.md", "reason": "Use real integration validation without confusing mock UI tests for runtime proof"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/prd.md", "reason": "Review acceptance criteria and prevent drift back to channel-specific metadata automation"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/local-model-candidates.md", "reason": "Pinned open-weight model provenance, licenses and reproducible hashes"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/racknerd-model-trial.md", "reason": "Authorized isolated RackNerd deployment and model evaluation boundaries"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/minicpm5-candidate.md", "reason": "User-selected MiniCPM5 model provenance and pinned runtime compatibility evidence"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/multi-image-ocr.md", "reason": "Confirmed one-work multi-image OCR, selected MiniCPM5, provenance, stale-result protection and input-budget contract"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/public-metadata-sources.md", "reason": "Public metadata keyword lookup, verified bibliographic APIs, BL/gay manga/doujin distinctions and provider attribution/matching limits"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/metadata-packaging.md", "reason": "InkTag/ComicTagger comparison, pinned ComicInfo schemas, current import preservation gaps and interoperable CBZ packaging contract"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/design.md", "reason": "Final shared requirements, contracts and parallel ownership"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/implement.md", "reason": "Final shared requirements, contracts and parallel ownership"}

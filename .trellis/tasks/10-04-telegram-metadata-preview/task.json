@@ -1,0 +1,28 @@
+{
+  "id": "telegram-metadata-preview",
+  "name": "telegram-metadata-preview",
+  "title": "Validate Telegram metadata preview access",
+  "description": "Verify authenticated text access and message association before implementing metadata prefill",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-04-architecture-review-followup",
+  "relatedFiles": [],
+  "notes": "Read-only feasibility verified: authenticated target and nearby messages, four-field offline parsing and existing Go ComicInfo roundtrip passed. User then chose screenshot metadata instead of channel-history parsing, while retaining tdl for downloads and login. Product follow-up is 10-04-clipboard-ocr-tdl-ui; do not expand channel-specific parsing.",
+  "meta": {
+    "superseded_by": "10-04-clipboard-ocr-tdl-ui"
+  }
+}

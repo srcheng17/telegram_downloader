@@ -1,0 +1,28 @@
+{
+  "original_containers": [
+    {
+      "name": "cli-proxy-api",
+      "same_id": true,
+      "healthy": true
+    },
+    {
+      "name": "bark",
+      "same_id": true,
+      "healthy": true
+    },
+    {
+      "name": "cli-proxy-api-postgres",
+      "same_id": true,
+      "healthy": true
+    },
+    {
+      "name": "hawser",
+      "same_id": true,
+      "healthy": true
+    }
+  ],
+  "model_status": "Up 9 minutes (healthy)",
+  "models": [
+    "minicpm5-2b-q4"
+  ]
+}

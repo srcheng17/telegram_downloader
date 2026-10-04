@@ -1,0 +1,20 @@
+{"file": "docs/development/module-boundaries.md", "reason": "Keep domain/application/HTTP/infrastructure/worker responsibilities separate"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend preflight and full quality gates"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Preserve API error envelopes and cancellation errors"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Redact credentials and sensitive upstream text"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Native JavaScript lifecycle and bundle checks"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Protect manual drafts and reject stale responses"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace typed boundary contracts without duplicated decoders"}
+{"file": ".trellis/tasks/10-04-metadata-contracts/prd.md", "reason": "Shared extensible metadata and legacy adapter dependency"}
+{"file": ".trellis/tasks/10-04-source-settings-auth/prd.md", "reason": "Shared single-admin and server-only per-source credentials"}
+{"file": ".trellis/tasks/10-04-modern-ui-shell/prd.md", "reason": "Shared UI composition and revision contract"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/public-metadata-sources.md", "reason": "Verified adapters, auth boundaries, attribution and coverage limits"}
+{"file": ".trellis/tasks/10-04-metadata-provider-search/design.md", "reason": "Frozen child boundaries and proposed contracts"}
+{"file": ".trellis/tasks/10-04-metadata-provider-search/implement.md", "reason": "Ordered plan, independent acceptance and planned checks"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Full backend and runtime verification"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend tests, lint and rebuilt bundle requirements"}
+{"file": ".trellis/tasks/10-04-metadata-contracts/design.md", "reason": "Final shared types, candidate adoption and protected configuration contracts"}
+{"file": ".trellis/tasks/10-04-source-settings-auth/design.md", "reason": "Final shared types, candidate adoption and protected configuration contracts"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/prd.md", "reason": "Final shared requirements, contracts and parallel ownership"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/design.md", "reason": "Final shared requirements, contracts and parallel ownership"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/implement.md", "reason": "Final shared requirements, contracts and parallel ownership"}

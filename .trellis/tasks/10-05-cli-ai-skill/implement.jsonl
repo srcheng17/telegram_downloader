@@ -1,0 +1,13 @@
+{"file":"docs/development/module-boundaries.md","reason":"CLI 经 API 复用 domain/app 业务规则"}
+{"file":".trellis/spec/backend/index.md","reason":"后端规范入口与 Go 验证"}
+{"file":".trellis/spec/backend/workspace-metadata-auth.md","reason":"管理员会话、CSRF、元数据文档与秘密边界"}
+{"file":".trellis/spec/backend/task-runtime-contract.md","reason":"Task Core 动作资格、上传、下载和回读"}
+{"file":".trellis/spec/backend/extraction-protocol.md","reason":"规则版本、AI 提取与有限错误契约"}
+{"file":".trellis/spec/backend/metadata-packaging.md","reason":"ComicInfo 与私密数据保留"}
+{"file":".trellis/spec/backend/telegram-runtime.md","reason":"tdl 登录验证、进程与会话隔离"}
+{"file":".trellis/spec/frontend/index.md","reason":"共享前端纯模块与构建约束"}
+{"file":".trellis/spec/frontend/candidate-adoption.md","reason":"OCR、本地规则和候选采用语义"}
+{"file":"docs/development/metadata-workspace.md","reason":"已发布页面工作流和 Telegram 来源移除决定"}
+{"file":".trellis/tasks/10-05-cli-ai-skill/research/current-cli-and-skill-surface.md","reason":"当前 CLI/UI/API 全功能盘点与缺口"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/prd.md","reason":"Komga CBZ ComicInfo 回写依赖和验收"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"跨层契约复用"}

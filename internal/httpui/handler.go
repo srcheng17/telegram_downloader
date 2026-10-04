@@ -76,7 +76,10 @@ func RegisterRoutesWithConfig(r chi.Router, config Config) {
 
 	r.Get("/", h.Index)
 	r.Get("/logs", h.Logs)
+	r.Get("/komga", h.KomgaPage)
 	r.Get("/settings", h.SettingsPage)
+	r.Get("/auth/login", h.Login)
+	r.Get("/telegram", h.Telegram)
 	r.Post("/settings", h.SaveSettings)
 	r.Handle("/static/*", http.StripPrefix("/static/", staticFileServer(config.StaticDir)))
 }
@@ -84,6 +87,11 @@ func RegisterRoutesWithConfig(r chi.Router, config Config) {
 func staticFileServer(staticDir string) http.Handler {
 	fileServer := http.FileServer(http.Dir(resolveStaticDir(staticDir)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "ocr/tesseract-7.0.0/") {
+			w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+			fileServer.ServeHTTP(w, r)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
@@ -94,8 +102,10 @@ func staticFileServer(staticDir string) http.Handler {
 func NewHandler(config Config) *Handler {
 	return &Handler{
 		templates: map[string]*template.Template{
+			"login":    mustParseTemplate("templates/login.html"),
 			"index":    mustParseTemplate("templates/index.html"),
 			"logs":     mustParseTemplate("templates/logs.html"),
+			"komga":    mustParseTemplate("templates/komga.html"),
 			"settings": mustParseTemplate("templates/settings.html"),
 		},
 		settings:   normalizeSettings(config.Settings),
@@ -106,7 +116,7 @@ func NewHandler(config Config) *Handler {
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, "index", pageData{
-		Title:       "首页",
+		Title:       "新建任务",
 		CurrentPath: "/",
 		Settings:    h.settings,
 		Guardrails:  h.guardrails,
@@ -115,8 +125,17 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Logs(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, "logs", pageData{
-		Title:       "日志",
+		Title:       "任务",
 		CurrentPath: "/logs",
+		Settings:    h.settings,
+		Guardrails:  h.guardrails,
+	})
+}
+
+func (h *Handler) KomgaPage(w http.ResponseWriter, r *http.Request) {
+	h.render(w, r, "komga", pageData{
+		Title:       "作品库",
+		CurrentPath: "/komga",
 		Settings:    h.settings,
 		Guardrails:  h.guardrails,
 	})
@@ -311,4 +330,17 @@ func parseRequiredFormInt(raw string) (int, error) {
 		return 0, errors.New("missing value")
 	}
 	return strconv.Atoi(raw)
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	h.render(w, r, "login", pageData{Title: "管理员登录", CurrentPath: "/auth/login"})
+}
+func (h *Handler) Telegram(w http.ResponseWriter, r *http.Request) {
+	// Keep existing bookmarks while the account manager lives in settings.
+	w.Header().Set("HX-Redirect", "/settings#connections")
+	if isHTMXRequest(r) {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/settings#connections", http.StatusSeeOther)
 }

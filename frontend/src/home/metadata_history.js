@@ -14,7 +14,8 @@ function setControlValue(form, name, value) {
 }
 
 function normalizeTaskType(taskType) {
-    return String(taskType || '').trim().toLowerCase() === 'upload' ? 'upload' : 'url';
+    const value = String(taskType || '').trim().toLowerCase();
+    return ['upload', 'telegram'].includes(value) ? value : 'url';
 }
 
 export function applyHistoryEntryToForm(form, entry) {
@@ -37,7 +38,8 @@ export function applyHistoryEntryToForm(form, entry) {
 function historyLabel(entry) {
     const parts = [entry.author, entry.series_name, entry.comic_name].filter((value) => String(value || '').trim());
     if (!parts.length) {
-        return normalizeTaskType(entry.task_type) === 'upload' ? '上传任务' : 'URL 任务';
+        const kind = normalizeTaskType(entry.task_type);
+        return kind === 'upload' ? '上传任务' : kind === 'telegram' ? 'Telegram 任务' : 'URL 任务';
     }
     return parts.join(' / ');
 }

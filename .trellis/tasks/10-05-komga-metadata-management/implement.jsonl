@@ -1,0 +1,17 @@
+{"file":"docs/development/module-boundaries.md","reason":"领域、应用、HTTP、文件基础设施职责边界"}
+{"file":".trellis/spec/backend/index.md","reason":"后端预检与验证入口"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"现有 Go 模块与扩展位置"}
+{"file":".trellis/spec/backend/workspace-metadata-auth.md","reason":"管理员会话、凭据与版本化元数据"}
+{"file":".trellis/spec/backend/metadata-packaging.md","reason":"ComicInfo 固定 profile、原件保留和页面身份"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"编辑操作记录的迁移与事务要求"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"冲突、部分成功与 HTTP 错误契约"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"私密文件、路径和凭据脱敏"}
+{"file":".trellis/spec/frontend/index.md","reason":"前端预检与构建要求"}
+{"file":".trellis/spec/frontend/workspace-lifecycle.md","reason":"草稿、异步刷新和管理员边界"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"中文列表和编辑器交互"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/prd.md","reason":"用户确认的 CBZ 写回范围和验收"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/design.md","reason":"路径映射、文件事务和 Komga 同步设计"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/research/current-project-surface.md","reason":"存量编辑与既有任务打包流程的差距"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/research/komga-official-api.md","reason":"Komga 单书 analyze、导入和锁的官方语义"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/research/komga-field-semantics.md","reason":"ComicInfo 导入空值、PATCH clear 白名单和字段规范化"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/research/safe-cbz-writeback.md","reason":"ZIP 保真、备份和并发写回边界"}

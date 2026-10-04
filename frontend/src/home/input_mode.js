@@ -1,5 +1,6 @@
 function normalizeMode(value) {
-    return String(value || '').trim().toLowerCase() === 'upload' ? 'upload' : 'url';
+    const mode = String(value || '').trim().toLowerCase();
+    return mode === 'upload' ? 'upload' : 'url';
 }
 
 function setVisibility(node, isVisible) {
@@ -26,12 +27,12 @@ export function applyInputMode(doc, mode) {
     const archiveInput = doc.getElementById('archive_file');
 
     const isUpload = normalizedMode === 'upload';
-    setVisibility(urlGroup, !isUpload);
+    setVisibility(urlGroup, normalizedMode === 'url');
     setVisibility(archiveGroup, isUpload);
 
     if (urlInput) {
-        urlInput.disabled = isUpload;
-        urlInput.required = !isUpload;
+        urlInput.disabled = normalizedMode !== 'url';
+        urlInput.required = normalizedMode === 'url';
     }
     if (archiveInput) {
         archiveInput.disabled = !isUpload;

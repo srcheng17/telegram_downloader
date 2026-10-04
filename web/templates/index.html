@@ -1,9 +1,9 @@
 {{ define "content" }}
-<div id="home-page" class="home-page">
-    <div class="section-header">
-        <h2>发起下载任务</h2>
-        <p class="muted">粘贴 Telegraph 页面链接后，可在“日志”页查看实时进度。</p>
-    </div>
+<div id="home-page" class="home-page" hx-history="false" data-metadata-state="idle">
+    <header class="section-header workspace-page-header">
+        <div><h2>新建任务</h2><p class="muted">导入作品，补全信息，整理为漫画归档。</p></div>
+        <a class="button-link secondary" href="/logs" hx-get="/logs" hx-target="#content" hx-push-url="true">查看任务</a>
+    </header>
     <div
         id="startup-recovery-banner-home"
         class="startup-recovery-banner is-hidden"
@@ -20,110 +20,80 @@
                 hx-get="/logs"
                 hx-target="#content"
                 hx-push-url="true"
-            >去日志页查看</a>
+            >查看任务</a>
             <button type="button" id="startup-recovery-dismiss-home" class="btn-secondary startup-recovery-dismiss">关闭</button>
         </div>
     </div>
-    <details id="summary-collapsible-home" class="summary-collapsible" open>
-        <summary class="summary-toggle collapsible-summary">任务概览</summary>
-        <div id="summary-panel" class="summary-grid" aria-live="polite">
-            <article class="summary-card">
-                <p class="summary-label">任务总数</p>
-                <p id="summary-total" class="summary-value">-</p>
-            </article>
-            <article class="summary-card">
-                <p class="summary-label">进行中</p>
-                <p id="summary-active" class="summary-value">-</p>
-            </article>
-            <article class="summary-card">
-                <p class="summary-label">成功</p>
-                <p id="summary-success" class="summary-value">-</p>
-            </article>
-            <article class="summary-card">
-                <p class="summary-label">失败/已取消</p>
-                <p id="summary-failed" class="summary-value">-</p>
-            </article>
-        </div>
-    </details>
-    <details id="metadata-history-collapsible" class="summary-collapsible metadata-history-panel">
-        <summary class="summary-toggle collapsible-summary">最近 20 条填写的元数据</summary>
-        <div class="metadata-history-header">
-            <h3 id="metadata-history-title" class="sr-only">点击最近记录回填元数据</h3>
-        </div>
-        <ul id="metadata-history-list" class="metadata-history-list" aria-live="polite">
-            <li class="metadata-history-empty">暂无最近填写记录。</li>
-        </ul>
-    </details>
+
     <form id="download-form" action="/download" method="post" novalidate>
-        <div class="form-group input-mode-group">
-            <span class="input-mode-title">任务来源</span>
-            <div class="input-mode-options">
-                <label class="input-mode-option">
-                    <input type="radio" name="input_mode" value="url" checked>
-                    <span>URL 下载</span>
-                </label>
-                <label class="input-mode-option">
-                    <input type="radio" name="input_mode" value="upload">
-                    <span>上传压缩包</span>
-                </label>
+        <section class="workspace-source" aria-labelledby="download-source-title">
+            <div class="source-heading"><h3 id="download-source-title">导入作品</h3><span class="field-scope">选择链接或本地文件</span></div>
+            <fieldset class="input-mode-group">
+                <legend class="sr-only">选择下载来源</legend>
+                <div class="input-mode-options">
+                    <label class="input-mode-option"><input type="radio" name="input_mode" value="url" checked><span>Telegraph 链接</span></label>
+                    <label class="input-mode-option"><input type="radio" name="input_mode" value="upload"><span>上传压缩包</span></label>
+                </div>
+            </fieldset>
+            <div id="url-input-group" class="form-group">
+                <label for="url">Telegraph 链接 <span class="required-mark" aria-hidden="true">*</span></label>
+                <input type="text" id="url" name="url" placeholder="https://telegra.ph/..." required>
             </div>
+            <div id="archive-input-group" class="form-group is-hidden" aria-hidden="true">
+                <label for="archive_file">压缩包文件 <span class="required-mark" aria-hidden="true">*</span></label>
+                <input type="file" id="archive_file" name="archive_file" accept=".zip,.cbz,.rar,.7z" disabled>
+                <p class="field-help">支持 ZIP、CBZ、RAR、7Z，单个文件不超过 64 MiB。</p>
+            </div>
+        </section>
+        <div class="workspace-columns">
+            <section class="metadata-workspace" aria-labelledby="metadata-workspace-title">
+                <div class="section-heading"><h3 id="metadata-workspace-title">作品信息</h3><span class="field-scope">核对后创建任务</span></div>
+                <p class="field-help" data-metadata-status role="status" aria-live="polite">正在准备元数据字段…</p>
+                <div id="metadata-editor"></div>
+                <button type="button" class="text-button" data-metadata-retry>重新读取字段</button>
+                <a class="metadata-submit-shortcut" href="#create-task-action">前往提交 <span aria-hidden="true">↓</span></a>
+            </section>
+            <section class="evidence-workspace" aria-labelledby="evidence-title" data-evidence-tabs>
+                <div class="section-heading"><h3 id="evidence-title">采集信息</h3><span class="field-scope">辅助填写</span></div>
+                <div class="workspace-tabs evidence-tabs" role="tablist" aria-label="信息采集方式">
+                    <button type="button" id="evidence-tab-ocr" role="tab" data-tab="ocr" aria-selected="true" aria-controls="evidence-panel-ocr">截图识别</button>
+                    <button type="button" id="evidence-tab-search" role="tab" data-tab="search" aria-selected="false" aria-controls="evidence-panel-search" tabindex="-1">书目搜索</button>
+                </div>
+                <div id="evidence-panel-ocr" data-tab-panel="ocr" role="tabpanel" aria-labelledby="evidence-tab-ocr">
+                <div class="evidence-slot" data-module-slot="evidence">
+                    <div class="evidence-placeholder" role="status">
+                        <span class="evidence-glyph" aria-hidden="true">文</span>
+                        <h4>正在准备截图识别</h4>
+                        <p>也可以直接填写作品信息。</p>
+                    </div>
+                </div>
+                </div>
+                <div id="evidence-panel-search" data-tab-panel="search" role="tabpanel" aria-labelledby="evidence-tab-search" hidden>
+                <section class="search-slot" data-module-slot="metadata-search" aria-label="书目信息检索">
+                    <h4>从公开书目补充</h4>
+                    <p class="field-help">正在载入书目来源。检索结果由你确认后采用。</p>
+                </section>
+                </div>
+            </section>
         </div>
-
-        <div id="url-input-group" class="form-group">
-            <label for="url">Telegraph 链接 <span class="required-mark" aria-hidden="true">*</span></label>
-            <input type="text" id="url" name="url" placeholder="https://telegra.ph/..." required>
-        </div>
-
-        <div id="archive-input-group" class="form-group is-hidden" aria-hidden="true">
-            <label for="archive_file">压缩包文件 <span class="required-mark" aria-hidden="true">*</span></label>
-            <input type="file" id="archive_file" name="archive_file" accept=".zip,.rar,.7z" disabled>
-        </div>
-
-        <div class="home-metadata-grid">
-            <div class="form-group">
-                <label for="author">作者</label>
-                <input type="text" id="author" name="author" placeholder="例如：张三">
-            </div>
-            <div class="form-group">
-                <label for="series_name">漫画系列名</label>
-                <input type="text" id="series_name" name="series_name" placeholder="例如：银河系列">
-            </div>
-            <div class="form-group">
-                <label for="series_number">系列顺序编号</label>
-                <input type="number" id="series_number" name="series_number" min="0" step="1" placeholder="例如：3">
-            </div>
-            <div class="form-group">
-                <label for="comic_name">漫画名</label>
-                <input type="text" id="comic_name" name="comic_name" placeholder="例如：银河冒险记">
-            </div>
-            <div class="form-group home-metadata-full">
-                <label for="summary">书籍详情介绍</label>
-                <textarea id="summary" name="summary" rows="3" placeholder="可填写作品简介或补充信息"></textarea>
-            </div>
-            <div class="form-group home-metadata-full">
-                <label for="tags">标签</label>
-                <input type="text" id="tags" name="tags" placeholder="例如：科幻,冒险，连载">
-            </div>
-            <div class="form-group home-metadata-full">
-                <label for="genres">类型</label>
-                <input type="text" id="genres" name="genres" placeholder="例如：青年,悬疑，热血">
-            </div>
-        </div>
-
-        <div class="form-group force-redownload-group">
-            <label for="force_redownload" class="force-toggle-label">
-                <input type="checkbox" id="force_redownload" name="force" value="1">
-                <span>强制重新抓取</span>
-            </label>
-        </div>
-        <button type="submit">开始下载</button>
+        <section id="create-task-action" class="workspace-submit" aria-label="创建任务">
+            <label for="force_redownload" class="force-toggle-label"><input type="checkbox" id="force_redownload" name="force" value="1"><span>重新抓取已有来源</span></label>
+            <button type="submit">开始下载</button>
+        </section>
     </form>
     <div id="download-feedback" class="inline-feedback" role="status" aria-live="polite"></div>
     <div id="download-actions" class="download-actions is-hidden" aria-hidden="true">
         <button type="button" id="download-action-force" class="btn-warning is-hidden">生成新的CBZ</button>
         <button type="button" id="download-action-use-existing" class="btn-secondary is-hidden">取消并下载已有文件</button>
-        <button type="button" id="download-action-logs" class="btn-secondary is-hidden">查看日志</button>
+        <button type="button" id="download-action-logs" class="btn-secondary is-hidden">查看任务</button>
         <button type="button" id="download-action-download" class="is-hidden">下载已有文件</button>
     </div>
+
+    <details id="metadata-history-collapsible" class="metadata-history-panel workspace-history">
+        <summary id="metadata-history-title">最近填写</summary>
+        <p class="field-help">先核对提交信息或最终归档信息，再选择要采用的字段。</p>
+        <ul id="metadata-history-list" class="metadata-history-list" aria-live="polite"><li class="metadata-history-empty">暂无最近填写记录。</li></ul>
+        <div data-history-preview></div>
+    </details>
 </div>
 {{ end }}

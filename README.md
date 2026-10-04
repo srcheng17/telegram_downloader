@@ -11,18 +11,21 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 ## 主要功能
 
 *   **通过 URL 下载**：只需粘贴 Telegraph 页面的 URL 即可开始下载。
-*   **通过压缩包上传生成 CBZ**：首页支持上传 ZIP / RAR / 7Z，按首页填写的元数据重新生成 CBZ。
+*   **通过压缩包上传生成 CBZ**：首页支持上传 ZIP / CBZ / RAR / 7Z，按首页填写的元数据重新生成 CBZ。
 *   **重复 URL 智能复用 + 强制重抓**：默认命中已下载文件时进入“确认生成新 CBZ”流程；可强制创建新任务。
-*   **CBZ 元数据**：首页支持手动填写作者、漫画系列名、漫画名、简介、标签、类型（可空），并写入 `ComicInfo.xml`（`Writer/Series/Title/Summary/Tags/Genre`，其中 `Tags` 与 `Genre` 独立填写）。
-*   **首页元数据历史**：首页展示最近 20 条填写过的元数据，点击即可回填；URL 记录会连同链接一起恢复，上传记录会自动切到上传模式。
+*   **可扩展元数据**：动态编辑器支持创作者、别名、出版、语言、日期、标识符等标准字段，以及可配置的自定义字段。任务和历史保存版本化文档、人工保护和明确清空状态。CBZ 使用固定 ComicInfo 2.1 draft profile，保留未编辑原字段，原件与无法映射的信息另存私密副本。
+*   **元数据历史核对**：最近 20 条记录可预览提交信息，并逐项选择采用，不会自动更换下载来源。最终归档元数据仅在产物提供该快照时显示。
+*   **管理员与集成设置**：内置单管理员登录，保护页面、API 和文件；支持采集源凭据加密保存、可配置 AI 接口、模型发现和固定样例测试。支持 MangaBaka/MangaUpdates/Bangumi 检索、多图本地 OCR、有限规则与可选 AI 提取；「设置 → 连接」保留 tdl 登录管理，首页不提供 Telegram 消息新建下载来源。
 *   **并发下载**：支持多线程并发下载图片，以提高效率。
 *   **自动打包**：下载完成后，所有图片会自动打包成 `.cbz`，文件名规则为 `作者_[系列名]_漫画名_时间戳.cbz`（系列名为空则省略该段，作者/漫画名空值自动占位）。
 *   **后端暂存 + 手动下载 / Komga 复制**：任务完成后产物会先存储在后端；日志页可按设置选择浏览器下载，或复制到固定 Komga 目录（系列名目录 / `tankobon`）。
+*   **Komga 存量作品编辑**：在「作品库」按书库浏览已有漫画，预览字段改动后写回 CBZ 内的 ComicInfo；原件独立备份，并分别核对文件和 Komga 同步状态。
+*   **命令行客户端**：`mediactl` 覆盖任务、元数据、截图 OCR、设置、连接和 Komga 作品操作，供本机终端与项目内 AI Skill 使用。
 *   **上传任务日志化**：上传任务和 URL 任务共用同一张日志表，日志页会标识任务类型，并显示上传进度、失败重试、取消与成功动作。
 *   **下载预检与页内错误反馈**：日志页成功任务在浏览器下载模式下会先预检文件状态；如果文件不可用会在当前页给出明确错误，不会跳离 Logs 页面。
 *   **容错下载**：单张图片 404/失败会继续尝试其他图片；只要存在失败，该任务最终标记为失败并不给下载按钮。
 *   **下载日志**：提供一个日志页面，可以查看所有下载任务的状态（中文标签）、进度和错误信息。
-*   **任务看板与筛选**：首页/日志页提供任务概览指标；移动端默认折叠概览卡，日志支持按状态与关键词筛选，便于快速定位问题任务。
+*   **任务看板与筛选**：日志支持按状态与关键词筛选，便于快速定位问题任务。
 *   **准确取消反馈**：取消操作为异步流程，前端会按后端真实响应显示状态与提示，减少误导。
 *   **可配置性**：
     *   可自定义图片并发数、下载超时和重试次数。
@@ -53,7 +56,8 @@ Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Tele
 ```text
 cmd/server/               # go-api 入口
 cmd/worker/               # go-worker 入口
-internal/httpui/          # 首页/日志/设置 UI（保持现有界面）
+cmd/adminctl/             # 本机密码恢复与凭据密钥轮换
+internal/httpui/          # 登录、工作台、任务与设置 UI
 internal/httpapi/         # /download + /api/* legacy-facing 适配层
 internal/httpv2/          # /v2/* API
 internal/app/taskcore/    # Task Core 应用服务与任务生命周期用例
@@ -91,6 +95,8 @@ tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose
 
 - `docs/development/module-boundaries.md`：重构期模块边界与职责约束
 - `docs/development/testing-strategy.md`：测试分层与最低回归要求
+- [Komga 作品编辑与恢复](docs/development/komga-edit.md)：书库挂载、备份、同步与恢复
+- [mediactl 安装与命令行操作](docs/development/mediactl.md)：CLI、离线 OCR 与 AI Skill
 
 ## 前端源码与静态资源约定
 
@@ -174,7 +180,8 @@ docker compose down
 ## 关键接口说明
 
 *   `POST /download`
-    *   支持元数据字段：`author`、`series_name`、`comic_name`、`summary`、`tags`、`genres`（表单或 JSON）。
+    *   新页面提交 `metadata_document`（JSON 对象，表单中为 JSON 字符串）；仍接受旧 `author`、`series_name`、`series_number`、`comic_name`、`summary`、`tags`、`genres`。混用且语义冲突返回错误。
+    *   API 写操作需要管理员 cookie、同源 Origin/Referer 和 `X-CSRF-Token`；`INTERNAL_ENQUEUE_TOKEN` 不绕过管理员登录。
     *   支持 `force` 参数（布尔语义）。
     *   命中已有成功文件时返回确认态（`needs_confirmation=true` + `download_url`）；用户可选择直接下载已有文件，或以 `force=true` 再次提交生成新 CBZ。
     *   若已有同 URL 活跃任务，仍会复用活跃任务避免重复并发。
@@ -191,8 +198,10 @@ docker compose down
 
 ```bash
 cp .env.example .env
-# 至少设置 INTERNAL_ENQUEUE_TOKEN
+# 设置 INTERNAL_ENQUEUE_TOKEN、APP_PUBLIC_ORIGIN，并准备下述管理员私密文件
 ```
+
+首次启动还需准备管理员初始密码和来源凭据主密钥文件，文件所有者须与 API 的 UID 一致、权限为 `0400` 或 `0600`。按[管理员部署与恢复](docs/development/admin-access.md)完成配置；已有数据库升级也需提供主密钥，新管理员只初始化一次。`APP_PUBLIC_ORIGIN` 必须与浏览器访问地址完全一致（包括端口）。远程使用 HTTPS，本机 HTTP 需显式开启 loopback 开发模式。
 
 ### 2. 启动 Compose 单主线（Go）
 
@@ -204,7 +213,7 @@ bash scripts/start_local.sh
 
 ### 3. 访问应用
 
-在浏览器中打开 `http://localhost:5002`。
+在浏览器中打开 `APP_PUBLIC_ORIGIN`（示例为 `http://127.0.0.1:5002`），使用准备的管理员密码登录。
 
 ## Compose 单主线部署（Go）
 
@@ -279,3 +288,5 @@ docker compose up -d --build
 docker compose down --remove-orphans
 docker compose up -d --build
 ```
+
+作品信息工作区支持多图本地 OCR、可配置规则/AI、公开书目检索、设置中的 Telegram 登录管理，以及扩展 ComicInfo 保留。使用与部署配置见 [作品信息工作区](docs/development/metadata-workspace.md)。

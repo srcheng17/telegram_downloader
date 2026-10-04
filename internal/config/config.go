@@ -28,6 +28,9 @@ const (
 	maxImageConcurrency = 20
 )
 
+var ErrInvalidSettings = errors.New("invalid download settings")
+var ErrSettingsConflict = errors.New("download settings version conflict")
+
 type SettingsSnapshot struct {
 	Timeout            int    `json:"timeout"`
 	Retries            int    `json:"retries"`
@@ -35,19 +38,37 @@ type SettingsSnapshot struct {
 	DownloadActionMode string `json:"download_action_mode"`
 }
 
+// VersionedSettingsSnapshot is the administrator-facing CAS contract used by
+// the CLI. Legacy /v2/settings reads remain compatible with SettingsSnapshot.
+type VersionedSettingsSnapshot struct {
+	SettingsSnapshot
+	ConfigVersion int64 `json:"config_version"`
+}
+
 type Config struct {
-	Addr             string
-	DatabaseURL      string
-	ConsumerName     string
-	UpstreamBaseURL  string
-	InternalToken    string
-	DownloadTimeout  int
-	DownloadRetries  int
-	ImageConcurrency int
-	ReadTimeout      time.Duration
-	WriteTimeout     time.Duration
-	IdleTimeout      time.Duration
-	ShutdownTimeout  time.Duration
+	SourceRetentionRoot    string
+	TelegramMaxSourceBytes int64
+	TelegramEnabled        bool
+	TelegramPrivateRoot    string
+	TelegramHelperPath     string
+	TelegramTDLPath        string
+	KomgaLibraryMappings   []KomgaLibraryMapping
+	KomgaReadOnlyLibraries []string
+	KomgaEditBackupRoot    string
+	PublicOrigin           string
+	AllowInsecureLoopback  bool
+	Addr                   string
+	DatabaseURL            string
+	ConsumerName           string
+	UpstreamBaseURL        string
+	InternalToken          string
+	DownloadTimeout        int
+	DownloadRetries        int
+	ImageConcurrency       int
+	ReadTimeout            time.Duration
+	WriteTimeout           time.Duration
+	IdleTimeout            time.Duration
+	ShutdownTimeout        time.Duration
 }
 
 func LoadFromEnv() (Config, error) {
@@ -95,20 +116,59 @@ func LoadFromEnv() (Config, error) {
 		return Config{}, errors.New("INTERNAL_ENQUEUE_TOKEN is required in production")
 	}
 
+	telegramMaxSourceBytes := int64(500 << 20)
+	if value := strings.TrimSpace(os.Getenv("TELEGRAM_MAX_SOURCE_BYTES")); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 1 || parsed > 500<<20 {
+			return Config{}, errors.New("TELEGRAM_MAX_SOURCE_BYTES must be between 1 and 524288000")
+		}
+		telegramMaxSourceBytes = parsed
+	}
+	komgaMappings, err := parseKomgaLibraryMappings(os.Getenv("KOMGA_LIBRARY_MAPPINGS"))
+	if err != nil {
+		return Config{}, err
+	}
+	komgaReadOnly, err := parseKomgaReadOnlyLibraries(os.Getenv("KOMGA_READONLY_LIBRARY_IDS"), komgaMappings)
+	if err != nil {
+		return Config{}, err
+	}
+	komgaBackupRoot := envOrDefault("KOMGA_EDIT_BACKUP_ROOT", "/app/komga-edit-backups")
+	if err := validateKomgaBackupRoot(komgaBackupRoot, komgaMappings); err != nil {
+		return Config{}, err
+	}
+
 	return Config{
-		Addr:             addr,
-		DatabaseURL:      databaseURL,
-		ConsumerName:     consumerName,
-		UpstreamBaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("PYTHON_WEB_BASE_URL")), "/"),
-		InternalToken:    internalToken,
-		DownloadTimeout:  settings.Timeout,
-		DownloadRetries:  settings.Retries,
-		ImageConcurrency: settings.ImageConcurrency,
-		ReadTimeout:      15 * time.Second,
-		WriteTimeout:     30 * time.Second,
-		IdleTimeout:      60 * time.Second,
-		ShutdownTimeout:  10 * time.Second,
+		TelegramMaxSourceBytes: telegramMaxSourceBytes,
+		SourceRetentionRoot:    envOrDefault("SOURCE_RETENTION_PATH", "/app/source-retention"),
+		TelegramEnabled:        os.Getenv("TELEGRAM_ENABLED") == "true",
+		TelegramPrivateRoot:    envOrDefault("TELEGRAM_PRIVATE_ROOT", "/app/telegram-private"),
+		TelegramHelperPath:     envOrDefault("TELEGRAM_HELPER_PATH", "/app/tdl-auth-helper"),
+		TelegramTDLPath:        envOrDefault("TELEGRAM_TDL_PATH", "/app/tdl"),
+		KomgaLibraryMappings:   komgaMappings,
+		KomgaReadOnlyLibraries: komgaReadOnly,
+		KomgaEditBackupRoot:    komgaBackupRoot,
+		PublicOrigin:           strings.TrimSpace(os.Getenv("APP_PUBLIC_ORIGIN")),
+		AllowInsecureLoopback:  os.Getenv("ALLOW_INSECURE_LOOPBACK") == "true",
+		Addr:                   addr,
+		DatabaseURL:            databaseURL,
+		ConsumerName:           consumerName,
+		UpstreamBaseURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("PYTHON_WEB_BASE_URL")), "/"),
+		InternalToken:          internalToken,
+		DownloadTimeout:        settings.Timeout,
+		DownloadRetries:        settings.Retries,
+		ImageConcurrency:       settings.ImageConcurrency,
+		ReadTimeout:            15 * time.Second,
+		WriteTimeout:           30 * time.Second,
+		IdleTimeout:            60 * time.Second,
+		ShutdownTimeout:        10 * time.Second,
 	}, nil
+}
+
+func envOrDefault(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func isProductionEnv() bool {

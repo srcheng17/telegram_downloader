@@ -1,0 +1,44 @@
+{
+  "synthetic": true,
+  "engine": "Tesseract.js 7.0.0",
+  "results": [
+    {
+      "language": "eng",
+      "expected": "Title: Star Atlas\nWriter: Example Author\nVolume: 2",
+      "actual": "Title: Star Atlas\nWriter: Example Author\nVolume: 2\n",
+      "elapsedMs": 195,
+      "characterEditsIgnoringWhitespace": 0,
+      "expectedCharactersIgnoringWhitespace": 43
+    },
+    {
+      "language": "chi_sim",
+      "expected": "标题：星空图书\n作者：示例作者\n简介：这是一个关于图书的故事。",
+      "actual": "标题 : 星空 图 书\n作者 : 示例 作者\n简介 : 这 是 一 个 关于 图 书 的 故事 。\n",
+      "elapsedMs": 191,
+      "characterEditsIgnoringWhitespace": 3,
+      "expectedCharactersIgnoringWhitespace": 29
+    },
+    {
+      "language": "chi_tra",
+      "expected": "標題：星空圖書\n作者：範例作者\n簡介：這是一個關於圖書的故事。",
+      "actual": "標題 : 星空 圖 書\n作者 : 範例 作者\n簡介 : 這 是 一 個 關於 圖 書 的 故事 。\n",
+      "elapsedMs": 185,
+      "characterEditsIgnoringWhitespace": 3,
+      "expectedCharactersIgnoringWhitespace": 29
+    },
+    {
+      "language": "jpn",
+      "expected": "タイトル：星空の本\n作者：山田太郎\nこれは図書館の物語です。",
+      "actual": "タイ トル : 星空 の 本\n作者 : 山田 太郎\nこれ は 図書 館 の 物語 で す 。\n",
+      "elapsedMs": 194,
+      "characterEditsIgnoringWhitespace": 2,
+      "expectedCharactersIgnoringWhitespace": 28
+    }
+  ],
+  "externalRequests": [],
+  "notes": [
+    "Desktop Chromium only; mobile memory peak and user screenshot accuracy remain separate checks."
+  ],
+  "missingResourcesFails": true,
+  "cachedOfflineText": "Star Atlas\n"
+}

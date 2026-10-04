@@ -1,0 +1,1903 @@
+{
+  "schema": {
+    "schema_version": 1,
+    "definitions_version": "standard-v1",
+    "definitions": {
+      "age_rating": {
+        "key": "age_rating",
+        "label": "年龄分级",
+        "type": "string",
+        "max_bytes": 4096,
+        "enum": [
+          "unknown",
+          "Unknown",
+          "Adults Only 18+",
+          "Early Childhood",
+          "Everyone",
+          "Everyone 10+",
+          "G",
+          "Kids to Adults",
+          "M",
+          "MA15+",
+          "Mature 17+",
+          "PG",
+          "R18+",
+          "Rating Pending",
+          "Teen",
+          "X18+"
+        ],
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "AgeRating"
+      },
+      "aliases": {
+        "key": "aliases",
+        "label": "作品别名",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "internal_only"
+      },
+      "count": {
+        "key": "count",
+        "label": "系列总册／期数",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2147483647,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Count"
+      },
+      "creators.colorist": {
+        "key": "creators.colorist",
+        "label": "上色",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Colorist"
+      },
+      "creators.cover_artist": {
+        "key": "creators.cover_artist",
+        "label": "封面绘制",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "CoverArtist"
+      },
+      "creators.editor": {
+        "key": "creators.editor",
+        "label": "编辑",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Editor"
+      },
+      "creators.inker": {
+        "key": "creators.inker",
+        "label": "勾线",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Inker"
+      },
+      "creators.letterer": {
+        "key": "creators.letterer",
+        "label": "嵌字",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Letterer"
+      },
+      "creators.penciller": {
+        "key": "creators.penciller",
+        "label": "作画",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Penciller"
+      },
+      "creators.translator": {
+        "key": "creators.translator",
+        "label": "翻译",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Translator"
+      },
+      "creators.writer": {
+        "key": "creators.writer",
+        "label": "作者／原作",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Writer"
+      },
+      "format": {
+        "key": "format",
+        "label": "出版形式",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Format"
+      },
+      "genres": {
+        "key": "genres",
+        "label": "题材",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Genre"
+      },
+      "identifiers": {
+        "key": "identifiers",
+        "label": "标识符",
+        "type": "identifiers",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "GTIN"
+      },
+      "imprint": {
+        "key": "imprint",
+        "label": "出版品牌",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Imprint"
+      },
+      "language": {
+        "key": "language",
+        "label": "语言",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "LanguageISO"
+      },
+      "manga": {
+        "key": "manga",
+        "label": "漫画标记",
+        "type": "string",
+        "max_bytes": 4096,
+        "enum": [
+          "yes",
+          "no",
+          "unknown"
+        ],
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Manga"
+      },
+      "number": {
+        "key": "number",
+        "label": "本册编号",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Number"
+      },
+      "page_count": {
+        "key": "page_count",
+        "label": "页数",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 2147483647,
+        "extractable": [
+          "archive",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "PageCount"
+      },
+      "publication_date": {
+        "key": "publication_date",
+        "label": "出版日期",
+        "type": "date",
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Year/Month/Day"
+      },
+      "publisher": {
+        "key": "publisher",
+        "label": "出版社",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Publisher"
+      },
+      "reading_direction": {
+        "key": "reading_direction",
+        "label": "阅读方向",
+        "type": "string",
+        "max_bytes": 4096,
+        "enum": [
+          "ltr",
+          "rtl",
+          "unknown"
+        ],
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Manga"
+      },
+      "series": {
+        "key": "series",
+        "label": "系列",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Series"
+      },
+      "summary": {
+        "key": "summary",
+        "label": "简介",
+        "type": "string",
+        "max_bytes": 16384,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Summary"
+      },
+      "tags": {
+        "key": "tags",
+        "label": "标签",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Tags"
+      },
+      "title": {
+        "key": "title",
+        "label": "标题",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Title"
+      },
+      "volume": {
+        "key": "volume",
+        "label": "系列轮次／卷系",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2147483647,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Volume"
+      },
+      "web": {
+        "key": "web",
+        "label": "公开链接",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Web"
+      }
+    },
+    "limits": {
+      "document_bytes": 262144,
+      "custom_fields": 64,
+      "string_bytes": 4096,
+      "summary_bytes": 16384,
+      "list_items": 64,
+      "list_item_bytes": 1024,
+      "provenance_per_field": 8
+    }
+  },
+  "empty_document": {
+    "schema_version": 1,
+    "definitions_version": "standard-v1",
+    "revision": 0,
+    "fields": {},
+    "definition_snapshot": {}
+  },
+  "document": {
+    "schema_version": 1,
+    "definitions_version": "standard-v1",
+    "revision": 1,
+    "fields": {
+      "aliases": {
+        "state": "value",
+        "value": [
+          "星海圖書館",
+          "Library of Stars"
+        ],
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "count": {
+        "state": "value",
+        "value": 12,
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "creators.writer": {
+        "state": "value",
+        "value": [
+          "林青",
+          "Ada Example"
+        ],
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "identifiers": {
+        "state": "value",
+        "value": [
+          {
+            "scheme": "provider.example",
+            "value": "record-17"
+          }
+        ],
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "language": {
+        "state": "value",
+        "value": "zh-Hant",
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "number": {
+        "state": "value",
+        "value": "2.5 特别篇",
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "publication_date": {
+        "state": "value",
+        "value": {
+          "year": 2024,
+          "month": 2
+        },
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "series": {
+        "state": "value",
+        "value": "星海",
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "summary": {
+        "state": "cleared",
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "tags": {
+        "state": "value",
+        "value": [
+          "科幻",
+          "Slice of Life"
+        ],
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "title": {
+        "state": "value",
+        "value": "星海图书馆",
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      },
+      "volume": {
+        "state": "value",
+        "value": 2024,
+        "revision": 1,
+        "manual_locked": true,
+        "provenance": [
+          {
+            "kind": "manual",
+            "source_id": "user",
+            "adopted_at": "2026-10-04T00:00:00Z"
+          }
+        ]
+      }
+    },
+    "definition_snapshot": {
+      "aliases": {
+        "key": "aliases",
+        "label": "作品别名",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "internal_only"
+      },
+      "count": {
+        "key": "count",
+        "label": "系列总册／期数",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2147483647,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Count"
+      },
+      "creators.writer": {
+        "key": "creators.writer",
+        "label": "作者／原作",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Writer"
+      },
+      "identifiers": {
+        "key": "identifiers",
+        "label": "标识符",
+        "type": "identifiers",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "GTIN"
+      },
+      "language": {
+        "key": "language",
+        "label": "语言",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "LanguageISO"
+      },
+      "number": {
+        "key": "number",
+        "label": "本册编号",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Number"
+      },
+      "publication_date": {
+        "key": "publication_date",
+        "label": "出版日期",
+        "type": "date",
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Year/Month/Day"
+      },
+      "series": {
+        "key": "series",
+        "label": "系列",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Series"
+      },
+      "summary": {
+        "key": "summary",
+        "label": "简介",
+        "type": "string",
+        "max_bytes": 16384,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Summary"
+      },
+      "tags": {
+        "key": "tags",
+        "label": "标签",
+        "type": "string[]",
+        "max_items": 64,
+        "item_max_bytes": 1024,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Tags"
+      },
+      "title": {
+        "key": "title",
+        "label": "标题",
+        "type": "string",
+        "max_bytes": 4096,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Title"
+      },
+      "volume": {
+        "key": "volume",
+        "label": "系列轮次／卷系",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2147483647,
+        "extractable": [
+          "archive",
+          "ocr",
+          "rule",
+          "ai",
+          "provider",
+          "legacy"
+        ],
+        "editable": true,
+        "enabled": true,
+        "export_status": "mapped",
+        "export_mapping": "Volume"
+      }
+    }
+  },
+  "candidate": {
+    "candidate_id": "candidate-example-1",
+    "request_id": "request-example-1",
+    "origin": "provider",
+    "schema_version": 1,
+    "definitions_version": "standard-v1",
+    "base_document_revision": 1,
+    "input_revision": 3,
+    "field_revisions": {
+      "publisher": 0,
+      "summary": 1
+    },
+    "fields": {
+      "publisher": {
+        "state": "value",
+        "value": "示例出版社",
+        "provenance": [
+          {
+            "kind": "provider",
+            "source_id": "provider.example",
+            "record_id": "record-17",
+            "public_url": "https://example.org/books/17"
+          }
+        ]
+      },
+      "summary": {
+        "state": "value",
+        "value": "待核对简介",
+        "provenance": [
+          {
+            "kind": "provider",
+            "source_id": "provider.example",
+            "record_id": "record-17"
+          }
+        ]
+      }
+    }
+  },
+  "patch": {
+    "document": {
+      "schema_version": 1,
+      "definitions_version": "standard-v1",
+      "revision": 1,
+      "fields": {
+        "aliases": {
+          "state": "value",
+          "value": [
+            "星海圖書館",
+            "Library of Stars"
+          ],
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "count": {
+          "state": "value",
+          "value": 12,
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "creators.writer": {
+          "state": "value",
+          "value": [
+            "林青",
+            "Ada Example"
+          ],
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "identifiers": {
+          "state": "value",
+          "value": [
+            {
+              "scheme": "provider.example",
+              "value": "record-17"
+            }
+          ],
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "language": {
+          "state": "value",
+          "value": "zh-Hant",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "number": {
+          "state": "value",
+          "value": "2.5 特别篇",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "publication_date": {
+          "state": "value",
+          "value": {
+            "year": 2024,
+            "month": 2
+          },
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "series": {
+          "state": "value",
+          "value": "星海",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "summary": {
+          "state": "cleared",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "tags": {
+          "state": "value",
+          "value": [
+            "科幻",
+            "Slice of Life"
+          ],
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "title": {
+          "state": "value",
+          "value": "星海图书馆",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "volume": {
+          "state": "value",
+          "value": 2024,
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "definition_snapshot": {
+        "aliases": {
+          "key": "aliases",
+          "label": "作品别名",
+          "type": "string[]",
+          "max_items": 64,
+          "item_max_bytes": 1024,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "internal_only"
+        },
+        "count": {
+          "key": "count",
+          "label": "系列总册／期数",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Count"
+        },
+        "creators.writer": {
+          "key": "creators.writer",
+          "label": "作者／原作",
+          "type": "string[]",
+          "max_items": 64,
+          "item_max_bytes": 1024,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Writer"
+        },
+        "identifiers": {
+          "key": "identifiers",
+          "label": "标识符",
+          "type": "identifiers",
+          "max_items": 64,
+          "item_max_bytes": 1024,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "GTIN"
+        },
+        "language": {
+          "key": "language",
+          "label": "语言",
+          "type": "string",
+          "max_bytes": 4096,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "LanguageISO"
+        },
+        "number": {
+          "key": "number",
+          "label": "本册编号",
+          "type": "string",
+          "max_bytes": 4096,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Number"
+        },
+        "publication_date": {
+          "key": "publication_date",
+          "label": "出版日期",
+          "type": "date",
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Year/Month/Day"
+        },
+        "series": {
+          "key": "series",
+          "label": "系列",
+          "type": "string",
+          "max_bytes": 4096,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Series"
+        },
+        "summary": {
+          "key": "summary",
+          "label": "简介",
+          "type": "string",
+          "max_bytes": 16384,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Summary"
+        },
+        "tags": {
+          "key": "tags",
+          "label": "标签",
+          "type": "string[]",
+          "max_items": 64,
+          "item_max_bytes": 1024,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Tags"
+        },
+        "title": {
+          "key": "title",
+          "label": "标题",
+          "type": "string",
+          "max_bytes": 4096,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Title"
+        },
+        "volume": {
+          "key": "volume",
+          "label": "系列轮次／卷系",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Volume"
+        }
+      }
+    },
+    "expected_revision": 1,
+    "input_revision": 3,
+    "operations": [
+      {
+        "op": "adopt",
+        "candidate": {
+          "candidate_id": "candidate-example-1",
+          "request_id": "request-example-1",
+          "origin": "provider",
+          "schema_version": 1,
+          "definitions_version": "standard-v1",
+          "base_document_revision": 1,
+          "input_revision": 3,
+          "field_revisions": {
+            "publisher": 0,
+            "summary": 1
+          },
+          "fields": {
+            "publisher": {
+              "state": "value",
+              "value": "示例出版社",
+              "provenance": [
+                {
+                  "kind": "provider",
+                  "source_id": "provider.example",
+                  "record_id": "record-17",
+                  "public_url": "https://example.org/books/17"
+                }
+              ]
+            },
+            "summary": {
+              "state": "value",
+              "value": "待核对简介",
+              "provenance": [
+                {
+                  "kind": "provider",
+                  "source_id": "provider.example",
+                  "record_id": "record-17"
+                }
+              ]
+            }
+          }
+        },
+        "keys": [
+          "publisher"
+        ]
+      }
+    ]
+  },
+  "result": {
+    "document": {
+      "schema_version": 1,
+      "definitions_version": "standard-v1",
+      "revision": 2,
+      "fields": {
+        "aliases": {
+          "state": "value",
+          "value": [
+            "星海圖書館",
+            "Library of Stars"
+          ],
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "count": {
+          "state": "value",
+          "value": 12,
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "creators.writer": {
+          "state": "value",
+          "value": [
+            "林青",
+            "Ada Example"
+          ],
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "identifiers": {
+          "state": "value",
+          "value": [
+            {
+              "scheme": "provider.example",
+              "value": "record-17"
+            }
+          ],
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "language": {
+          "state": "value",
+          "value": "zh-Hant",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "number": {
+          "state": "value",
+          "value": "2.5 特别篇",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "publication_date": {
+          "state": "value",
+          "value": {
+            "year": 2024,
+            "month": 2
+          },
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "publisher": {
+          "state": "value",
+          "value": "示例出版社",
+          "revision": 2,
+          "manual_locked": false,
+          "provenance": [
+            {
+              "kind": "provider",
+              "source_id": "provider.example",
+              "record_id": "record-17",
+              "public_url": "https://example.org/books/17",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "series": {
+          "state": "value",
+          "value": "星海",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "summary": {
+          "state": "cleared",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "tags": {
+          "state": "value",
+          "value": [
+            "科幻",
+            "Slice of Life"
+          ],
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "title": {
+          "state": "value",
+          "value": "星海图书馆",
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        },
+        "volume": {
+          "state": "value",
+          "value": 2024,
+          "revision": 1,
+          "manual_locked": true,
+          "provenance": [
+            {
+              "kind": "manual",
+              "source_id": "user",
+              "adopted_at": "2026-10-04T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "definition_snapshot": {
+        "aliases": {
+          "key": "aliases",
+          "label": "作品别名",
+          "type": "string[]",
+          "max_items": 64,
+          "item_max_bytes": 1024,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "internal_only"
+        },
+        "count": {
+          "key": "count",
+          "label": "系列总册／期数",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Count"
+        },
+        "creators.writer": {
+          "key": "creators.writer",
+          "label": "作者／原作",
+          "type": "string[]",
+          "max_items": 64,
+          "item_max_bytes": 1024,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Writer"
+        },
+        "identifiers": {
+          "key": "identifiers",
+          "label": "标识符",
+          "type": "identifiers",
+          "max_items": 64,
+          "item_max_bytes": 1024,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "GTIN"
+        },
+        "language": {
+          "key": "language",
+          "label": "语言",
+          "type": "string",
+          "max_bytes": 4096,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "LanguageISO"
+        },
+        "number": {
+          "key": "number",
+          "label": "本册编号",
+          "type": "string",
+          "max_bytes": 4096,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Number"
+        },
+        "publication_date": {
+          "key": "publication_date",
+          "label": "出版日期",
+          "type": "date",
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Year/Month/Day"
+        },
+        "publisher": {
+          "key": "publisher",
+          "label": "出版社",
+          "type": "string",
+          "max_bytes": 4096,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Publisher"
+        },
+        "series": {
+          "key": "series",
+          "label": "系列",
+          "type": "string",
+          "max_bytes": 4096,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Series"
+        },
+        "summary": {
+          "key": "summary",
+          "label": "简介",
+          "type": "string",
+          "max_bytes": 16384,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Summary"
+        },
+        "tags": {
+          "key": "tags",
+          "label": "标签",
+          "type": "string[]",
+          "max_items": 64,
+          "item_max_bytes": 1024,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Tags"
+        },
+        "title": {
+          "key": "title",
+          "label": "标题",
+          "type": "string",
+          "max_bytes": 4096,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Title"
+        },
+        "volume": {
+          "key": "volume",
+          "label": "系列轮次／卷系",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "extractable": [
+            "archive",
+            "ocr",
+            "rule",
+            "ai",
+            "provider",
+            "legacy"
+          ],
+          "editable": true,
+          "enabled": true,
+          "export_status": "mapped",
+          "export_mapping": "Volume"
+        }
+      }
+    },
+    "warnings": [
+      {
+        "key": "aliases",
+        "code": "internal_only",
+        "message": "仅项目内保存，不导出到 ComicInfo"
+      },
+      {
+        "key": "identifiers",
+        "code": "identifier_export",
+        "message": "仅有效的 ISBN／GTIN 可映射到 ComicInfo，其余标识符仅项目内保存"
+      }
+    ]
+  }
+}

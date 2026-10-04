@@ -30,3 +30,6 @@ tests/e2e/.artifacts/
 .trellis/
 .agents/
 .codex/
+
+# External administrator and source encryption secrets
+secrets/

@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "tesseract": "7.0.0",
+  "core": "7.0.0",
+  "languages": "@tesseract.js-data/*@1.0.0/4.0.0_best_int",
+  "files": [
+    {
+      "path": "tesseract-7.0.0/worker.min.js",
+      "sha256": "576b7df7e3393e137e51849357c9adb53fe7ac1bb69bfa06cf3d61520f182c6d",
+      "bytes": 111307,
+      "source": "npm:tesseract.js@7.0.0/dist/worker.min.js",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "tesseract-7.0.0/core/tesseract-core-lstm.wasm",
+      "sha256": "66b17df6e20c5329a17ffa9c202a47eaa3e32500b253d4c7f38e7f2bc01457c3",
+      "bytes": 2855361,
+      "source": "npm:tesseract.js-core@7.0.0/tesseract-core-lstm.wasm",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "tesseract-7.0.0/core/tesseract-core-lstm.wasm.js",
+      "sha256": "eef5f8b2f8e20e150680b20adaec4a60babafee3adbe8a94583c81fee46e8680",
+      "bytes": 3896484,
+      "source": "npm:tesseract.js-core@7.0.0/tesseract-core-lstm.wasm.js",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "tesseract-7.0.0/core/tesseract-core-relaxedsimd-lstm.wasm",
+      "sha256": "7985c92d4c64e7267d24cadffe1b2a1da6bf8aa55fdcaf953fe94fe122a24545",
+      "bytes": 2862266,
+      "source": "npm:tesseract.js-core@7.0.0/tesseract-core-relaxedsimd-lstm.wasm",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "tesseract-7.0.0/core/tesseract-core-relaxedsimd-lstm.wasm.js",
+      "sha256": "861a536cf9ef8e63cb644d57bab39c388f37f7d6b6f60024b741c5f6b39a59b3",
+      "bytes": 3905767,
+      "source": "npm:tesseract.js-core@7.0.0/tesseract-core-relaxedsimd-lstm.wasm.js",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "tesseract-7.0.0/core/tesseract-core-simd-lstm.wasm",
+      "sha256": "34e8d50cac216427d86bf397d610fdd9f49492539bbcdfbfccc4eda20c810bea",
+      "bytes": 2857601,
+      "source": "npm:tesseract.js-core@7.0.0/tesseract-core-simd-lstm.wasm",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "tesseract-7.0.0/core/tesseract-core-simd-lstm.wasm.js",
+      "sha256": "c58b46a4c796c0b8afccf77591d5b875b6896b45d402bbce8caa6f5362447b38",
+      "bytes": 3899472,
+      "source": "npm:tesseract.js-core@7.0.0/tesseract-core-simd-lstm.wasm.js",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "tesseract-7.0.0/licenses/Apache-2.0.txt",
+      "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08",
+      "bytes": 11358,
+      "source": "npm:tesseract.js-core@7.0.0/LICENSE",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "tesseract-7.0.0/licenses/worker-third-party.txt",
+      "sha256": "45f54171aeaa1d10c0c1a66f374b7bba1f02472b1487fbe892eec04f840002ac",
+      "bytes": 466,
+      "source": "npm:tesseract.js@7.0.0/dist/worker.min.js.LICENSE.txt",
+      "license": "bundled notices"
+    },
+    {
+      "path": "tesseract-7.0.0/lang/eng.traineddata.gz",
+      "sha256": "45b4cb346724ac1774f1c36f42f182b887bcdb28ebe63e6fff90ac41f3fcff91",
+      "bytes": 2952873,
+      "source": "https://registry.npmjs.org/@tesseract.js-data/eng/-/eng-1.0.0.tgz#package/4.0.0_best_int/eng.traineddata.gz",
+      "license": "Apache-2.0 (traineddata); npm wrapper declares MIT"
+    },
+    {
+      "path": "tesseract-7.0.0/lang/chi_sim.traineddata.gz",
+      "sha256": "b8a23f10c7de500891eb458a8adc9cc58ab7f242f08b7d149f5e9aea4ad5db7c",
+      "bytes": 1718768,
+      "source": "https://registry.npmjs.org/@tesseract.js-data/chi_sim/-/chi_sim-1.0.0.tgz#package/4.0.0_best_int/chi_sim.traineddata.gz",
+      "license": "Apache-2.0 (traineddata); npm wrapper declares MIT"
+    },
+    {
+      "path": "tesseract-7.0.0/lang/chi_tra.traineddata.gz",
+      "sha256": "11fe2610dab05d8a880d02f193ce70203f4c4bbe061b987d5529a2c038a22743",
+      "bytes": 1656239,
+      "source": "https://registry.npmjs.org/@tesseract.js-data/chi_tra/-/chi_tra-1.0.0.tgz#package/4.0.0_best_int/chi_tra.traineddata.gz",
+      "license": "Apache-2.0 (traineddata); npm wrapper declares MIT"
+    },
+    {
+      "path": "tesseract-7.0.0/lang/jpn.traineddata.gz",
+      "sha256": "2b63ebfbf1484de4a08ce53b29ef98a1c17658a93cbd38acb665d7d316d0be88",
+      "bytes": 2030256,
+      "source": "https://registry.npmjs.org/@tesseract.js-data/jpn/-/jpn-1.0.0.tgz#package/4.0.0_best_int/jpn.traineddata.gz",
+      "license": "Apache-2.0 (traineddata); npm wrapper declares MIT"
+    },
+    {
+      "path": "tesseract-7.0.0/licenses/tessdata.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357,
+      "source": "https://api.github.com/repos/naptha/tessdata/git/blobs/261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "tesseract-7.0.0/licenses/tesseract.js.txt",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "bytes": 11357,
+      "source": "npm:tesseract.js@7.0.0/LICENSE.md",
+      "license": "Apache-2.0"
+    }
+  ]
+}

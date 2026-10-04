@@ -1,31 +1,17 @@
-import { mountPageModules, syncActiveNav, unmountPageModules } from './shared/page_modules.js';
+import { createAppLifecycle } from './shared/app_lifecycle.js';
+import { syncActiveNav } from './shared/page_modules.js';
 
-function syncNavigationState() {
-    syncActiveNav(window, document);
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    syncNavigationState();
-    mountPageModules(window);
+const app = createAppLifecycle(window, document);
+document.addEventListener('DOMContentLoaded', () => app.start());
+window.addEventListener('popstate', () => syncActiveNav(window, document));
+window.addEventListener('pagehide', app.pagehide);
+window.addEventListener('pageshow', event => { if (event.persisted) app.restore(); });
+window.addEventListener('beforeunload', event => {
+    if (window.TelegraphDownloaderHome?.hasUnsavedChanges?.() || window.TelegraphDownloaderKomga?.hasUnsavedChanges?.()) { event.preventDefault(); event.returnValue = ''; }
 });
-
-window.addEventListener('popstate', syncNavigationState);
-
-document.body.addEventListener('htmx:beforeSwap', (event) => {
-    if (!event.defaultPrevented && event.detail && event.detail.shouldSwap !== false && event.detail.target && event.detail.target.id === 'content') {
-        unmountPageModules(window);
-    }
-});
-
-document.body.addEventListener('htmx:afterSwap', (event) => {
-    if (event.detail && event.detail.target && event.detail.target.id === 'content') {
-        syncNavigationState();
-        mountPageModules(window);
-    }
-});
-
-document.body.addEventListener('htmx:historyRestore', () => {
-    unmountPageModules(window);
-    syncNavigationState();
-    mountPageModules(window);
-});
+document.body.addEventListener('htmx:beforeRequest', app.beforeRequest);
+document.body.addEventListener('htmx:configRequest', app.configRequest);
+document.body.addEventListener('htmx:beforeSwap', app.beforeSwap);
+document.body.addEventListener('htmx:afterSwap', app.afterSwap);
+document.body.addEventListener('htmx:historyRestore', app.restore);
+document.body.addEventListener('htmx:responseError', event => { if (event.detail?.xhr?.status === 401) app.unauthorized(); });

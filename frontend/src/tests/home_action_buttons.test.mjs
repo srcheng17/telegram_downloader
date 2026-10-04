@@ -41,7 +41,7 @@ test('showHomeActionButtons reveals logs button with url navigation', () => {
   const win = { location: { href: '' } };
 
   showHomeActionButtons(doc, { logsUrl: '/logs' }, win);
-  assert.equal(logs.textContent, '查看日志');
+  assert.equal(logs.textContent, '查看任务');
   logs.onclick();
   assert.equal(win.location.href, '/logs');
   assert.equal(actions.classList.values.has('is-hidden'), false);

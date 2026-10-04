@@ -1,0 +1,35 @@
+{
+  "series_id": 123,
+  "title": "Example Series",
+  "type": "Doujinshi",
+  "associated": [
+    {
+      "title": "Alias"
+    }
+  ],
+  "authors": [
+    {
+      "name": "Original Writer",
+      "type": "Author"
+    },
+    {
+      "name": "Artist",
+      "type": "Artist"
+    },
+    {
+      "name": "Not Creator",
+      "type": "Scanlator"
+    }
+  ],
+  "genres": [
+    {
+      "genre": "Doujinshi"
+    }
+  ],
+  "publishers": [
+    {
+      "publisher_name": "Publisher",
+      "type": "Original"
+    }
+  ]
+}

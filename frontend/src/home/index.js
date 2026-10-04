@@ -1,9 +1,12 @@
+import { formatFieldValue } from '../shared/metadata/schema.js';
 import { createTasksApi } from '../shared/api/tasks_api.js';
 import { createHomeApi } from './api.js';
 import { resetHomeActionButtons, showHomeActionButtons } from './action_buttons.js';
 import { applyInputMode, getSelectedMode } from './input_mode.js';
-import { renderMetadataHistory, applyHistoryEntryToForm } from './metadata_history.js';
-import { collectFormPayload, collectMetadataPayload } from './state.js';
+import { renderMetadataHistory } from './metadata_history.js';
+import { readOptionalField, readForceValue } from './state.js';
+import { createWorkspaceShell } from '../ui_shell/index.js';
+import { candidateFromHistory, readHistoryDocument } from '../shared/metadata/candidates.js';
 import { resolveDownloadSubmission } from './submit_flow.js';
 import { submitArchive } from './upload_submission.js';
 import { bindFieldHintToggles } from './field_hints.js';
@@ -11,6 +14,21 @@ import { renderSummary, syncSummaryCollapseMode } from './summary_panel.js';
 import { createStartupRecoveryBannerController } from './startup_recovery_banner.js';
 import { localizeServerMessage } from '../shared/server_messages.js';
 import { resolvePollDelay } from '../shared/polling.js';
+import { createMetadataSearchModule } from '../metadata-search/index.js';
+import { mountOCR } from '../ocr/index.js';
+import { createTabs } from '../shared/tabs.js';
+
+export async function retryMetadataWorkspace(state, showFeedback) {
+    if (state.ocr?.isDirty() || state.shell?.hasUnsavedChanges()) {
+        showFeedback('已保留当前元数据和识别文字，请先处理未提交修改再重新读取字段。', 'info');
+        return false;
+    }
+    // Stop all callbacks targeting the old draft before shell.retry disposes it,
+    // including when the replacement schema request subsequently fails.
+    state.ocr?.dispose(); state.ocr = null;
+    state.metadataSearch?.unmount(); state.metadataSearch = null;
+    return Boolean(await state.shell?.retry());
+}
 
 export function createHomeModule(win, doc) {
     const state = win.__telegraphHomeState || {
@@ -30,10 +48,17 @@ export function createHomeModule(win, doc) {
         inputModeHandler: null,
         inputModeNodes: [],
         hintCleanup: null,
+        shell: null,
+        ocr: null,
+        metadataSearch: null,
+        retryNode: null,
+        retryHandler: null,
+        historySequence: 0,
+        historyController: null,
     };
     win.__telegraphHomeState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
-    const api = createTasksApi((url, options) => win.fetch(url, options));
+    const api = createTasksApi((url, options) => win.fetch(url, options), { win });
     const homeApi = createHomeApi(api);
     const startupRecoveryBanner = createStartupRecoveryBannerController(win, doc, STARTUP_RECOVERY_SESSION_KEY_PREFIX);
 
@@ -165,6 +190,7 @@ export function createHomeModule(win, doc) {
         }
 
         if (resolution.kind === 'queued') {
+            markSubmitted(JSON.parse(basePayload.metadata_document));
             fetchSummary();
         }
 
@@ -203,22 +229,41 @@ export function createHomeModule(win, doc) {
         }
     }
 
-    function syncInputModeSelection(mode) {
-        if (!state.form || typeof state.form.querySelectorAll !== 'function') {
-            applyInputMode(doc, mode);
-            return;
-        }
-        state.form.querySelectorAll('input[name="input_mode"]').forEach((radio) => {
-            radio.checked = String(radio.value || '').trim().toLowerCase() === mode;
-        });
-        applyInputMode(doc, mode);
+    function showHistoryCandidate(entry, view = 'submitted') {
+        try {
+            const source = readHistoryDocument(entry, view);
+            const preview = doc.querySelector('[data-history-values]');
+            if (preview) {
+                preview.replaceChildren();
+                for (const [key, field] of Object.entries(source?.fields || {})) {
+                    const definition = source.definition_snapshot[key] || { label: key, type: 'string' };
+                    const name = doc.createElement('dt');
+                    name.textContent = definition.label;
+                    const value = doc.createElement('dd');
+                    value.textContent = field.state === 'cleared' ? '已明确清空' : formatFieldValue(definition, field.value);
+                    preview.append(name, value);
+                }
+            }
+            const draft = state.shell?.getDraft();
+            if (!draft) throw new Error('请等待元数据字段加载后再选择历史记录。');
+            state.shell.showCandidate(candidateFromHistory({ entry, view, draft, requestId: String(++state.historySequence) }));
+            showFeedback(view === 'effective' ? '正在核对最终归档信息。' : '正在核对历史提交信息。请选择要采用的字段。', 'info');
+        } catch (error) { showFeedback(error.message, 'error'); }
+    }
+
+    function markSubmitted(document) {
+        if (document) state.shell?.markClean(document.revision);
+        fetchMetadataHistory();
     }
 
     async function fetchMetadataHistory() {
         const controller = state.pageController;
+        state.historyController?.abort();
+        const historyController = new AbortController();
+        state.historyController = historyController;
         try {
-            const { response, payload } = await homeApi.getMetadataHistory({ signal: controller.signal });
-            if (!isCurrentPage(controller)) return;
+            const { response, payload } = await homeApi.getMetadataHistory({ signal: historyController.signal });
+            if (!isCurrentPage(controller) || state.historyController !== historyController || historyController.signal.aborted) return;
             if (!response.ok || !Array.isArray(payload)) {
                 return;
             }
@@ -226,21 +271,32 @@ export function createHomeModule(win, doc) {
                 if (!isCurrentPage(controller) || !state.form) {
                     return;
                 }
-                const mode = applyHistoryEntryToForm(state.form, entry);
-                syncInputModeSelection(mode);
-                if (mode === 'upload') {
-                    showFeedback('已回填上传任务元数据，请重新选择压缩包。', 'info');
-                    return;
+                const preview = doc.querySelector('[data-history-preview]');
+                if (preview) {
+                    preview.replaceChildren();
+                    const values = doc.createElement('dl');
+                    values.dataset.historyValues = '';
+                    for (const [view, label] of [['submitted', '提交信息'], ['effective', '最终归档信息']]) {
+                        const button = doc.createElement('button');
+                        button.type = 'button';
+                        button.className = 'btn-secondary';
+                        button.dataset.historyView = view;
+                        button.textContent = label;
+                        button.disabled = view === 'effective' && !entry.effective_metadata_document;
+                        button.onclick = () => showHistoryCandidate(entry, view);
+                        preview.appendChild(button);
+                    }
+                    preview.appendChild(values);
                 }
-                showFeedback('已回填 URL 与元数据。', 'info');
+                showHistoryCandidate(entry);
             });
         } catch (error) {
             if (!isCurrentPage(controller)) return;
-            console.error('Failed to load metadata history:', error);
-        }
+            if (!historyController.signal.aborted) console.error('Failed to load metadata history:', error);
+        } finally { if (state.historyController === historyController) state.historyController = null; }
     }
 
-    async function submitUpload(form) {
+    async function submitUpload(metadataDocument) {
         const controller = state.pageController;
         const archiveInput = doc.getElementById('archive_file');
         const file = archiveInput && archiveInput.files && archiveInput.files[0] ? archiveInput.files[0] : null;
@@ -249,7 +305,7 @@ export function createHomeModule(win, doc) {
             return;
         }
 
-        const metadataPayload = collectMetadataPayload(form);
+        const metadataPayload = { metadata_document: metadataDocument };
         let initPayload = null;
         setSubmitting(true, '上传中...');
         showFeedback('正在创建上传任务...', 'info');
@@ -273,6 +329,7 @@ export function createHomeModule(win, doc) {
                 createXHR: typeof win.XMLHttpRequest === 'function' ? () => new win.XMLHttpRequest() : undefined,
             });
             if (!isCurrentPage(controller)) return;
+            markSubmitted(metadataDocument);
             showFeedback('任务已加入队列。', 'success');
             fetchSummary();
             showHomeActionButtons(doc, { logsUrl: (initPayload && initPayload.logs_url) || (result.uploadPayload && result.uploadPayload.logs_url) || '/logs' }, win);
@@ -304,13 +361,17 @@ export function createHomeModule(win, doc) {
         resetHomeActionButtons(doc, win);
         clearPendingDuplicate();
 
+        let metadataDocument;
+        try { metadataDocument = state.shell?.getDocument();
+            if (!metadataDocument) throw new Error('元数据字段尚未就绪。');
+        } catch (error) { showFeedback(error.message, 'error'); return; }
         const mode = getSelectedMode(doc);
         if (mode === 'upload') {
-            await submitUpload(form);
+            await submitUpload(metadataDocument);
             return;
         }
 
-        const formPayload = collectFormPayload(form);
+        const formPayload = { kind: mode, url: readOptionalField(form, 'url'), force: readForceValue(form), metadata_document: JSON.stringify(metadataDocument) };
         const url = (formPayload.url || '').trim();
         if (!url) {
             showFeedback('请先输入 Telegraph 链接。', 'error');
@@ -369,6 +430,38 @@ export function createHomeModule(win, doc) {
             state.inputModeNodes.forEach((node) => node.addEventListener('change', state.inputModeHandler));
             applyInputMode(doc, getSelectedMode(doc));
             state.hintCleanup = bindFieldHintToggles(doc);
+            const workspace = doc.getElementById('home-page');
+            state.evidenceTabs = createTabs({ root: workspace?.querySelector('[data-evidence-tabs]'), win, defaultTab: 'ocr' });
+            state.evidenceTabs.mount();
+            state.shell = createWorkspaceShell({ root: workspace, doc, adapters: {
+                async loadSchema(options) {
+                    const { response, payload } = await api.getJson('/api/metadata/schema', options);
+                    if (!response.ok) throw new Error('元数据字段读取失败，请重试。');
+                    return payload;
+                },
+                onReady({draft,schema}) {
+                    state.ocr?.dispose();
+                    state.metadataSearch?.unmount();
+                    const onInputChange = () => {
+                        const context = draft.getContext();
+                        draft.setContext({...context,inputRevision:context.inputRevision + 1});
+                        state.shell?.showCandidate(null);
+                        return draft.getContext();
+                    };
+                    const setConfigRevision = configRevision => {
+                        draft.setContext({...draft.getContext(),configRevision});
+                        state.shell?.showCandidate(null);
+                    };
+                    const evidence = workspace.querySelector('[data-module-slot="evidence"]');
+                    state.ocr = evidence && mountOCR(evidence,{draft,api,schema,onInputChange,setConfigRevision,onCandidates:(candidates,options) => state.shell?.showCandidate(candidates[0] || null,options)});
+                    state.metadataSearch = createMetadataSearchModule({root:workspace.querySelector('[data-module-slot="metadata-search"]'),doc,api,getDraft:()=>draft,getRegistry:()=>schema,showCandidate:(candidate,options)=>state.shell?.showCandidate(candidate,options),onInputChange});
+                    state.metadataSearch.mount();
+                },
+            } });
+            state.shell.mount();
+            state.retryNode = workspace?.querySelector('[data-metadata-retry]');
+            state.retryHandler = () => retryMetadataWorkspace(state, showFeedback);
+            state.retryNode?.addEventListener('click', state.retryHandler);
             fetchMetadataHistory();
             resetHomeActionButtons(doc, win);
             clearPendingDuplicate();
@@ -401,6 +494,21 @@ export function createHomeModule(win, doc) {
     }
 
     function unmount() {
+        state.evidenceTabs?.unmount();
+        state.evidenceTabs = null;
+        state.ocr?.dispose();
+        state.ocr = null;
+        state.metadataSearch?.unmount();
+        state.metadataSearch = null;
+        state.historyController?.abort();
+        state.historyController = null;
+        state.shell?.unmount();
+        state.shell = null;
+        state.retryNode?.removeEventListener('click', state.retryHandler);
+        state.retryNode = null;
+        state.retryHandler = null;
+        doc.querySelector('[data-history-preview]')?.replaceChildren();
+        doc.getElementById('metadata-history-list')?.replaceChildren();
         state.mountedRoot = null;
         if (state.pageController) state.pageController.abort();
         state.pageController = null;
@@ -445,5 +553,7 @@ export function createHomeModule(win, doc) {
     return {
         mount,
         unmount,
+        hasUnsavedChanges: () => Boolean(state.shell?.hasUnsavedChanges() || state.ocr?.isDirty()),
+        canLeave: () => !(state.shell?.hasUnsavedChanges() || state.ocr?.isDirty()) || win.confirm('当前元数据或识别文字尚未提交，确定离开并放弃修改吗？'),
     };
 }

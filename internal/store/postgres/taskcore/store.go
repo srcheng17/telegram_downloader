@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ryancheng/telegram-downloader/internal/app/telegram"
+	metadataDomain "github.com/ryancheng/telegram-downloader/internal/domain/metadata"
 	"strings"
 	"time"
 
@@ -19,6 +21,9 @@ import (
 )
 
 var _ app.Repository = (*Store)(nil)
+
+// Keep canonical lookups indexable; only URL-only legacy inputs need the fallback.
+const canonicalURLPredicate = `(i.canonical_url = $1 OR ((i.canonical_url IS NULL OR i.canonical_url = '') AND btrim(i.url) = $1))`
 
 type Store struct {
 	pool *pgxpool.Pool
@@ -52,17 +57,34 @@ func (s *Store) CreateTask(ctx context.Context, task app.Task, input app.Input, 
 }
 
 func (s *Store) CreateURLTask(ctx context.Context, task app.Task, input app.Input, progress domain.Progress, force bool) (app.CreateURLResult, error) {
+	canonicalURL := strings.TrimSpace(input.CanonicalURL)
+	if canonicalURL == "" {
+		canonicalURL = strings.TrimSpace(input.URL)
+	}
+	var telegramSource any
+	lockKey := canonicalURL
+	if task.Kind == domain.KindTelegram {
+		if input.Telegram == nil || telegram.ValidateInput(*input.Telegram) != nil {
+			return app.CreateURLResult{}, app.ErrInvalidInput
+		}
+		encoded, err := json.Marshal(input.Telegram)
+		if err != nil {
+			return app.CreateURLResult{}, err
+		}
+		telegramSource = string(encoded)
+		lockKey = telegramLockKey(*input.Telegram)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return app.CreateURLResult{}, err
 	}
 	defer rollback(ctx, tx)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, input.CanonicalURL); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
 		return app.CreateURLResult{}, err
 	}
 	view, err := scanTaskView(tx.QueryRow(ctx, taskViewQuery()+`
- WHERE t.kind = 'url' AND i.canonical_url = $1 AND t.status IN ('READY', 'RUNNING', 'CANCELING')
- ORDER BY t.created_at DESC, t.id DESC LIMIT 1`, input.CanonicalURL))
+ WHERE t.kind = $2 AND (i.telegram_source IS NOT DISTINCT FROM $3::jsonb) AND `+canonicalURLPredicate+` AND t.status IN ('READY', 'RUNNING', 'CANCELING')
+ ORDER BY t.created_at DESC, t.id DESC LIMIT 1`, canonicalURL, string(task.Kind), telegramSource))
 	if err == nil {
 		return app.CreateURLResult{Task: view.Task, Reused: true, Result: view.Result}, tx.Commit(ctx)
 	}
@@ -71,8 +93,8 @@ func (s *Store) CreateURLTask(ctx context.Context, task app.Task, input app.Inpu
 	}
 	if !force {
 		view, err = scanTaskView(tx.QueryRow(ctx, taskViewQuery()+`
- WHERE t.kind = 'url' AND i.canonical_url = $1 AND t.status = 'SUCCEEDED' AND r.task_id IS NOT NULL
- ORDER BY t.created_at DESC, t.id DESC LIMIT 1`, input.CanonicalURL))
+ WHERE t.kind = $2 AND (i.telegram_source IS NOT DISTINCT FROM $3::jsonb) AND `+canonicalURLPredicate+` AND t.status = 'SUCCEEDED' AND r.task_id IS NOT NULL
+ ORDER BY t.created_at DESC, t.id DESC LIMIT 1`, canonicalURL, string(task.Kind), telegramSource))
 		if err == nil {
 			return app.CreateURLResult{Task: view.Task, Reused: true, NeedsConfirmation: true, Result: view.Result}, tx.Commit(ctx)
 		}
@@ -97,9 +119,29 @@ func (s *Store) insertTask(ctx context.Context, tx pgx.Tx, task app.Task, input 
 	}
 	task.UpdatedAt = now
 	input.TaskID = task.ID
+	if input.MetadataDocument == nil {
+		doc, err := metadataDomain.FromLegacy(app.LegacyMetadata(input.Metadata))
+		if err != nil {
+			return app.Task{}, err
+		}
+		input.MetadataDocument = &doc
+	}
+	input.Metadata = app.MetadataProjection(metadataDomain.ToLegacy(*input.MetadataDocument))
+	document, err := json.Marshal(input.MetadataDocument)
+	if err != nil {
+		return app.Task{}, err
+	}
 	metadata, err := encodeMetadata(input.Metadata)
 	if err != nil {
 		return app.Task{}, err
+	}
+	var telegramSource any
+	if input.Telegram != nil {
+		encoded, err := json.Marshal(input.Telegram)
+		if err != nil {
+			return app.Task{}, err
+		}
+		telegramSource = string(encoded)
 	}
 	var runtimeSettings any
 	if input.RuntimeSettings != nil {
@@ -125,13 +167,21 @@ func (s *Store) insertTask(ctx context.Context, tx pgx.Tx, task app.Task, input 
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO task_core_inputs (
-			task_id, url, canonical_url, source_archive_name, source_archive_path, source_archive_size, metadata, runtime_settings
-		) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7::jsonb, $8::jsonb)
-	`, input.TaskID, input.URL, input.CanonicalURL, input.SourceArchiveName, input.SourceArchivePath, nullablePositiveSize(input.SourceArchiveSize), string(metadata), runtimeSettings)
+			task_id, url, canonical_url, source_archive_name, source_archive_path, source_archive_size, metadata, runtime_settings, metadata_document, telegram_source
+		) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb)
+	`, input.TaskID, input.URL, input.CanonicalURL, input.SourceArchiveName, input.SourceArchivePath, nullablePositiveSize(input.SourceArchiveSize), string(metadata), runtimeSettings, string(document), telegramSource)
 	if err != nil {
 		return app.Task{}, mapPgError(err)
 	}
 
+	if len(input.MetadataDocument.Fields) > 0 {
+		_, err = tx.Exec(ctx, `INSERT INTO metadata_history (task_id, task_type, url, author, series_name, series_number, comic_name, summary, tags, genres, metadata_document, created_at)
+         VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),$11::jsonb,$12)`,
+			task.ID, string(task.Kind), input.URL, input.Metadata["author"], input.Metadata["series_name"], input.Metadata["series_number"], input.Metadata["comic_name"], input.Metadata["summary"], input.Metadata["tags"], input.Metadata["genres"], string(document), now)
+		if err != nil {
+			return app.Task{}, err
+		}
+	}
 	if err := upsertProgress(ctx, tx, task.ID, progress, now); err != nil {
 		return app.Task{}, err
 	}
@@ -265,6 +315,34 @@ func (s *Store) Retry(ctx context.Context, taskID string, progress domain.Progre
 	}
 	defer rollback(ctx, tx)
 
+	// URL inputs are immutable. Read their identity first so every URL writer
+	// acquires the canonical advisory lock before locking its own task row.
+	var kind, canonicalURL string
+	var telegramSource sql.NullString
+	err = tx.QueryRow(ctx, `SELECT t.kind, COALESCE(NULLIF(i.canonical_url, ''), btrim(i.url), ''), i.telegram_source::text
+ FROM task_core_tasks t JOIN task_core_inputs i ON i.task_id = t.id WHERE t.id = $1`, taskID).Scan(&kind, &canonicalURL, &telegramSource)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return app.Task{}, app.ErrNotFound
+	}
+	if err != nil {
+		return app.Task{}, err
+	}
+	lockKey := canonicalURL
+	var telegramJSON any
+	if kind == string(domain.KindTelegram) {
+		var source telegram.Input
+		if !telegramSource.Valid || metadataDomain.DecodeJSON([]byte(telegramSource.String), &source) != nil || telegram.ValidateInput(source) != nil {
+			return app.Task{}, app.ErrConflict
+		}
+		lockKey = telegramLockKey(source)
+		telegramJSON = telegramSource.String
+	}
+	if kind == string(domain.KindURL) || kind == string(domain.KindTelegram) {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+			return app.Task{}, err
+		}
+	}
+
 	view, err := scanTaskView(tx.QueryRow(ctx, taskViewQuery()+` WHERE t.id = $1 FOR UPDATE OF t`, taskID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return app.Task{}, app.ErrNotFound
@@ -274,6 +352,18 @@ func (s *Store) Retry(ctx context.Context, taskID string, progress domain.Progre
 	}
 	if !domain.CanRetry(view.Task.Status, view.Input.HasSource(view.Task.Kind)) {
 		return app.Task{}, app.ErrConflict
+	}
+	if view.Task.Kind == domain.KindURL || view.Task.Kind == domain.KindTelegram {
+		var active bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (
+ SELECT 1 FROM task_core_tasks t JOIN task_core_inputs i ON i.task_id = t.id
+ WHERE t.kind = $3 AND (i.telegram_source IS NOT DISTINCT FROM $4::jsonb) AND `+canonicalURLPredicate+` AND t.id <> $2
+ AND t.status IN ('READY', 'RUNNING', 'CANCELING'))`, canonicalURL, taskID, kind, telegramJSON).Scan(&active); err != nil {
+			return app.Task{}, err
+		}
+		if active {
+			return app.Task{}, app.ErrConflict
+		}
 	}
 	current := view.Task.Status
 	to := domain.StatusReady
@@ -428,16 +518,53 @@ func (s *Store) Complete(ctx context.Context, in app.CompleteInput) error {
 	if err := updateWorkerTerminal(ctx, tx, in.TaskID, in.WorkerID, in.Attempt, in.Generation, to, "", now); err != nil {
 		return err
 	}
+	warnings := in.MetadataWarnings
+	if warnings == nil {
+		warnings = []metadataDomain.Warning{}
+	}
+	warningData, err := json.Marshal(warnings)
+	if err != nil {
+		return err
+	}
+	var retentionManifest any
+	if in.RetentionManifest != nil {
+		if err := domain.ValidateRetentionManifest(*in.RetentionManifest); err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(in.RetentionManifest)
+		if err != nil {
+			return err
+		}
+		retentionManifest = string(encoded)
+		var registered bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM task_core_retention WHERE task_id=$1 AND generation=$2 AND manifest=$3::jsonb)`, in.TaskID, in.Generation, retentionManifest).Scan(&registered); err != nil {
+			return err
+		}
+		if !registered {
+			return app.ErrConflict
+		}
+	}
+	var effectiveDocument any
+	if in.EffectiveMetadataDocument != nil {
+		encoded, err := json.Marshal(in.EffectiveMetadataDocument)
+		if err != nil {
+			return err
+		}
+		effectiveDocument = string(encoded)
+	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO task_core_results (task_id, artifact_path, artifact_name, artifact_size, artifact_kind, created_at)
-		VALUES ($1, $2, $3, $4, 'cbz', $5)
+		INSERT INTO task_core_results (task_id, artifact_path, artifact_name, artifact_size, artifact_kind, created_at, effective_metadata_document, generation, retention_manifest,metadata_warnings,metadata_profile)
+		VALUES ($1, $2, $3, $4, 'cbz', $5, $6::jsonb, $7, $8::jsonb,$9::jsonb,$10)
 		ON CONFLICT (task_id) DO UPDATE SET
 		    artifact_path = EXCLUDED.artifact_path,
 		    artifact_name = EXCLUDED.artifact_name,
 		    artifact_size = EXCLUDED.artifact_size,
 		    artifact_kind = EXCLUDED.artifact_kind,
-		    created_at = EXCLUDED.created_at
-	`, in.TaskID, in.ArtifactPath, in.ArtifactName, in.ArtifactSize, now)
+		    created_at = EXCLUDED.created_at,
+		    effective_metadata_document = EXCLUDED.effective_metadata_document,
+		    generation = EXCLUDED.generation,
+ retention_manifest = EXCLUDED.retention_manifest,metadata_warnings=EXCLUDED.metadata_warnings,metadata_profile=EXCLUDED.metadata_profile
+	`, in.TaskID, in.ArtifactPath, in.ArtifactName, in.ArtifactSize, now, effectiveDocument, in.Generation, retentionManifest, string(warningData), in.MetadataProfile)
 	if err != nil {
 		return err
 	}
@@ -775,9 +902,9 @@ func taskViewQuery() string {
 	return `
 		SELECT
 			t.id, t.kind, t.status, t.attempt, t.generation, t.last_error, t.lease_owner, t.lease_expires_at, t.created_at, t.updated_at,
-			i.task_id, i.url, i.canonical_url, i.source_archive_name, i.source_archive_path, i.source_archive_size, i.metadata::text, i.runtime_settings::text,
+			i.task_id, i.url, i.canonical_url, i.source_archive_name, i.source_archive_path, i.source_archive_size, i.metadata::text, i.runtime_settings::text, i.metadata_document::text, i.telegram_source::text,
 			p.phase, p.current, p.total, p.unit, p.message,
-			r.task_id, r.artifact_path, r.artifact_name, r.artifact_size, r.artifact_kind, r.komga_target_path
+			r.task_id, r.artifact_path, r.artifact_name, r.artifact_size, r.artifact_kind, r.komga_target_path, r.effective_metadata_document::text, r.generation, r.retention_manifest::text,r.metadata_warnings::text,r.metadata_profile
 		FROM task_core_tasks t
 		JOIN task_core_inputs i ON i.task_id = t.id
 		LEFT JOIN task_core_progress p ON p.task_id = t.id
@@ -813,6 +940,8 @@ func scanTaskView(row rowScanner) (app.TaskView, error) {
 		&inputScan.sourceArchiveSize,
 		&inputScan.metadata,
 		&inputScan.runtimeSettings,
+		&inputScan.metadataDocument,
+		&inputScan.telegramSource,
 		&progressScan.phase,
 		&progressScan.current,
 		&progressScan.total,
@@ -824,6 +953,10 @@ func scanTaskView(row rowScanner) (app.TaskView, error) {
 		&resultScan.artifactSize,
 		&resultScan.artifactKind,
 		&resultScan.komgaTargetPath,
+		&resultScan.effectiveDocument,
+		&resultScan.generation,
+		&resultScan.retentionManifest,
+		&resultScan.metadataWarnings, &resultScan.metadataProfile,
 	); err != nil {
 		return app.TaskView{}, err
 	}
@@ -833,6 +966,31 @@ func scanTaskView(row rowScanner) (app.TaskView, error) {
 	}
 	progressScan.apply(&view.Progress)
 	result := resultScan.result()
+	if result != nil {
+		result.Generation = resultScan.generation.Int64
+		result.MetadataProfile = resultScan.metadataProfile.String
+		if resultScan.metadataWarnings.Valid {
+			if err := metadataDomain.DecodeJSON([]byte(resultScan.metadataWarnings.String), &result.MetadataWarnings); err != nil {
+				return app.TaskView{}, err
+			}
+		}
+		if resultScan.retentionManifest.Valid {
+			result.RetentionManifest = &domain.RetentionManifest{}
+			if err := metadataDomain.DecodeJSON([]byte(resultScan.retentionManifest.String), result.RetentionManifest); err != nil {
+				return app.TaskView{}, err
+			}
+			if err := domain.ValidateRetentionManifest(*result.RetentionManifest); err != nil {
+				return app.TaskView{}, err
+			}
+		}
+		if resultScan.effectiveDocument.Valid {
+			doc, err := metadataDomain.DecodeStored([]byte(resultScan.effectiveDocument.String))
+			if err != nil {
+				return app.TaskView{}, err
+			}
+			result.EffectiveMetadataDocument = &doc
+		}
+	}
 	view.Result = result
 	return view, nil
 }
@@ -889,9 +1047,20 @@ type dbInputScan struct {
 	sourceArchiveSize sql.NullInt64
 	metadata          string
 	runtimeSettings   sql.NullString
+	metadataDocument  sql.NullString
+	telegramSource    sql.NullString
 }
 
 func (s *dbInputScan) apply(input *app.Input) error {
+	if s.telegramSource.Valid {
+		input.Telegram = &telegram.Input{}
+		if err := metadataDomain.DecodeJSON([]byte(s.telegramSource.String), input.Telegram); err != nil {
+			return err
+		}
+		if err := telegram.ValidateInput(*input.Telegram); err != nil {
+			return err
+		}
+	}
 	if s.url.Valid {
 		input.URL = s.url.String
 	}
@@ -914,10 +1083,27 @@ func (s *dbInputScan) apply(input *app.Input) error {
 		}
 	}
 	input.Metadata = map[string]string{}
-	if strings.TrimSpace(s.metadata) == "" {
+	if s.metadataDocument.Valid {
+		doc, err := metadataDomain.DecodeStored([]byte(s.metadataDocument.String))
+		if err != nil {
+			return err
+		}
+		input.MetadataDocument = &doc
+		input.Metadata = app.MetadataProjection(metadataDomain.ToLegacy(*input.MetadataDocument))
 		return nil
 	}
-	return json.Unmarshal([]byte(s.metadata), &input.Metadata)
+	if strings.TrimSpace(s.metadata) != "" {
+		if err := json.Unmarshal([]byte(s.metadata), &input.Metadata); err != nil {
+			return err
+		}
+	}
+	doc, err := metadataDomain.FromLegacy(app.LegacyMetadata(input.Metadata))
+	if err != nil {
+		return err
+	}
+	input.MetadataDocument = &doc
+	input.Metadata = app.MetadataProjection(metadataDomain.ToLegacy(doc))
+	return nil
 }
 
 type dbProgressScan struct {
@@ -949,12 +1135,17 @@ func (s *dbProgressScan) apply(progress *domain.Progress) {
 }
 
 type dbResultScan struct {
-	taskID          sql.NullString
-	artifactPath    sql.NullString
-	artifactName    sql.NullString
-	artifactSize    sql.NullInt64
-	artifactKind    sql.NullString
-	komgaTargetPath sql.NullString
+	taskID            sql.NullString
+	artifactPath      sql.NullString
+	artifactName      sql.NullString
+	artifactSize      sql.NullInt64
+	artifactKind      sql.NullString
+	komgaTargetPath   sql.NullString
+	effectiveDocument sql.NullString
+	retentionManifest sql.NullString
+	metadataWarnings  sql.NullString
+	metadataProfile   sql.NullString
+	generation        sql.NullInt64
 }
 
 func (s *dbResultScan) result() *app.Result {
@@ -1075,4 +1266,8 @@ func (s *Store) StatusCounts(ctx context.Context) (map[domain.Status]int, error)
 		counts[status] = count
 	}
 	return counts, rows.Err()
+}
+
+func telegramLockKey(source telegram.Input) string {
+	return fmt.Sprintf("telegram:%s:%d:%s", source.AccountIdentity, source.AccountRevision, source.MessageURL)
 }

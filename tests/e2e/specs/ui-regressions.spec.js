@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect, waitForMetadata } = require('../fixtures/auth');
 
 const settings = { timeout: 30, retries: 3, image_concurrency: 2, download_action_mode: 'browser' };
 
@@ -30,8 +30,8 @@ test('浏览器历史恢复重新挂载交互，缓存缺失时保留导航和�
     return route.fulfill({ json: settings });
   });
   await page.goto('/');
-  await expect(page.locator('#summary-active')).toHaveText('2');
-  await page.locator('.main-nav').getByRole('link', { name: '日志' }).click();
+  await waitForMetadata(page);
+  await page.locator('.main-nav').getByRole('link', { name: '任务', exact: true }).click();
   await expect.poll(() => logRequests).toBeGreaterThan(0);
   await page.locator('.main-nav').getByRole('link', { name: '设置' }).click();
   await expect.poll(() => settingsRequests).toBe(1);
@@ -87,6 +87,7 @@ test('上传HTML 413错误会释放提交按钮并允许重试', async ({ page }
     return route.fulfill({ status: 202, json: { ok: true } });
   });
   await page.goto('/');
+  await waitForMetadata(page);
   await page.getByLabel('上传压缩包').check();
   await page.setInputFiles('#archive_file', { name: 'demo.zip', mimeType: 'application/zip', buffer: Buffer.from('PK\x03\x04demo') });
   const submit = page.getByRole('button', { name: '开始下载', exact: true });
@@ -110,7 +111,7 @@ test('失败导航不会卸载仍显示的首页表单', async ({ page }) => {
     return route.fulfill({ status: 202, json: { ok: true, task_id: 'after-navigation-error' } });
   });
   await page.goto('/');
-  await expect(page.locator('#summary-active')).toHaveText('2');
+  await waitForMetadata(page);
   const failedNavigation = page.waitForResponse((response) => new URL(response.url()).pathname === '/settings' && response.status() === 500);
   await page.locator('.main-nav').getByRole('link', { name: '设置' }).click();
   await failedNavigation;

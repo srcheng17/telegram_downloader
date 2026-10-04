@@ -16,6 +16,8 @@ function createClassList() {
 test('syncActiveNav marks the current path as active', () => {
     const homeClassList = createClassList();
     const logsClassList = createClassList();
+    const homeAttributes = new Map([['aria-current', 'page']]);
+    const logsAttributes = new Map();
     const win = {
         location: {
             origin: 'https://example.com',
@@ -25,8 +27,8 @@ test('syncActiveNav marks the current path as active', () => {
     const doc = {
         querySelectorAll() {
             return [
-                { href: '/home', classList: homeClassList },
-                { href: '/logs', classList: logsClassList },
+                { href: '/home', classList: homeClassList, setAttribute: (key, value) => homeAttributes.set(key, value), removeAttribute: key => homeAttributes.delete(key) },
+                { href: '/logs', classList: logsClassList, setAttribute: (key, value) => logsAttributes.set(key, value), removeAttribute: key => logsAttributes.delete(key) },
             ];
         },
     };
@@ -35,6 +37,8 @@ test('syncActiveNav marks the current path as active', () => {
 
     assert.deepEqual(homeClassList.operations, [['active', false]]);
     assert.deepEqual(logsClassList.operations, [['active', true]]);
+    assert.equal(homeAttributes.has('aria-current'), false);
+    assert.equal(logsAttributes.get('aria-current'), 'page');
 });
 
 test('mountPageModules and unmountPageModules call page lifecycle hooks when present', () => {
@@ -64,6 +68,11 @@ test('mountPageModules and unmountPageModules call page lifecycle hooks when pre
                 calls.push('settings:unmount');
             },
         },
+        // The settings Connections tab now owns this module's lifecycle.
+        TelegraphDownloaderTelegram: {
+            mount() { assert.fail('global Telegram mount bypassed settings tab ownership'); },
+            unmount() { assert.fail('global Telegram unmount bypassed settings tab ownership'); },
+        },
     };
 
     mountPageModules(win);
@@ -88,6 +97,7 @@ test('htmx retains page modules for rejected swaps and remounts history restores
     globalThis.window = {
         location: { origin: 'http://localhost', pathname: '/logs' },
         addEventListener() {},
+        __adminSession: { mount() {}, clear() {}, async refresh() { return { authenticated: true }; }, isAuthenticated: () => true },
         TelegraphDownloaderLogs: {
             mount() { calls.push('mount'); },
             unmount() { calls.push('unmount'); },
@@ -95,12 +105,15 @@ test('htmx retains page modules for rejected swaps and remounts history restores
     };
     globalThis.document = {
         querySelectorAll() { return []; },
+        querySelector() { return null; },
+        getElementById() { return null; },
         addEventListener(name, handler) { listeners[name] = handler; },
         body: { addEventListener(name, handler) { listeners[name] = handler; } },
     };
     try {
         await import('../app.js');
-        listeners.DOMContentLoaded();
+        assert.equal(Object.hasOwn(globalThis.window, 'TelegraphDownloaderTelegram'), false);
+        await listeners.DOMContentLoaded();
         listeners['htmx:beforeSwap']({ detail: { target: { id: 'content' }, shouldSwap: false } });
         assert.deepEqual(calls, ['mount']);
         listeners['htmx:beforeSwap']({ defaultPrevented: true, detail: { target: { id: 'content' }, shouldSwap: true } });
@@ -108,7 +121,7 @@ test('htmx retains page modules for rejected swaps and remounts history restores
         listeners['htmx:beforeSwap']({ detail: { target: { id: 'content' }, shouldSwap: true } });
         assert.deepEqual(calls, ['mount', 'unmount']);
         assert.equal(typeof listeners['htmx:historyRestore'], 'function');
-        listeners['htmx:historyRestore']();
+        await listeners['htmx:historyRestore']();
         assert.deepEqual(calls, ['mount', 'unmount', 'unmount', 'mount']);
     } finally {
         globalThis.window = previousWindow;

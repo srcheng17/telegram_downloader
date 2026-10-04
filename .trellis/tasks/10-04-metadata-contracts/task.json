@@ -1,0 +1,44 @@
+{
+  "id": "metadata-contracts",
+  "name": "metadata-contracts",
+  "title": "Define extensible metadata contracts and storage",
+  "description": "Versioned typed metadata, custom fields, field provenance and backward-compatible task/history persistence",
+  "status": "review",
+  "dev_type": "backend",
+  "scope": "metadata",
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": "creepy-kiwi",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-04-clipboard-ocr-tdl-ui",
+  "relatedFiles": [
+    ".trellis/tasks/10-04-metadata-contracts/prd.md",
+    ".trellis/tasks/10-04-metadata-contracts/design.md",
+    ".trellis/tasks/10-04-metadata-contracts/implement.md",
+    ".trellis/tasks/10-04-metadata-contracts/implement.jsonl",
+    ".trellis/tasks/10-04-metadata-contracts/check.jsonl"
+  ],
+  "notes": "Batch 1 implemented and passed the frozen-source full release gate, including real PostgreSQL and 18 browser tests. Awaiting review; uncommitted, not deployed. Existing runtime fixes preserved.",
+  "meta": {
+    "batch": 1,
+    "depends_on": [],
+    "owner_role": "metadata-contracts",
+    "exclusive_scope": "internal/domain/metadata; internal/app/metadata; internal/store/postgres/metadatadoc",
+    "max_parallel_workers": 3,
+    "contract_dependencies": [
+      "10-04-clipboard-ocr-tdl-ui/design.md"
+    ],
+    "implementation_state": "validated_pending_review",
+    "verification_report": "../10-04-clipboard-ocr-tdl-ui/batch-1-verification.md",
+    "validation": "full_release_gate_passed"
+  }
+}

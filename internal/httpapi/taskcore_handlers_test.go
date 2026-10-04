@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestTaskCoreHandlersCreateURLTask(t *testing.T) {
 	}
 }
 
-func TestTaskCoreHandlersCreateURLTaskRecordsMetadataHistory(t *testing.T) {
+func TestTaskCoreHandlersCreateURLTaskDelegatesMetadataToTransaction(t *testing.T) {
 	svc := &fakeTaskCoreHTTPService{createURLStatus: domain.StatusReady}
 	historyStore := &recordingTaskCoreMetadataHistoryStore{}
 	router := newTaskCoreTestRouterWithOptions(t, svc, RouterOptions{UploadTaskStore: historyStore})
@@ -58,27 +59,20 @@ func TestTaskCoreHandlersCreateURLTaskRecordsMetadataHistory(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(historyStore.inserted) != 1 {
-		t.Fatalf("expected one metadata history entry, got %#v", historyStore.inserted)
+	if len(historyStore.inserted) != 0 {
+		t.Fatal("HTTP must not write history outside the task transaction")
 	}
-	entry := historyStore.inserted[0]
-	if entry.TaskType != "url" {
-		t.Fatalf("task_type = %q, want url", entry.TaskType)
+	for key, want := range map[string]string{"author": "作者A", "series_name": "系列B", "comic_name": "漫画C", "summary": "简介D", "tags": "tag1", "genres": "genre1"} {
+		if svc.createdURL.Metadata[key] != want {
+			t.Fatalf("%s did not reach task service", key)
+		}
 	}
-	assertOptionalHistoryValue(t, entry.URL, "https://telegra.ph/demo", "url")
-	assertOptionalHistoryValue(t, entry.Author, "作者A", "author")
-	assertOptionalHistoryValue(t, entry.SeriesName, "系列B", "series_name")
-	assertOptionalHistoryValue(t, entry.SeriesNumber, "3", "series_number")
-	assertOptionalHistoryValue(t, entry.ComicName, "漫画C", "comic_name")
-	assertOptionalHistoryValue(t, entry.Summary, "简介D", "summary")
-	assertOptionalHistoryValue(t, entry.Tags, "tag1", "tags")
-	assertOptionalHistoryValue(t, entry.Genres, "genre1", "genres")
 	if svc.createdURL.Metadata["series_number"] != "3" {
 		t.Fatalf("created metadata series_number = %q, want 3", svc.createdURL.Metadata["series_number"])
 	}
 }
 
-func TestTaskCoreHandlersCreateURLTaskSkipsDuplicateMetadataHistory(t *testing.T) {
+func TestTaskCoreHandlersDoesNotWriteSeparateHistory(t *testing.T) {
 	svc := &fakeTaskCoreHTTPService{createURLStatus: domain.StatusReady}
 	historyStore := &recordingTaskCoreMetadataHistoryStore{
 		entries: []postgres.MetadataHistoryEntry{
@@ -111,7 +105,7 @@ func TestTaskCoreHandlersCreateURLTaskSkipsDuplicateMetadataHistory(t *testing.T
 	}
 }
 
-func TestTaskCoreHandlersUploadInitRecordsMetadataHistory(t *testing.T) {
+func TestTaskCoreHandlersUploadInitDelegatesMetadataToTransaction(t *testing.T) {
 	svc := &fakeTaskCoreHTTPService{}
 	historyStore := &recordingTaskCoreMetadataHistoryStore{}
 	router := newTaskCoreTestRouterWithOptions(t, svc, RouterOptions{UploadTaskStore: historyStore})
@@ -128,23 +122,13 @@ func TestTaskCoreHandlersUploadInitRecordsMetadataHistory(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(historyStore.inserted) != 1 {
-		t.Fatalf("expected one metadata history entry, got %#v", historyStore.inserted)
+	if len(historyStore.inserted) != 0 {
+		t.Fatal("HTTP must not write history outside the task transaction")
 	}
-	entry := historyStore.inserted[0]
-	if entry.TaskType != "upload" {
-		t.Fatalf("task_type = %q, want upload", entry.TaskType)
+	if svc.view.Input.Metadata["comic_name"] != "上传漫画" {
+		t.Fatal("upload metadata did not reach task service")
 	}
-	if entry.URL != nil {
-		t.Fatalf("upload metadata history URL = %#v, want nil", entry.URL)
-	}
-	assertOptionalHistoryValue(t, entry.Author, "上传作者", "author")
-	assertOptionalHistoryValue(t, entry.SeriesName, "上传系列", "series_name")
-	assertOptionalHistoryValue(t, entry.SeriesNumber, "4", "series_number")
-	assertOptionalHistoryValue(t, entry.ComicName, "上传漫画", "comic_name")
-	assertOptionalHistoryValue(t, entry.Summary, "上传简介", "summary")
-	assertOptionalHistoryValue(t, entry.Tags, "上传标签", "tags")
-	assertOptionalHistoryValue(t, entry.Genres, "上传类型", "genres")
+
 }
 
 func TestTaskCoreHandlersLogsUseTaskCoreListTasks(t *testing.T) {
@@ -299,6 +283,37 @@ func TestTaskCoreHandlersListTasks(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "retry") {
 		t.Fatalf("body missing retry action: %s", rec.Body.String())
+	}
+}
+
+func TestTaskCoreHandlersGetTaskReturnsCurrentActionsAndMissingStatus(t *testing.T) {
+	svc := &fakeTaskCoreHTTPService{view: &app.TaskView{
+		Task:  app.Task{ID: "task-1", Kind: domain.KindURL, Status: domain.StatusFailed},
+		Input: app.Input{URL: "https://telegra.ph/retry", CanonicalURL: "https://telegra.ph/retry"},
+	}}
+	router := newTaskCoreTestRouter(t, svc)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tasks/task-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Task struct {
+			ID               string   `json:"id"`
+			Status           string   `json:"status"`
+			AvailableActions []string `json:"available_actions"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Task.ID != "task-1" || payload.Task.Status != "FAILED" || !slices.Contains(payload.Task.AvailableActions, "retry") {
+		t.Fatalf("unexpected task projection: %#v", payload.Task)
+	}
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/tasks/other", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("other task status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

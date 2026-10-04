@@ -1,0 +1,25 @@
+{
+  "stacks": [
+    {
+      "name": "ocr-model-probe",
+      "status": "running",
+      "sourceType": "internal"
+    },
+    {
+      "name": "cli-proxy-api",
+      "status": "running",
+      "sourceType": "internal"
+    },
+    {
+      "name": "bark",
+      "status": "running",
+      "sourceType": "internal"
+    },
+    {
+      "name": "hawser",
+      "status": "running",
+      "sourceType": "internal"
+    }
+  ],
+  "compose_matches_recorded_trial": true
+}

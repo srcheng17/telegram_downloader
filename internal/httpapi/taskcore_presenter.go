@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	app "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
+	metadata "github.com/ryancheng/telegram-downloader/internal/domain/metadata"
 	domain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
 )
 
@@ -14,34 +15,41 @@ type taskCoreProgressView struct {
 }
 
 type taskCoreView struct {
-	ID                string               `json:"id"`
-	Kind              string               `json:"task_type"`
-	Status            string               `json:"status"`
-	StatusLabel       string               `json:"status_label"`
-	PhaseLabel        string               `json:"phase_label"`
-	AvailableActions  []string             `json:"available_actions"`
-	Progress          taskCoreProgressView `json:"progress"`
-	URL               string               `json:"url,omitempty"`
-	CanonicalURL      string               `json:"canonical_url,omitempty"`
-	SourceArchiveName string               `json:"source_archive_name,omitempty"`
-	UploadLoadedBytes int64                `json:"upload_loaded_bytes,omitempty"`
-	UploadTotalBytes  int64                `json:"upload_total_bytes,omitempty"`
-	Retryable         bool                 `json:"retryable,omitempty"`
-	StartTime         float64              `json:"start_time,omitempty"`
-	ArtifactName      string               `json:"artifact_name,omitempty"`
-	Error             string               `json:"error,omitempty"`
-	Author            string               `json:"author,omitempty"`
-	SeriesName        string               `json:"series_name,omitempty"`
-	SeriesNumber      string               `json:"series_number,omitempty"`
-	ComicName         string               `json:"comic_name,omitempty"`
-	Summary           string               `json:"summary,omitempty"`
-	TagsRaw           string               `json:"tags_raw,omitempty"`
-	TagsNormalized    string               `json:"tags_normalized,omitempty"`
-	GenresRaw         string               `json:"genres_raw,omitempty"`
-	GenresNormalized  string               `json:"genres_normalized,omitempty"`
+	MetadataWarnings          []metadata.Warning   `json:"metadata_warnings,omitempty"`
+	MetadataProfile           string               `json:"metadata_profile,omitempty"`
+	MetadataDocument          *metadata.Document   `json:"metadata_document,omitempty"`
+	EffectiveMetadataDocument *metadata.Document   `json:"effective_metadata_document,omitempty"`
+	ID                        string               `json:"id"`
+	Kind                      string               `json:"task_type"`
+	Status                    string               `json:"status"`
+	StatusLabel               string               `json:"status_label"`
+	PhaseLabel                string               `json:"phase_label"`
+	AvailableActions          []string             `json:"available_actions"`
+	Progress                  taskCoreProgressView `json:"progress"`
+	URL                       string               `json:"url,omitempty"`
+	CanonicalURL              string               `json:"canonical_url,omitempty"`
+	SourceArchiveName         string               `json:"source_archive_name,omitempty"`
+	UploadLoadedBytes         int64                `json:"upload_loaded_bytes,omitempty"`
+	UploadTotalBytes          int64                `json:"upload_total_bytes,omitempty"`
+	Retryable                 bool                 `json:"retryable,omitempty"`
+	StartTime                 float64              `json:"start_time,omitempty"`
+	ArtifactName              string               `json:"artifact_name,omitempty"`
+	Error                     string               `json:"error,omitempty"`
+	Author                    string               `json:"author,omitempty"`
+	SeriesName                string               `json:"series_name,omitempty"`
+	SeriesNumber              string               `json:"series_number,omitempty"`
+	ComicName                 string               `json:"comic_name,omitempty"`
+	Summary                   string               `json:"summary,omitempty"`
+	TagsRaw                   string               `json:"tags_raw,omitempty"`
+	TagsNormalized            string               `json:"tags_normalized,omitempty"`
+	GenresRaw                 string               `json:"genres_raw,omitempty"`
+	GenresNormalized          string               `json:"genres_normalized,omitempty"`
 }
 
 func presentTaskCoreView(view app.TaskView, komgaConfigured bool) taskCoreView {
+	if view.Input.MetadataDocument != nil {
+		view.Input.Metadata = app.MetadataProjection(metadata.ToLegacy(*view.Input.MetadataDocument))
+	}
 	hasResult := view.Result != nil && view.Result.ArtifactPath != ""
 	actions := domain.AvailableActions(view.Task.Status, view.Input.HasSource(view.Task.Kind), hasResult, komgaConfigured)
 	outActions := make([]string, 0, len(actions))
@@ -50,6 +58,7 @@ func presentTaskCoreView(view app.TaskView, komgaConfigured bool) taskCoreView {
 	}
 	out := taskCoreView{
 		ID:               view.Task.ID,
+		MetadataDocument: view.Input.MetadataDocument,
 		Kind:             string(view.Task.Kind),
 		Status:           string(view.Task.Status),
 		StatusLabel:      taskCoreStatusLabel(view.Task.Status),
@@ -85,7 +94,10 @@ func presentTaskCoreView(view app.TaskView, komgaConfigured bool) taskCoreView {
 	out.GenresRaw = metadataViewValue(view.Input.Metadata, "genres")
 	out.GenresNormalized = metadataViewValue(view.Input.Metadata, "genres_normalized")
 	if view.Result != nil {
+		out.MetadataWarnings = view.Result.MetadataWarnings
+		out.MetadataProfile = view.Result.MetadataProfile
 		out.ArtifactName = view.Result.ArtifactName
+		out.EffectiveMetadataDocument = view.Result.EffectiveMetadataDocument
 	}
 	return out
 }

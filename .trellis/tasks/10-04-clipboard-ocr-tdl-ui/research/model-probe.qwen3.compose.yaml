@@ -1,0 +1,70 @@
+name: ocr-model-probe
+services:
+  model:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:1cdfea0828170c34d56a8a6d9fc5a0898e8bca3762e5ec6be0c01032f7f7bde8
+    user: "10001:10001"
+    restart: "no"
+    cpus: 4.0
+    mem_limit: 3500m
+    memswap_limit: 3500m
+    pids_limit: 128
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:18085:8080"
+    volumes:
+      - type: bind
+        source: /opt/docker_data/stacks/ocr-model-probe/models
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/docker_data/stacks/ocr-model-probe/config/api-key
+        target: /run/secrets/model-api-key
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    command:
+      - --model
+      - /models/mlabonne_Qwen3-1.7B-abliterated-Q4_K_M.gguf
+      - --alias
+      - qwen3-1.7b-abliterated-q4
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --ctx-size
+      - "4096"
+      - --parallel
+      - "1"
+      - --threads
+      - "4"
+      - --threads-batch
+      - "4"
+      - --batch-size
+      - "256"
+      - --ubatch-size
+      - "128"
+      - --n-predict
+      - "512"
+      - --jinja
+      - --chat-template-kwargs
+      - '{"enable_thinking":false}'
+      - --api-key-file
+      - /run/secrets/model-api-key
+      - --no-webui
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:8080/health]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"

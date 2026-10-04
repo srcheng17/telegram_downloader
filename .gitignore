@@ -39,3 +39,6 @@ tests/e2e/.artifacts/
 # Git worktrees
 .worktrees/
 worktrees/
+
+# External administrator and source encryption secrets
+secrets/

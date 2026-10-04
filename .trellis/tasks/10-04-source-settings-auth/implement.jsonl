@@ -1,0 +1,20 @@
+{"file": "docs/development/module-boundaries.md", "reason": "Keep authentication/configuration orchestration outside handlers and Task Core"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend boundaries and mandatory checks"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "pgx repository and additive migration rules"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Preserve API and v2 error envelopes without upstream leakage"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "No passwords tokens private URLs OCR or upstream bodies in logs"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Unit race database and release verification"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Native JS templates lifecycle and generated bundle requirements"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Mount request cancellation and stale result ownership"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Keep drafts separate from saved settings and request snapshots"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Runtime validation at browser API boundaries"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Node lint build and real browser validation"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/prd.md", "reason": "Parent requirements plus confirmed single admin and extended metadata corrections in child PRD"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/ai-rules.md", "reason": "Configurable target credentials discovery and inference verification separation"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/public-metadata-sources.md", "reason": "Verified per-source auth requirements capabilities and fixed targets"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/tdl-web-bridge.md", "reason": "Protect QR 2FA SSE and server-side session boundaries"}
+{"file": ".trellis/tasks/10-04-source-settings-auth/prd.md", "reason": "User-confirmed single administrator and protected configuration acceptance"}
+{"file": ".trellis/tasks/10-04-source-settings-auth/design.md", "reason": "Endpoints module ownership encryption sessions and deployment rollback"}
+{"file": ".trellis/tasks/10-04-source-settings-auth/implement.md", "reason": "Ordered work planned commands review matrix and parallel integration"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/design.md", "reason": "Final shared requirements, contracts and parallel ownership"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/implement.md", "reason": "Final shared requirements, contracts and parallel ownership"}

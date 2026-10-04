@@ -9,26 +9,48 @@
     <script type="module" src="/static/dist/app.bundle.js"></script>
     <script type="module" src="/static/dist/index.bundle.js"></script>
     <script type="module" src="/static/dist/logs.bundle.js"></script>
+    <script type="module" src="/static/dist/komga.bundle.js"></script>
     <script type="module" src="/static/dist/settings.bundle.js"></script>
 </head>
-<body>
-    <header class="app-header">
-        <div class="header-inner">
-            <h1>Telegraph Downloader</h1>
-            <p class="app-subtitle">批量下载 Telegraph 图片并导出 ZIP/CBZ 文件。</p>
-        </div>
-    </header>
-    <div class="container">
-        <nav class="main-nav">
-            <a class="nav-link{{ if eq .CurrentPath "/" }} active{{ end }}" href="/" hx-get="/" hx-target="#content" hx-push-url="true">首页</a>
-            <a class="nav-link{{ if eq .CurrentPath "/logs" }} active{{ end }}" href="/logs" hx-get="/logs" hx-target="#content" hx-push-url="true">日志</a>
-            <a class="nav-link{{ if eq .CurrentPath "/settings" }} active{{ end }}" href="/settings" hx-get="/settings" hx-target="#content" hx-push-url="true">设置</a>
-        </nav>
-        <main id="content" hx-history-elt>
-            <div class="card">
-                {{ template "content" . }}
+<body class="workspace-body{{ if eq .CurrentPath "/auth/login" }} login-body{{ end }}">
+    <a class="skip-link" href="#content">跳到主要内容</a>
+    {{ if eq .CurrentPath "/auth/login" }}
+    <main id="content" class="login-main" hx-history-elt hx-history="false">{{ template "content" . }}</main>
+    {{ else }}
+    <div class="workspace-layout">
+        <aside id="workspace-sidebar" class="workspace-sidebar">
+            <header class="app-header">
+                <a class="workspace-brand" href="/" aria-label="漫画工作台首页" title="漫画工作台">
+                    <span class="brand-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-3H4V4Z"/><path d="M20 4h-4a3 3 0 0 0-3 3v14a4 4 0 0 1 4-3h3V4Z"/></svg></span>
+                    <span class="brand-copy">漫画工作台<small>个人作品管理</small></span>
+                </a>
+                <button class="icon-button navigation-close" type="button" data-navigation-close aria-label="关闭导航">{{ template "icon-close" }}</button>
+            </header>
+            <nav id="workspace-navigation" class="main-nav" aria-label="主导航">
+                <a class="nav-link{{ if eq .CurrentPath "/" }} active{{ end }}" href="/" hx-get="/" hx-target="#content" hx-push-url="true" aria-label="新建任务" title="新建任务"{{ if eq .CurrentPath "/" }} aria-current="page"{{ end }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/></svg><span class="nav-label">新建任务</span></a>
+                <a class="nav-link{{ if eq .CurrentPath "/logs" }} active{{ end }}" href="/logs" hx-get="/logs" hx-target="#content" hx-push-url="true" aria-label="任务" title="任务"{{ if eq .CurrentPath "/logs" }} aria-current="page"{{ end }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 5h12M8 12h12M8 19h12M3 5h1M3 12h1M3 19h1" stroke-linecap="round"/></svg><span class="nav-label">任务</span></a>
+                <a class="nav-link{{ if eq .CurrentPath "/komga" }} active{{ end }}" href="/komga" hx-get="/komga" hx-target="#content" hx-push-url="true" aria-label="作品库" title="作品库"{{ if eq .CurrentPath "/komga" }} aria-current="page"{{ end }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 4v16M11 8h6M11 12h6M11 16h4" stroke-linecap="round"/></svg><span class="nav-label">作品库</span></a>
+                <span class="nav-spacer" aria-hidden="true"></span>
+                <a class="nav-link{{ if eq .CurrentPath "/settings" }} active{{ end }}" href="/settings" hx-get="/settings" hx-target="#content" hx-push-url="true" aria-label="设置" title="设置"{{ if eq .CurrentPath "/settings" }} aria-current="page"{{ end }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m9 3-.7 2.1-2 .9-2.1-.4-2 3.4 1.4 1.7v2.6L2.2 15l2 3.4 2.1-.4 2 .9L9 21h4l.7-2.1 2-.9 2.1.4 2-3.4-1.4-1.7v-2.6L19.8 9l-2-3.4-2.1.4-2-.9L13 3Z"/><circle cx="11" cy="12" r="3"/></svg><span class="nav-label">设置</span></a>
+            </nav>
+            <div class="workspace-account">
+                <span class="account-avatar" aria-hidden="true">管</span><span class="account-copy">管理员<small>个人工作区</small></span>
+                <button type="button" class="icon-button" data-admin-logout aria-label="退出登录" title="退出登录"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M10 5H5v14h5m5-14 5 7-5 7m-5-7h10" stroke-linejoin="round"/></svg></button>
             </div>
-        </main>
+        </aside>
+        <button type="button" class="navigation-backdrop" data-navigation-backdrop aria-label="关闭导航遮罩" hidden></button>
+        <div class="workspace-main">
+            <header class="workspace-topbar">
+                <button class="icon-button sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="true" aria-controls="workspace-sidebar" aria-label="隐藏侧栏" title="隐藏侧栏">{{ template "icon-panel" }}</button>
+                <button class="icon-button navigation-toggle" type="button" data-navigation-toggle aria-expanded="false" aria-controls="workspace-sidebar" aria-label="打开导航" title="打开导航">{{ template "icon-panel" }}</button>
+                <span class="topbar-divider" aria-hidden="true"></span><span class="topbar-label">作品工作区</span>
+                <span class="topbar-note">下载与元数据管理</span>
+            </header>
+            <main id="content" class="workspace-content" tabindex="-1" hx-history-elt hx-history="false">{{ template "content" . }}</main>
+        </div>
     </div>
+    {{ end }}
 </body>
 </html>
+{{ define "icon-panel" }}<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16m5-11-3 3 3 3" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ end }}
+{{ define "icon-close" }}<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 6 12 12M6 18 18 6" stroke-linecap="round"/></svg>{{ end }}

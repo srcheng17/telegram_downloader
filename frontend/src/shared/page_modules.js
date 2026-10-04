@@ -6,6 +6,7 @@ function getPageModules(win) {
     return [
         win.TelegraphDownloaderHome,
         win.TelegraphDownloaderLogs,
+		win.TelegraphDownloaderKomga,
         win.TelegraphDownloaderSettings,
     ].filter(Boolean);
 }
@@ -33,7 +34,10 @@ export function syncActiveNav(win, doc) {
             linkPath = '';
         }
 
-        link.classList.toggle('active', linkPath === currentPath);
+        const active = linkPath === currentPath;
+        link.classList.toggle('active', active);
+        if (active) link.setAttribute?.('aria-current', 'page');
+        else link.removeAttribute?.('aria-current');
     });
 }
 

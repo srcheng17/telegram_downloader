@@ -1,0 +1,43 @@
+{
+  "id": "comicinfo-roundtrip",
+  "name": "comicinfo-roundtrip",
+  "title": "Preserve metadata through interoperable CBZ packaging",
+  "description": "ComicInfo import and merge, extensible field export, schema validation and image integrity",
+  "status": "review",
+  "dev_type": "backend",
+  "scope": "comicinfo",
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": "creepy-kiwi",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-04-clipboard-ocr-tdl-ui",
+  "relatedFiles": [
+    ".trellis/tasks/10-04-comicinfo-roundtrip/prd.md",
+    ".trellis/tasks/10-04-comicinfo-roundtrip/design.md",
+    ".trellis/tasks/10-04-comicinfo-roundtrip/implement.md",
+    ".trellis/tasks/10-04-comicinfo-roundtrip/implement.jsonl",
+    ".trellis/tasks/10-04-comicinfo-roundtrip/check.jsonl"
+  ],
+  "notes": "Batch 2 implementation and root integration validated locally; real account/model/authorized coverage/reader acceptance remains pending as applicable. See parent batch-2-verification.md. Uncommitted and not deployed; earlier work preserved.",
+  "meta": {
+    "batch": 2,
+    "depends_on": [
+      "10-04-metadata-contracts"
+    ],
+    "owner_role": "comicinfo-roundtrip",
+    "exclusive_scope": "internal/comicinfo; internal/archive/metadata_bundle; internal/downloader/metadata_pack",
+    "max_parallel_workers": 3,
+    "implementation_state": "locally_validated_pending_external_acceptance",
+    "verification_report": "../10-04-clipboard-ocr-tdl-ui/batch-2-verification.md",
+    "validation": "release_checks_resumed_by_stage_passed"
+  }
+}

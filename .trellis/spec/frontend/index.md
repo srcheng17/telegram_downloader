@@ -1,7 +1,7 @@
 # Frontend Development Guidelines
 
-Scope: `frontend/src/`, `web/templates/`, and `web/static/` in this single-repository Go application.
-The frontend uses native JavaScript ES modules, htmx, Go templates, and Vite; it is not React or TypeScript.
+Scope: `frontend/src/`, `web/templates/`, `web/static/`, and the Node ESM `cli/` client in this single-repository Go application.
+The frontend uses native JavaScript ES modules, htmx, Go templates, and Vite; the CLI uses Node ESM. Neither is React or TypeScript.
 Existing project conventions live in `README.md` and `docs/development/module-boundaries.md`.
 
 ## Guidelines Index
@@ -13,6 +13,9 @@ Existing project conventions live in `README.md` and `docs/development/module-bo
 | [Hook Guidelines](./hook-guidelines.md) | htmx events, API calls, polling, and cleanup |
 | [State Management](./state-management.md) | Page state, settings snapshots, and backend task semantics |
 | [Type Safety](./type-safety.md) | Runtime normalization of JavaScript inputs |
+| [Workspace Lifecycle](./workspace-lifecycle.md) | Administrator gate, document editor and async cleanup |
+| [Candidate Adoption](./candidate-adoption.md) | Transient multi-image OCR and versioned candidate preflight |
+| [Mediactl Client](./mediactl-client.md) | CLI protocol, private broker, structured input, safe output, and Komga readback |
 | [Quality Guidelines](./quality-guidelines.md) | Tests, lint, build, and review checks |
 
 ## Pre-Development Checklist
