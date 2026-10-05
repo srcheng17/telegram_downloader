@@ -23,15 +23,29 @@
 
 ## 快速启动
 
-推荐使用预构建镜像，无需在服务器安装 Go 或 Node.js。需要 Docker、Docker Compose **2.24.4 或更新版本**；下面链接的秘密文件生成脚本需要 Python 3。
+直接使用已发布的 **`ghcr.io/srcheng17/telegram_downloader:latest`**，支持 `linux/amd64` 和 `linux/arm64`。部署需要 Docker、Docker Compose **2.24.4 或更新版本**、curl 和 Python 3。
 
-### 1. 获取项目并准备配置
+### 1. 下载部署配置
+
+在全新部署目录下载 Compose、环境变量示例和 Nginx 配置：
 
 ```bash
-git clone https://github.com/srcheng17/telegram_downloader.git telegraph-downloader
+mkdir -p telegraph-downloader/deploy/nginx
 cd telegraph-downloader
-cp .env.example .env
+telegraph_config_url=https://raw.githubusercontent.com/srcheng17/telegram_downloader/main
+curl -fsSL "$telegraph_config_url/docker-compose.yml" -o docker-compose.yml
+curl -fsSL "$telegraph_config_url/docker-compose.image.yml" -o docker-compose.image.yml
+curl -fsSL "$telegraph_config_url/.env.example" -o .env
+curl -fsSL "$telegraph_config_url/deploy/nginx/canary-go-full.conf" -o deploy/nginx/canary-go-full.conf
+cat >> .env <<'EOF'
+
+COMPOSE_FILE=docker-compose.yml:docker-compose.image.yml
+TELEGRAPH_IMAGE=ghcr.io/srcheng17/telegram_downloader:latest
+KOMGA_LIBRARY_ROOT_HOST=./komga-library
+EOF
 ```
+
+`COMPOSE_FILE` 让后续 `docker compose` 命令自动加载镜像配置。API、worker 和前端资源均来自发布镜像，不需要下载源码或在本机编译。
 
 编辑 `.env`，至少完成以下配置：
 
@@ -41,18 +55,37 @@ cp .env.example .env
 | `POSTGRES_PASSWORD` | 替换示例密码。可用 `openssl rand -hex 32` 生成此密码和令牌，分别生成、分别保存。 |
 | `APP_PUBLIC_ORIGIN` | 与浏览器访问地址完全一致，包括协议和端口。 |
 | `APP_UID` / `APP_GID` | 首次部署可保持 `10001:10001`，以下目录准备命令按此值执行。 |
-| `KOMGA_LIBRARY_ROOT_HOST` | 添加 `KOMGA_LIBRARY_ROOT_HOST=./komga-library`，使用自己的路径，避免 Compose 的作者机器路径默认值。 |
+| `KOMGA_LIBRARY_ROOT_HOST` | 上述命令已设为 `./komga-library`；接入已有 Komga 时改为实际书库路径。 |
 
 本机访问保留示例中的 `APP_BIND_ADDRESS=127.0.0.1`、`APP_PORT=5002`、`APP_PUBLIC_ORIGIN=http://127.0.0.1:5002` 和 `ALLOW_INSECURE_LOOPBACK=true`。远程访问需另行配置 HTTPS 反向代理，设置实际 HTTPS origin 和 `ALLOW_INSECURE_LOOPBACK=false`；网关绑定地址也需按部署方式配置。
 
 ### 2. 准备管理员和持久化目录
 
-按[管理员部署文档的首次启动步骤](docs/development/admin-access.md#首次启动)生成：
+在部署目录交互输入初始管理员密码，并生成加密主密钥：
 
-- `secrets/admin-bootstrap-password`：初始管理员密码，至少 12 个字符、最多 72 个 UTF-8 字节。
-- `secrets/source-settings-master-key`：随机 32 字节的标准 base64 主密钥，用于加密来源、AI 和 Komga 凭据。
+```bash
+python3 - <<'PY'
+import base64
+import getpass
+import os
+from pathlib import Path
 
-生成脚本交互读取密码且拒绝覆盖已有文件。保持默认 UID/GID 时，在**全新部署目录**执行：
+folder = Path('secrets')
+folder.mkdir(mode=0o700, exist_ok=True)
+password = getpass.getpass('初始管理员密码：')
+if len(password) < 12 or len(password.encode()) > 72:
+    raise SystemExit('密码长度不符合要求')
+values = {
+    'admin-bootstrap-password': password,
+    'source-settings-master-key': base64.b64encode(os.urandom(32)).decode(),
+}
+for name, value in values.items():
+    with os.fdopen(os.open(folder / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as handle:
+        handle.write(value + '\n')
+PY
+```
+
+密码至少 12 个字符、最多 72 个 UTF-8 字节；输入不回显，脚本拒绝覆盖已有文件。保持默认 UID/GID 时，接着准备目录与秘密文件权限：
 
 ```bash
 mkdir -p downloaded_images temp_downloads komga-library
@@ -69,12 +102,12 @@ sudo chmod 600 secrets/admin-bootstrap-password secrets/source-settings-master-k
 ### 3. 拉取并启动
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.image.yml pull
-docker compose -f docker-compose.yml -f docker-compose.image.yml up -d --no-build
-docker compose -f docker-compose.yml -f docker-compose.image.yml ps
+docker compose pull
+docker compose up -d --no-build
+docker compose ps
 ```
 
-镜像覆盖配置让 API 和 worker 使用同一镜像，页面静态资源也来自镜像。默认使用 `ghcr.io/srcheng17/telegram_downloader:latest`，支持 `linux/amd64` 和 `linux/arm64`；可在 `.env` 设置 `TELEGRAPH_IMAGE=ghcr.io/srcheng17/telegram_downloader:sha-<完整提交SHA>` 固定版本。
+上述命令直接拉取 `latest` 并启动 PostgreSQL、API、worker 和 Nginx。`--no-build` 禁止本地构建，页面静态资源也来自镜像。
 
 ### 4. 检查并登录
 
@@ -112,17 +145,7 @@ curl -fsS http://127.0.0.1:5002/readyz
 
 ## 命令行与 AI
 
-`mediactl` 需要 Node.js **22 或更新版本**。从与服务端同一提交的源码安装：
-
-```bash
-npm ci
-npm run build:cli
-npm pack
-npm install --global ./telegram-downloader-frontend-0.1.0.tgz
-mediactl --help
-```
-
-安装时使用 `npm pack` 输出的实际包文件名。仓库内也可以直接运行 `node cli/mediactl.mjs --help`。
+可选命令行客户端 `mediactl` 需要 Node.js **22 或更新版本**，安装方式见 [mediactl 文档](docs/development/mediactl.md)。
 
 在自己打开的终端登录，密码隐藏输入：
 
@@ -138,17 +161,17 @@ mediactl --allow-insecure-loopback --json tasks list
 
 ## 更新与备份
 
-`main` 的 CI 门禁通过后自动发布 `latest` 和完整 SHA 标签；PR 只运行检查。更新前确认没有运行中的任务，先停止应用写入：
+`main` 的 CI 门禁通过后自动发布 `latest` 和完整 SHA 标签；PR 只运行检查。在原部署目录更新，保持 `.env` 中的镜像为 `ghcr.io/srcheng17/telegram_downloader:latest`。更新前确认没有运行中的任务，先停止应用写入：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.image.yml stop gateway go-api go-worker
+docker compose stop gateway go-api go-worker
 ```
 
 保持 PostgreSQL 运行，完成下表中的数据库与配套文件、卷的一致性备份，然后让 API 和 worker 一起更新：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.image.yml pull
-docker compose -f docker-compose.yml -f docker-compose.image.yml up -d --no-build
+docker compose pull
+docker compose up -d --no-build
 ```
 
 API 启动时自动执行前向 PostgreSQL 迁移。上述命令用于应用更新，不能替代备份或数据库兼容性检查。
@@ -162,7 +185,7 @@ API 启动时自动执行前向 PostgreSQL 迁移。上述命令用于应用更�
 | `komga-edit-backups` 与映射的 CBZ | 保留完整原件备份、编辑后的文件及其操作记录。 |
 | 来源设置主密钥 | 单独加密备份；恢复时必须匹配数据库的密钥版本。 |
 
-私密副本和 Komga 编辑备份当前没有自动到期清理策略。回滚应用时，将 `TELEGRAPH_IMAGE` 改为已验证的旧 SHA 镜像，并同时更新 API / worker；换镜像不会还原数据库迁移或已经写回的 CBZ。密码恢复、密钥轮换和文件恢复分别按[管理员维护](docs/development/admin-access.md)与[Komga 恢复](docs/development/komga-edit.md)执行。
+私密副本和 Komga 编辑备份当前没有自动到期清理策略。回滚应用时，将 `TELEGRAPH_IMAGE` 改为已验证的旧 SHA 镜像，并同时更新 API / worker；换镜像不会还原数据库迁移或已经写回的 CBZ。密码恢复、密钥轮换和文件恢复分别按[管理员维护](docs/development/admin-access.md)与[Komga 恢复](docs/development/komga-edit.md)执行；维护时先固定当前运行版本的 SHA 镜像，完成后再按上述流程统一更新到 `latest`。
 
 ### Dockhand
 
@@ -204,7 +227,7 @@ web/templates/               Go 页面模板
 web/static/dist/             已跟踪的前端构建产物
 ```
 
-完成与快速启动相同的配置和目录准备后，可使用 `docker compose up -d --build` 从源码运行。修改前端时须同时重建并提交 `web/static/dist/`，源码部署默认挂载宿主静态目录。
+源码开发需另行克隆完整仓库，遵循[模块边界](docs/development/module-boundaries.md)与[测试策略](docs/development/testing-strategy.md)。修改前端时须同时重建并提交 `web/static/dist/`，源码部署默认挂载宿主静态目录。
 
 ### 检查与测试
 
