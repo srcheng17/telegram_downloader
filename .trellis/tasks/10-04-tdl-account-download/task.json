@@ -1,0 +1,45 @@
+{
+  "id": "tdl-account-download",
+  "name": "tdl-account-download",
+  "title": "Integrate Telegram login and tdl downloads",
+  "description": "Structured QR/2FA bridge, cross-process account coordination and bounded Task Core downloads",
+  "status": "review",
+  "dev_type": "fullstack",
+  "scope": "telegram",
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": "creepy-kiwi",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-04-clipboard-ocr-tdl-ui",
+  "relatedFiles": [
+    ".trellis/tasks/10-04-tdl-account-download/prd.md",
+    ".trellis/tasks/10-04-tdl-account-download/design.md",
+    ".trellis/tasks/10-04-tdl-account-download/implement.md",
+    ".trellis/tasks/10-04-tdl-account-download/implement.jsonl",
+    ".trellis/tasks/10-04-tdl-account-download/check.jsonl"
+  ],
+  "notes": "Batch 2 implementation and root integration validated locally; real account/model/authorized coverage/reader acceptance remains pending as applicable. See parent batch-2-verification.md. Uncommitted and not deployed; earlier work preserved. UI v2 user change: remove Telegram new-task source, keep login in Settings Connections; preserve APIs/history/account state.",
+  "meta": {
+    "batch": 2,
+    "depends_on": [
+      "10-04-metadata-contracts",
+      "10-04-source-settings-auth",
+      "10-04-modern-ui-shell"
+    ],
+    "owner_role": "tdl-account-download",
+    "exclusive_scope": "internal/app/telegram; internal/infra/telegram; dedicated handlers; frontend/src/telegram; tools/tdl-auth-helper",
+    "max_parallel_workers": 3,
+    "implementation_state": "locally_validated_pending_external_acceptance",
+    "verification_report": "../10-04-clipboard-ocr-tdl-ui/batch-2-verification.md",
+    "validation": "release_checks_resumed_by_stage_passed"
+  }
+}

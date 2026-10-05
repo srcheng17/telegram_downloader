@@ -25,12 +25,12 @@ func TestUIRoutesRenderMainPages(t *testing.T) {
 		{
 			name:    "index",
 			path:    "/",
-			heading: "发起下载任务",
+			heading: "新建任务",
 		},
 		{
 			name:    "logs",
 			path:    "/logs",
-			heading: "下载日志",
+			heading: "任务",
 		},
 		{
 			name:    "settings",
@@ -54,6 +54,27 @@ func TestUIRoutesRenderMainPages(t *testing.T) {
 				t.Fatalf("expected body to contain %q, got %q", tc.heading, body)
 			}
 		})
+	}
+}
+
+func TestTelegramBookmarksOpenConnectionSettings(t *testing.T) {
+	for _, htmxHeader := range []string{"", "true", " TRUE "} {
+		req := httptest.NewRequest(http.MethodGet, "/telegram", nil)
+		if htmxHeader != "" {
+			req.Header.Set("HX-Request", htmxHeader)
+		}
+		htmx := htmxHeader != ""
+		w := httptest.NewRecorder()
+		NewRouter().ServeHTTP(w, req)
+		if w.Header().Get("HX-Redirect") != "/settings#connections" {
+			t.Fatal("old account bookmark must point to the connection tab")
+		}
+		if htmx && w.Code != http.StatusOK {
+			t.Fatalf("htmx requires a non-redirect response to consume HX-Redirect, got %d", w.Code)
+		}
+		if !htmx && (w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/settings#connections") {
+			t.Fatal("normal navigation lost the connection tab fragment")
+		}
 	}
 }
 
@@ -133,11 +154,11 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	assertContains(t, body, `hx-get="/logs"`)
 	assertContains(t, body, `hx-target="#content"`)
 	assertContains(t, body, `hx-push-url="true"`)
-	assertContains(t, body, "最近 20 条填写的元数据")
-	assertContains(t, body, `id="metadata-history-collapsible" class="summary-collapsible metadata-history-panel"`)
-	assertNotContains(t, body, `id="metadata-history-collapsible" class="summary-collapsible metadata-history-panel" open`)
-	assertContains(t, body, "点击最近记录回填元数据")
-	assertContains(t, body, "URL 下载")
+	assertContains(t, body, "最近填写")
+	assertContains(t, body, `id="metadata-history-collapsible" class="metadata-history-panel workspace-history"`)
+	assertNotContains(t, body, `id="metadata-history-collapsible" class="metadata-history-panel workspace-history" open`)
+	assertContains(t, body, "先核对提交信息或最终归档信息")
+	assertContains(t, body, "Telegraph 链接")
 	assertContains(t, body, "上传压缩包")
 	assertContains(t, body, `id="archive_file"`)
 	assertNotContains(t, body, "支持 ZIP、RAR、7Z。")
@@ -145,6 +166,9 @@ func TestIndexPageUsesDynamicGuardrailsAndHTMXLinks(t *testing.T) {
 	assertNotContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个标签")
 	assertNotContains(t, body, "支持英文逗号 (,)、中文逗号（，）、空格、半角 # 与全角 ＃ 分隔多个类型")
 	assertNotContains(t, body, "field-hint-toggle")
+	assertContains(t, body, `id="metadata-editor"`)
+	assertNotContains(t, body, `id="comic_name"`)
+	assertContains(t, body, `hx-history="false"`)
 }
 
 func TestHTMXRequestReturnsPageFragment(t *testing.T) {
@@ -158,14 +182,14 @@ func TestHTMXRequestReturnsPageFragment(t *testing.T) {
 		{
 			name:    "index",
 			path:    "/",
-			heading: "发起下载任务",
-			title:   "首页",
+			heading: "新建任务",
+			title:   "新建任务",
 		},
 		{
 			name:    "logs",
 			path:    "/logs",
-			heading: "下载日志",
-			title:   "日志",
+			heading: "任务",
+			title:   "任务",
 		},
 		{
 			name:    "settings",

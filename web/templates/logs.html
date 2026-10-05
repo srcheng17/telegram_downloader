@@ -1,7 +1,7 @@
 {{ define "content" }}
 <div id="logs-page">
     <div class="section-header">
-        <h2>下载日志</h2>
+        <h2>任务</h2>
         <p class="muted">查看任务状态、进度及文件下载操作。</p>
     </div>
     <div
@@ -62,7 +62,7 @@
         </p>
     </div>
 
-    <div class="table-container" aria-describedby="task-id-column-help">
+    <div class="table-container" role="region" aria-label="任务表格" aria-describedby="task-id-column-help" tabindex="0">
         <table class="logs-table">
             <caption class="sr-only">下载任务日志表，包含链接、状态、进度、开始时间、错误及操作。</caption>
             <thead>

@@ -1,0 +1,48 @@
+{
+  "schema_revision": "99e1453a163c777b4b5320a68732f6f133ac7918",
+  "sample": "synthetic fields in current writer order; no product code executed or changed",
+  "schemas": {
+    "v2.0": {
+      "url": "https://raw.githubusercontent.com/anansi-project/comicinfo/99e1453a163c777b4b5320a68732f6f133ac7918/schema/v2.0/ComicInfo.xsd",
+      "sha256": "3d9109effff705014f5f6076d92b0ad8c8dad90d993f2592d744c10bad45311c",
+      "results": {
+        "current_order_with_tags": {
+          "valid": false,
+          "errors": [
+            "-:1: element Series: Schemas validity error : Element 'Series': This element is not expected. Expected is one of ( Penciller, Inker, Colorist, Letterer, CoverArtist, Editor, Publisher, Imprint, Genre, Web )."
+          ]
+        },
+        "schema_order_with_tags": {
+          "valid": false,
+          "errors": [
+            "-:1: element Tags: Schemas validity error : Element 'Tags': This element is not expected. Expected is one of ( Web, PageCount, LanguageISO, Format, BlackAndWhite, Manga, Characters, Teams, Locations, ScanInformation )."
+          ]
+        },
+        "schema_order_core_only": {
+          "valid": true,
+          "errors": []
+        }
+      }
+    },
+    "v2.1-draft": {
+      "url": "https://raw.githubusercontent.com/anansi-project/comicinfo/99e1453a163c777b4b5320a68732f6f133ac7918/drafts/v2.1/ComicInfo.xsd",
+      "sha256": "c7a925b75a5297ec66b19898f59597077326a6b812d5ce77b3035fc179d75ed9",
+      "results": {
+        "current_order_with_tags": {
+          "valid": false,
+          "errors": [
+            "-:1: element Series: Schemas validity error : Element 'Series': This element is not expected. Expected is one of ( Penciller, Inker, Colorist, Letterer, CoverArtist, Editor, Translator, Publisher, Imprint, Genre )."
+          ]
+        },
+        "schema_order_with_tags": {
+          "valid": true,
+          "errors": []
+        },
+        "schema_order_core_only": {
+          "valid": true,
+          "errors": []
+        }
+      }
+    }
+  }
+}

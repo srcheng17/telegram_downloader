@@ -15,4 +15,4 @@ export APP_GID="${APP_GID:-$(id -g)}"
 docker compose up -d --build
 docker compose ps
 
-printf 'Telegraph Downloader is available at http://localhost:%s\n' "$APP_PORT"
+printf 'Open the exact APP_PUBLIC_ORIGIN configured in .env and log in as administrator.\n'

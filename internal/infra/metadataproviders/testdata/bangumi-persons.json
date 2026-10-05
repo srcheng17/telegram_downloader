@@ -1,0 +1,17 @@
+[
+  {
+    "id": 4,
+    "name": "Original Writer",
+    "relation": "原作"
+  },
+  {
+    "id": 5,
+    "name": "Artist",
+    "relation": "作画"
+  },
+  {
+    "id": 6,
+    "name": "Translator",
+    "relation": "翻译"
+  }
+]

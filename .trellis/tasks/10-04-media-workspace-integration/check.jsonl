@@ -1,0 +1,22 @@
+{"file": "docs/development/module-boundaries.md", "reason": "领域/应用/adapter/worker边界"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范入口"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范与生成物要求"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "迁移事务与隔离PG"}
+{"file": ".trellis/spec/backend/task-runtime-contract.md", "reason": "现有任务代际、上传和清理"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端检查门槛"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端构建和E2E"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层契约"}
+{"file": "docs/development/testing-strategy.md", "reason": "实际与mock证据边界"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/prd.md", "reason": "父计划与集成验收"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/design.md", "reason": "父计划与集成验收"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/implement.md", "reason": "父计划与集成验收"}
+{"file": ".trellis/tasks/10-04-media-workspace-integration/prd.md", "reason": "父计划与集成验收"}
+{"file": ".trellis/tasks/10-04-media-workspace-integration/design.md", "reason": "父计划与集成验收"}
+{"file": ".trellis/tasks/10-04-media-workspace-integration/implement.md", "reason": "父计划与集成验收"}
+{"file": ".trellis/tasks/10-04-metadata-contracts/design.md", "reason": "模块共享契约与所有权"}
+{"file": ".trellis/tasks/10-04-source-settings-auth/design.md", "reason": "模块共享契约与所有权"}
+{"file": ".trellis/tasks/10-04-metadata-provider-search/design.md", "reason": "模块共享契约与所有权"}
+{"file": ".trellis/tasks/10-04-tdl-account-download/design.md", "reason": "模块共享契约与所有权"}
+{"file": ".trellis/tasks/10-04-comicinfo-roundtrip/design.md", "reason": "模块共享契约与所有权"}
+{"file": ".trellis/tasks/10-04-modern-ui-shell/design.md", "reason": "Module contract consumed by integration"}
+{"file": ".trellis/tasks/10-04-multi-image-ocr-ai/design.md", "reason": "Module contract consumed by integration"}

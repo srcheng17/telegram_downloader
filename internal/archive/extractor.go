@@ -65,7 +65,7 @@ func (e *Extractor) Extract(ctx context.Context, archivePath string) ([]Extracte
 	var images []ExtractedImage
 	var err error
 	switch strings.ToLower(filepath.Ext(archivePath)) {
-	case ".zip":
+	case ".zip", ".cbz":
 		images, err = extractZipImages(ctx, archivePath, e.limits)
 	case ".rar", ".7z":
 		if e.external == nil {
@@ -113,7 +113,7 @@ func extractZipImages(ctx context.Context, archivePath string, limits ExtractorC
 		}
 		files = append(files, file)
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	sort.SliceStable(files, func(i, j int) bool { return naturalNameLess(files[i].Name, files[j].Name) })
 	images := make([]ExtractedImage, 0, len(files))
 	var total int64
 	for _, file := range files {
@@ -176,4 +176,41 @@ func contentTypeForPath(filePath string) string {
 		return "application/octet-stream"
 	}
 	return contentType
+}
+
+// naturalNameLess compares digit runs by value without parsing bounded integers.
+// Equal numbers use the shorter run first, so zero padding is deterministic.
+func naturalNameLess(a, b string) bool {
+	for i, j := 0, 0; ; {
+		if i == len(a) || j == len(b) {
+			return i == len(a) && j != len(b)
+		}
+		if a[i] >= '0' && a[i] <= '9' && b[j] >= '0' && b[j] <= '9' {
+			endA, endB := i, j
+			for endA < len(a) && a[endA] >= '0' && a[endA] <= '9' {
+				endA++
+			}
+			for endB < len(b) && b[endB] >= '0' && b[endB] <= '9' {
+				endB++
+			}
+			numberA := strings.TrimLeft(a[i:endA], "0")
+			numberB := strings.TrimLeft(b[j:endB], "0")
+			if len(numberA) != len(numberB) {
+				return len(numberA) < len(numberB)
+			}
+			if numberA != numberB {
+				return numberA < numberB
+			}
+			if endA-i != endB-j {
+				return endA-i < endB-j
+			}
+			i, j = endA, endB
+			continue
+		}
+		if a[i] != b[j] {
+			return a[i] < b[j]
+		}
+		i++
+		j++
+	}
 }

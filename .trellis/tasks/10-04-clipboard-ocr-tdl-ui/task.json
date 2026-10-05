@@ -1,0 +1,51 @@
+{
+  "id": "clipboard-ocr-tdl-ui",
+  "name": "clipboard-ocr-tdl-ui",
+  "title": "Plan the extensible metadata and media workspace",
+  "description": "Plan the media workspace in eight original delivery tasks plus independent Komga metadata and CLI/AI skill extensions",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "media-workspace",
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": "creepy-kiwi",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-04-metadata-contracts",
+    "10-04-source-settings-auth",
+    "10-04-modern-ui-shell",
+    "10-04-multi-image-ocr-ai",
+    "10-04-metadata-provider-search",
+    "10-04-tdl-account-download",
+    "10-04-comicinfo-roundtrip",
+    "10-04-media-workspace-integration",
+    "10-05-komga-metadata-management",
+    "10-05-cli-ai-skill"
+  ],
+  "parent": "10-04-architecture-review-followup",
+  "relatedFiles": [
+    ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/prd.md",
+    ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/design.md",
+    ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/implement.md"
+  ],
+  "notes": "Original three-batch plan approved; Batch 1 and 2 children are in review, external acceptance and Batch 3 outstanding. User added Komga metadata management and CLI/AI skill as ninth and tenth children on 2026-10-05; the user chose CBZ ComicInfo writeback and full page-business CLI coverage. Both remain planning and need their own final plan review and implementation approval. No commits or deployments; earlier runtime fixes preserved.",
+  "meta": {
+    "batches": 3,
+    "max_parallel_workers": 3,
+    "plan_review": "approved",
+    "shared_contract": "design.md",
+    "execution_plan": "implement.md",
+    "batch_1": "validated_pending_review",
+    "batch_2": "locally_validated_pending_external_acceptance",
+    "komga_extension": "planning_outside_original_three_batches",
+    "cli_ai_skill_extension": "planning_outside_original_three_batches"
+  }
+}

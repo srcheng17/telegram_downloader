@@ -202,9 +202,6 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 					if isLimitExceeded(downloadErr) {
 						cancel()
 					}
-					if isContextCancellation(downloadErr) {
-						cancel()
-					}
 					results <- imageResult{
 						index: slot.index,
 						url:   imageURL,
@@ -230,16 +227,12 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 	successMarker := make([]bool, len(imageSlots))
 	failures := make([]ImageFailure, 0)
 	var limitErr error
-	var cancelErr error
 
 	for item := range results {
 		if item.err != nil {
 			failures = append(failures, ImageFailure{URL: item.url, Err: item.err})
 			if limitErr == nil && isLimitExceeded(item.err) {
 				limitErr = item.err
-			}
-			if cancelErr == nil && isContextCancellation(item.err) {
-				cancelErr = item.err
 			}
 			continue
 		}
@@ -267,10 +260,7 @@ func (s Service) Download(ctx context.Context, pageURL string) (domain.DownloadR
 	if limitErr != nil {
 		return result, limitErr
 	}
-	if cancelErr != nil {
-		return result, cancelErr
-	}
-	if ctxErr := ctx.Err(); isContextCancellation(ctxErr) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
 		return result, ctxErr
 	}
 	if len(failures) > 0 {
@@ -343,7 +333,10 @@ func (s Service) downloadImageSlot(
 		if err == nil {
 			return image, nil
 		}
-		if isLimitExceeded(err) || isContextCancellation(err) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return domain.DownloadedImage{}, ctxErr
+		}
+		if isLimitExceeded(err) {
 			return domain.DownloadedImage{}, err
 		}
 		lastErr = err
@@ -386,11 +379,17 @@ func (s Service) downloadImageWithRetries(
 	attempts := retries + 1
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return domain.DownloadedImage{}, ctxErr
+		}
 		image, err := s.downloadImage(ctx, client, imageURL, totalBytes, totalBytesMu)
 		if err == nil {
 			return image, nil
 		}
-		if isLimitExceeded(err) || isContextCancellation(err) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return domain.DownloadedImage{}, ctxErr
+		}
+		if isLimitExceeded(err) {
 			return domain.DownloadedImage{}, err
 		}
 		lastErr = err
@@ -744,6 +743,8 @@ func isContextCancellation(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
+// IsContextCancellationError inspects the error chain, not the task context.
+// Request timeouts can match too; use ctx.Err() to decide whether a task stopped.
 func IsContextCancellationError(err error) bool {
 	return isContextCancellation(err)
 }
@@ -752,7 +753,9 @@ func shouldRetryDownloadError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if isLimitExceeded(err) || isContextCancellation(err) {
+	// Client.Timeout also wraps DeadlineExceeded while the task context is live.
+	// Callers must check ctx.Err() before classifying a request error for retries.
+	if isLimitExceeded(err) || errors.Is(err, context.Canceled) {
 		return false
 	}
 
@@ -771,6 +774,7 @@ func shouldRetryDownloadError(err error) bool {
 	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
 }
 
+// ShouldRetryTaskError classifies a failure after the caller checks ctx.Err().
 func ShouldRetryTaskError(err error) bool {
 	return shouldRetryDownloadError(err)
 }

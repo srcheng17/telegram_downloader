@@ -1,0 +1,11 @@
+{"file": "docs/development/module-boundaries.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/spec/backend/task-runtime-contract.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/tasks/10-04-runtime-review-fixes/prd.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/tasks/10-04-runtime-review-fixes/design.md", "reason": "Approved runtime review fixes and verification contracts"}
+{"file": ".trellis/tasks/10-04-runtime-review-fixes/implement.md", "reason": "Approved runtime review fixes and verification contracts"}

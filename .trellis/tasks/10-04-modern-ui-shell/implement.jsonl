@@ -1,0 +1,23 @@
+{"file": "docs/development/module-boundaries.md", "reason": "前端只呈现任务语义，共享接口边界"}
+{"file": "docs/development/testing-strategy.md", "reason": "单元、契约与实际浏览器验证分工"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端检查与技术栈"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "现有模块与bundle路径"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "mount/unmount、DOM与可访问性"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "htmx导航、失败swap与异步清理"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "task action、表单与过滤器状态"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "边界解码及运行时类型检查"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Node、lint、build及dist要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "单一文档/候选跨层一致性"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/prd.md", "reason": "用户需求与隐私边界"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/design.md", "reason": "共享视觉、路由与契约"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/implement.md", "reason": "批次与共享文件所有权"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/ui-direction.md", "reason": "已选蓝白工作台方向"}
+{"file": ".trellis/tasks/10-04-metadata-contracts/design.md", "reason": "canonical文档/候选/定义版本"}
+{"file": ".trellis/tasks/10-04-source-settings-auth/design.md", "reason": "登录状态与敏感数据/CSRF边界"}
+{"file": ".trellis/tasks/10-04-modern-ui-shell/prd.md", "reason": "本任务范围与验收"}
+{"file": ".trellis/tasks/10-04-modern-ui-shell/design.md", "reason": "布局、draft/editor及adapter合同"}
+{"file": ".trellis/tasks/10-04-modern-ui-shell/implement.md", "reason": "实施顺序与计划测试"}
+{"file": ".trellis/tasks/10-04-modern-ui-shell/redesign-v2.md", "reason": "UI v2 最新范围与结构优先于第一批历史设计"}
+{"file": ".trellis/spec/frontend/workspace-lifecycle.md", "reason": "导航、Tab、设置加载恢复与敏感模块生命周期"}
+{"file": ".trellis/tasks/10-04-modern-ui-shell/redesign-v3.md", "reason": "指定设计技能后的页面优先级、手机和桌面布局合同"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "响应式焦点顺序、触控尺寸与折叠字段约束"}

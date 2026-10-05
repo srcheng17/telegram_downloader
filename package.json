@@ -2,10 +2,23 @@
   "name": "telegram-downloader-frontend",
   "private": true,
   "version": "0.1.0",
+  "bin": { "mediactl": "cli/mediactl.mjs" },
+  "engines": { "node": ">=22" },
+  "files": [
+    "cli/",
+    "frontend/src/shared/metadata/",
+    "frontend/src/ocr/images.js",
+    "frontend/src/ocr/queue.js",
+    "frontend/src/ocr/rules.js",
+    "web/static/ocr/"
+  ],
   "scripts": {
     "test:frontend": "node --test frontend/src/tests/*.test.mjs",
+    "test:cli": "node --test cli/tests/*.test.mjs",
     "lint": "eslint \"frontend/src/**/*.js\"",
+    "lint:cli": "eslint \"cli/**/*.mjs\"",
     "build": "vite build",
+    "build:cli": "node --check cli/mediactl.mjs && python3 scripts/verify_ocr_resources.py",
     "e2e:install": "playwright install --with-deps chromium",
     "e2e:test": "bash tests/e2e/run-e2e.sh"
   },
@@ -13,5 +26,8 @@
     "@playwright/test": "^1.63.0",
     "eslint": "^8.57.1",
     "vite": "^8.3.2"
+  },
+  "dependencies": {
+    "tesseract.js": "7.0.0"
   }
 }

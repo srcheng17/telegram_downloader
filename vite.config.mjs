@@ -10,6 +10,7 @@ export default defineConfig({
         app: resolve(import.meta.dirname, 'frontend/src/app.js'),
         index: resolve(import.meta.dirname, 'frontend/src/index.js'),
         logs: resolve(import.meta.dirname, 'frontend/src/logs.js'),
+        komga: resolve(import.meta.dirname, 'frontend/src/komga.js'),
         settings: resolve(import.meta.dirname, 'frontend/src/settings.js'),
       },
       output: {

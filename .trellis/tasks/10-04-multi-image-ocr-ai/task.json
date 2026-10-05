@@ -1,0 +1,45 @@
+{
+  "id": "multi-image-ocr-ai",
+  "name": "multi-image-ocr-ai",
+  "title": "Build multi-image local OCR and AI prefill",
+  "description": "One-work multi-image OCR, configurable extraction rules, versioned suggestions and selected MiniCPM integration",
+  "status": "review",
+  "dev_type": "fullstack",
+  "scope": "ocr-extraction",
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": "creepy-kiwi",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-04-clipboard-ocr-tdl-ui",
+  "relatedFiles": [
+    ".trellis/tasks/10-04-multi-image-ocr-ai/prd.md",
+    ".trellis/tasks/10-04-multi-image-ocr-ai/design.md",
+    ".trellis/tasks/10-04-multi-image-ocr-ai/implement.md",
+    ".trellis/tasks/10-04-multi-image-ocr-ai/implement.jsonl",
+    ".trellis/tasks/10-04-multi-image-ocr-ai/check.jsonl"
+  ],
+  "notes": "Batch 2 implementation and root integration validated locally; real account/model/authorized coverage/reader acceptance remains pending as applicable. See parent batch-2-verification.md. Uncommitted and not deployed; earlier work preserved.",
+  "meta": {
+    "batch": 2,
+    "depends_on": [
+      "10-04-metadata-contracts",
+      "10-04-source-settings-auth",
+      "10-04-modern-ui-shell"
+    ],
+    "owner_role": "multi-image-ocr-ai",
+    "exclusive_scope": "frontend/src/ocr; extraction rules/service/store; internal/app/metadataextract; dedicated extract handlers",
+    "max_parallel_workers": 3,
+    "implementation_state": "locally_validated_pending_external_acceptance",
+    "verification_report": "../10-04-clipboard-ocr-tdl-ui/batch-2-verification.md",
+    "validation": "release_checks_resumed_by_stage_passed"
+  }
+}

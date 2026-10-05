@@ -1,0 +1,45 @@
+{
+  "id": "metadata-provider-search",
+  "name": "metadata-provider-search",
+  "title": "Add configurable bibliographic search providers",
+  "description": "Per-source authenticated keyword search, candidate selection, attribution and extensible field mapping",
+  "status": "review",
+  "dev_type": "fullstack",
+  "scope": "metadata-providers",
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": "creepy-kiwi",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-04-clipboard-ocr-tdl-ui",
+  "relatedFiles": [
+    ".trellis/tasks/10-04-metadata-provider-search/prd.md",
+    ".trellis/tasks/10-04-metadata-provider-search/design.md",
+    ".trellis/tasks/10-04-metadata-provider-search/implement.md",
+    ".trellis/tasks/10-04-metadata-provider-search/implement.jsonl",
+    ".trellis/tasks/10-04-metadata-provider-search/check.jsonl"
+  ],
+  "notes": "Batch 2 implementation and root integration validated locally; real account/model/authorized coverage/reader acceptance remains pending as applicable. See parent batch-2-verification.md. Uncommitted and not deployed; earlier work preserved.",
+  "meta": {
+    "batch": 2,
+    "depends_on": [
+      "10-04-metadata-contracts",
+      "10-04-source-settings-auth",
+      "10-04-modern-ui-shell"
+    ],
+    "owner_role": "metadata-provider-search",
+    "exclusive_scope": "internal/app/metadatasearch; internal/infra/metadataproviders; dedicated handlers; frontend/src/metadata-search",
+    "max_parallel_workers": 3,
+    "implementation_state": "locally_validated_pending_external_acceptance",
+    "verification_report": "../10-04-clipboard-ocr-tdl-ui/batch-2-verification.md",
+    "validation": "release_checks_resumed_by_stage_passed"
+  }
+}

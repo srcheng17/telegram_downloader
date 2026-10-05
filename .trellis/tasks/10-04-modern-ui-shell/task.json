@@ -1,0 +1,48 @@
+{
+  "id": "modern-ui-shell",
+  "name": "modern-ui-shell",
+  "title": "Redesign the Chinese media workspace shell",
+  "description": "Navigation, reusable UI and expandable metadata editor while preserving native JavaScript and htmx",
+  "status": "review",
+  "dev_type": "frontend",
+  "scope": "workspace-ui",
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": "creepy-kiwi",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-04-clipboard-ocr-tdl-ui",
+  "relatedFiles": [
+    ".trellis/tasks/10-04-modern-ui-shell/prd.md",
+    ".trellis/tasks/10-04-modern-ui-shell/design.md",
+    ".trellis/tasks/10-04-modern-ui-shell/implement.md",
+    ".trellis/tasks/10-04-modern-ui-shell/implement.jsonl",
+    ".trellis/tasks/10-04-modern-ui-shell/check.jsonl",
+    ".trellis/tasks/10-04-modern-ui-shell/redesign-v3.md",
+    ".trellis/tasks/10-04-modern-ui-shell/redesign-v3-verification.md"
+  ],
+  "notes": "User requested ui-ux-pro-max-skill installation and UI v3 on 2026-10-05. Desktop sidebar fully hides; mobile tabs, task actions, optional metadata and focus order were reviewed. Existing work preserved; no commit or deployment.",
+  "meta": {
+    "batch": 1,
+    "depends_on": [],
+    "owner_role": "modern-ui-shell",
+    "exclusive_scope": "web/templates initial layout; web/static/style.css; frontend/src/shared/metadata; frontend/src/ui_shell",
+    "max_parallel_workers": 3,
+    "contract_dependencies": [
+      "10-04-clipboard-ocr-tdl-ui/design.md"
+    ],
+    "implementation_state": "validated_pending_review",
+    "verification_report": "redesign-v3-verification.md",
+    "validation": "frontend_188_and_isolated_e2e_30_passed",
+    "revision": "v3",
+    "design_revision": "redesign-v3.md"
+  }
+}

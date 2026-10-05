@@ -1,0 +1,30 @@
+{
+  "data": {
+    "id": 123,
+    "title": "Example Series",
+    "type": "manga",
+    "native_title": "架空の作品",
+    "authors": [
+      "Original Writer"
+    ],
+    "artists": [
+      "Artist"
+    ],
+    "status": "completed",
+    "content_rating": "safe",
+    "final_volume": "72",
+    "original_language": "ja",
+    "tags_v2": [
+      {
+        "name": "Adventure",
+        "is_genre": true
+      }
+    ],
+    "source": {
+      "third-party": {
+        "id": "do-not-copy",
+        "title": "Third-party title"
+      }
+    }
+  }
+}

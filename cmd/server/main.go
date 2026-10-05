@@ -9,19 +9,13 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	apptaskcore "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
 	"github.com/ryancheng/telegram-downloader/internal/config"
 	"github.com/ryancheng/telegram-downloader/internal/httpapi"
 	"github.com/ryancheng/telegram-downloader/internal/httpui"
-	"github.com/ryancheng/telegram-downloader/internal/httpv2"
-	"github.com/ryancheng/telegram-downloader/internal/store/postgres"
 	pgmigrations "github.com/ryancheng/telegram-downloader/internal/store/postgres/migrations"
-	pgtaskcore "github.com/ryancheng/telegram-downloader/internal/store/postgres/taskcore"
 )
 
 func main() {
@@ -30,7 +24,8 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("create postgres pool: %v", err)
@@ -44,30 +39,10 @@ func main() {
 		log.Fatalf("run postgres migrations: %v", err)
 	}
 
-	store := postgres.NewStore(pool)
-	settingsStore := postgres.NewSettingsStore(pool)
-	uploadTaskStore := postgres.NewUploadTaskStore(pool)
-	taskCoreStore := pgtaskcore.NewStore(pool)
-	taskCoreService := apptaskcore.NewService(taskCoreStore, apptaskcore.Config{LeaseTTL: 30 * time.Second, MaxAttempts: 3})
-	if cfg.UpstreamBaseURL == "" {
-		log.Printf("PYTHON_WEB_BASE_URL not set, go-api will use local defaults for runtime settings")
+	rootRouter, err := buildWorkspaceRouter(ctx, pool, cfg)
+	if err != nil {
+		log.Fatalf("initialize protected workspace: %v", err)
 	}
-
-	legacyRouterOptions := buildLegacyRouterOptions(cfg, uploadTaskStore)
-	legacyRouterOptions.TaskCoreService = taskCoreService
-	legacyRouterOptions.SettingsProvider = settingsStore
-	legacyRouterOptions.ReadyzChecker = func(ctx context.Context) (bool, error) {
-		pending, err := pgmigrations.PendingCount(ctx, pool)
-		if err != nil {
-			return false, err
-		}
-		return pending == 0, nil
-	}
-	legacyRouter := httpapi.NewRouterWithOptions(store, legacyRouterOptions)
-	rootRouter := chi.NewRouter()
-	httpui.RegisterRoutesWithConfig(rootRouter, buildUIConfig(cfg, settingsStore))
-	httpv2.RegisterSettings(rootRouter, httpv2.NewSettingsHandler(settingsStore))
-	rootRouter.Mount("/", legacyRouter)
 
 	server := &http.Server{
 		Addr:         cfg.Addr,
@@ -84,9 +59,7 @@ func main() {
 		}
 	}()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	<-ctx.Done()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()

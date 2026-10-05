@@ -1,0 +1,19 @@
+{{ define "content" }}
+<div id="komga-workspace" class="komga-workspace" hx-history="false">
+    <header class="section-header">
+        <div><h1>作品库</h1><p class="muted">查找 Komga 中已有的作品，核对文件内元数据。</p></div>
+    </header>
+    <form class="komga-toolbar" autocomplete="off" role="search">
+        <div class="filter-field"><label for="komga-library">书库</label><select id="komga-library" disabled><option value="">正在加载…</option></select></div>
+        <div class="filter-field"><label for="komga-search">搜索作品</label><input id="komga-search" type="search" maxlength="256" placeholder="标题、系列或文件名"></div>
+    </form>
+    <p id="komga-feedback" class="inline-feedback" role="status" aria-live="polite">正在读取书库…</p>
+    <div class="komga-columns">
+        <section class="komga-list-panel" aria-label="作品列表">
+            <ul id="komga-list" class="komga-book-list"></ul>
+            <nav class="pagination" aria-label="作品分页"><button id="komga-prev" type="button" disabled>上一页</button><button id="komga-next" type="button" disabled>下一页</button></nav>
+        </section>
+        <section id="komga-detail" class="komga-detail-panel" aria-label="作品详情"><p class="muted">选择一本作品查看详情。</p></section>
+    </div>
+</div>
+{{ end }}

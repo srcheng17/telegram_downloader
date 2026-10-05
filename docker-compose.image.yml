@@ -4,11 +4,31 @@ services:
     build: !reset null
     pull_policy: always
     volumes: !override
+      - type: bind
+        source: ${ADMIN_BOOTSTRAP_PASSWORD_FILE_HOST:-./secrets/admin-bootstrap-password}
+        target: /run/secrets/admin-bootstrap-password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SOURCE_SETTINGS_MASTER_KEY_FILE_HOST:-./secrets/source-settings-master-key}
+        target: /run/secrets/source-settings-master-key
+        read_only: true
+        bind:
+          create_host_path: false
       - ./downloaded_images:/app/downloaded_images
       - ./temp_downloads:/app/temp_downloads
+      - telegram-private:/app/telegram-private
+      - source-retention:/app/source-retention
+      - komga-edit-backups:/app/komga-edit-backups
       - ${KOMGA_LIBRARY_ROOT_HOST:-/Users/ryancheng/docker_data/komga/data/myReadingManga}:${KOMGA_LIBRARY_ROOT:-/app/komga/myReadingManga}:rw
 
   go-worker:
     image: ${TELEGRAPH_IMAGE:-ghcr.io/srcheng17/telegram_downloader:latest}
     build: !reset null
     pull_policy: always
+
+volumes:
+  telegram-private:
+  source-retention:
+  komga-edit-backups:

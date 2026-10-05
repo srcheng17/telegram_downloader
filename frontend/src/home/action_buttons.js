@@ -70,7 +70,7 @@ export function showHomeActionButtons(doc, options, win = window) {
     const hasLogs = setActionButton(logsButton, {
         visible: Boolean(resolved.logsUrl),
         url: resolved.logsUrl,
-        label: '查看日志',
+        label: '查看任务',
     }, win);
     const hasDownload = setActionButton(downloadButton, {
         visible: Boolean(resolved.downloadUrl),

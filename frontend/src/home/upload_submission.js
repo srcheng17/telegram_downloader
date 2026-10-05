@@ -22,6 +22,8 @@ export function buildUploadInitPayload(file, metadata = {}) {
 export function uploadArchiveSource({
     uploadUrl,
     uploadToken,
+    headers = {},
+    onUnauthorized,
     file,
     onProgress,
     signal,
@@ -50,6 +52,7 @@ export function uploadArchiveSource({
             } catch {
                 // Proxies can return HTML errors instead of the API's JSON body.
             }
+            if (xhr.status === 401) onUnauthorized?.();
             if (xhr.status >= 200 && xhr.status < 300 && payload && payload.ok === true) {
                 finish(resolve, payload);
                 return;
@@ -63,6 +66,7 @@ export function uploadArchiveSource({
         try {
             xhr.open('PUT', String(uploadUrl || '').trim());
             xhr.setRequestHeader('Accept', 'application/json');
+            for (const [key, value] of Object.entries(headers)) xhr.setRequestHeader(key, value);
             if (uploadToken) xhr.setRequestHeader('X-Upload-Token', String(uploadToken).trim());
             if (signal) signal.addEventListener('abort', abort, { once: true });
             xhr.send(file);
@@ -94,6 +98,8 @@ export async function submitArchive({
         uploadUrl: initResult.payload.upload_url,
         uploadToken: initResult.payload.upload_token,
         file,
+        headers: api.csrfHeaders ? await api.csrfHeaders(initResult.payload.upload_url) : {},
+        onUnauthorized: api.unauthorized,
         onProgress,
         signal,
         createXHR,

@@ -1,0 +1,20 @@
+[
+  {
+    "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+    "revision": "91cad51170dc346986eccefdc2dd33a9da36ead9",
+    "file": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    "bytes": 1117320736,
+    "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+    "download_seconds": 20.59,
+    "verified": true
+  },
+  {
+    "repo": "bartowski/mlabonne_Qwen3-1.7B-abliterated-GGUF",
+    "revision": "fb7311cea48018c704b343c2ccabaa0cbc13f4f3",
+    "file": "mlabonne_Qwen3-1.7B-abliterated-Q4_K_M.gguf",
+    "bytes": 1107408832,
+    "sha256": "bea197fd05bad4126cdfe3198b53e6458b731ba554d9bc33548d0259788a7ba8",
+    "download_seconds": 30.45,
+    "verified": true
+  }
+]

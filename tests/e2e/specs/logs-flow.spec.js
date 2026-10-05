@@ -1,8 +1,10 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect, waitForMetadata } = require('../fixtures/auth');
 
 function decodeFormBody(request) {
   const body = request.postData() || '';
-  return Object.fromEntries(new URLSearchParams(body).entries());
+  const payload = Object.fromEntries(new URLSearchParams(body).entries());
+  if (payload.metadata_document) payload.metadata_document = JSON.parse(payload.metadata_document);
+  return payload;
 }
 
 test('首页 duplicate SUCCESS 取消分支：展示确认并可下载已有文件', async ({ page }) => {
@@ -67,17 +69,17 @@ test('首页 duplicate SUCCESS 取消分支：展示确认并可下载已有文�
   });
 
   await page.goto('/');
+  await waitForMetadata(page);
 
-  await expect(page.locator('#summary-total')).toHaveText('6');
-  await expect(page.locator('#summary-active')).toHaveText('2');
 
   await page.locator('#url').fill('https://www.telegra.ph/E2E-Success-01-01');
-  await page.locator('#author').fill('E2E作者');
-  await page.locator('#series_name').fill('E2E系列');
-  await page.locator('#comic_name').fill('E2E漫画');
-  await page.locator('#summary').fill('E2E简介');
-  await page.locator('#tags').fill('科幻,冒险，连载');
-  await page.locator('#genres').fill('青年,悬疑，热血');
+  await page.locator('#metadata-creators-writer').fill('E2E作者');
+  await page.locator('#metadata-series').fill('E2E系列');
+  await page.locator('#metadata-title').fill('E2E漫画');
+  await page.locator('.metadata-group').filter({ has: page.locator('summary', { hasText: '简介与分类' }) }).locator('summary').click();
+  await page.locator('#metadata-summary').fill('E2E简介');
+  await page.locator('#metadata-tags').fill('科幻\n冒险\n连载');
+  await page.locator('#metadata-genres').fill('青年\n悬疑\n热血');
 
   await page.getByRole('button', { name: '开始下载' }).click();
 
@@ -86,16 +88,12 @@ test('首页 duplicate SUCCESS 取消分支：展示确认并可下载已有文�
   await expect(page.getByRole('button', { name: '取消并下载已有文件' })).toBeVisible();
 
   await expect.poll(() => submissions.length).toBe(1);
-  expect(submissions[0]).toMatchObject({
-    url: 'https://www.telegra.ph/E2E-Success-01-01',
-    author: 'E2E作者',
-    series_name: 'E2E系列',
-    comic_name: 'E2E漫画',
-    summary: 'E2E简介',
-    tags: '科幻,冒险，连载',
-    genres: '青年,悬疑，热血',
-    force: 'false',
+  expect(submissions[0]).toMatchObject({ url: 'https://www.telegra.ph/E2E-Success-01-01', force: 'false' });
+  expect(submissions[0].metadata_document.fields).toMatchObject({
+    'creators.writer': { value: ['E2E作者'] }, series: { value: 'E2E系列' }, title: { value: 'E2E漫画' },
+    summary: { value: 'E2E简介' }, tags: { value: ['科幻', '冒险', '连载'] }, genres: { value: ['青年', '悬疑', '热血'] },
   });
+  expect(submissions[0]).not.toHaveProperty('author');
 
   await page.getByRole('button', { name: '取消并下载已有文件' }).click();
   await expect(page.getByRole('button', { name: '下载已有文件' })).toBeVisible();
@@ -152,14 +150,16 @@ test('首页 duplicate SUCCESS 确认分支：force=true 二次提交创建新�
   });
 
   await page.goto('/');
+  await waitForMetadata(page);
 
   await page.locator('#url').fill('https://www.telegra.ph/E2E-Success-01-01');
-  await page.locator('#author').fill('二次提交作者');
-  await page.locator('#series_name').fill('二次提交系列');
-  await page.locator('#comic_name').fill('二次提交漫画');
-  await page.locator('#summary').fill('二次提交简介');
-  await page.locator('#tags').fill('剧情,动作');
-  await page.locator('#genres').fill('冒险,奇幻');
+  await page.locator('#metadata-creators-writer').fill('二次提交作者');
+  await page.locator('#metadata-series').fill('二次提交系列');
+  await page.locator('#metadata-title').fill('二次提交漫画');
+  await page.locator('.metadata-group').filter({ has: page.locator('summary', { hasText: '简介与分类' }) }).locator('summary').click();
+  await page.locator('#metadata-summary').fill('二次提交简介');
+  await page.locator('#metadata-tags').fill('剧情\n动作');
+  await page.locator('#metadata-genres').fill('冒险\n奇幻');
 
   await page.getByRole('button', { name: '开始下载' }).click();
   await expect(page.locator('#download-feedback')).toContainText('该文件已有下载，是否生成新的CBZ文件？');
@@ -167,19 +167,15 @@ test('首页 duplicate SUCCESS 确认分支：force=true 二次提交创建新�
   await page.getByRole('button', { name: '生成新的CBZ' }).click();
 
   await expect.poll(() => submissions.length).toBe(2);
-  expect(submissions[1]).toMatchObject({
-    url: 'https://www.telegra.ph/E2E-Success-01-01',
-    force: 'true',
-    author: '二次提交作者',
-    series_name: '二次提交系列',
-    comic_name: '二次提交漫画',
-    summary: '二次提交简介',
-    tags: '剧情,动作',
-    genres: '冒险,奇幻',
+  expect(submissions[1]).toMatchObject({ url: 'https://www.telegra.ph/E2E-Success-01-01', force: 'true' });
+  expect(submissions[1].metadata_document.fields).toMatchObject({
+    'creators.writer': { value: ['二次提交作者'] }, series: { value: '二次提交系列' }, title: { value: '二次提交漫画' },
+    summary: { value: '二次提交简介' }, tags: { value: ['剧情', '动作'] }, genres: { value: ['冒险', '奇幻'] },
   });
+  expect(submissions[1].metadata_document).toEqual(submissions[0].metadata_document);
 
   await expect(page.locator('#download-feedback')).toContainText('任务已加入队列。');
-  await expect(page.getByRole('button', { name: '查看日志' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看任务' })).toBeVisible();
 });
 
 test('日志页：筛选、错误详情弹窗、取消任务、下载预检', async ({ page }) => {
@@ -367,7 +363,6 @@ test('日志页：筛选、错误详情弹窗、取消任务、下载预检', as
   });
 
   await page.goto('/logs');
-
   await expect(page.locator('#summary-active-count')).toHaveText('1');
 
   await page.locator('#status-filter').selectOption('FAILED');

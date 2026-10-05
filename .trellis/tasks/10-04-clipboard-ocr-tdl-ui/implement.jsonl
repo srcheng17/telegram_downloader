@@ -1,0 +1,17 @@
+{"file": "docs/development/module-boundaries.md", "reason": "Preserve domain/application/adapter/worker responsibilities during tdl and OCR integration"}
+{"file": ".trellis/spec/backend/task-runtime-contract.md", "reason": "Preserve task lifecycle, cancellation, generations and archive resource contracts"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Read layer guidelines and required generated bundle checks"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Lifecycle, request cancellation, worker cleanup and stale-response behavior"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/context.md", "reason": "User scope change, verified tdl constraints and clipboard/OCR evidence"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/ai-rules.md", "reason": "Optional text-only AI and minimal configurable rule proposal"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/ui-direction.md", "reason": "Modern screenshot-to-metadata workspace design proposal"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/tdl-web-bridge.md", "reason": "Pinned tdl login bridge research and account storage coordination"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/local-model-candidates.md", "reason": "Pinned open-weight model provenance, licenses and reproducible hashes"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/racknerd-model-trial.md", "reason": "Authorized isolated RackNerd deployment and model evaluation boundaries"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/minicpm5-candidate.md", "reason": "User-selected MiniCPM5 model provenance and pinned runtime compatibility evidence"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/multi-image-ocr.md", "reason": "Confirmed one-work multi-image OCR, selected MiniCPM5, provenance, stale-result protection and input-budget contract"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/public-metadata-sources.md", "reason": "Public metadata keyword lookup, verified bibliographic APIs, BL/gay manga/doujin distinctions and provider attribution/matching limits"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/metadata-packaging.md", "reason": "InkTag/ComicTagger comparison, pinned ComicInfo schemas, current import preservation gaps and interoperable CBZ packaging contract"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/prd.md", "reason": "Final shared requirements, contracts and parallel ownership"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/design.md", "reason": "Final shared requirements, contracts and parallel ownership"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/implement.md", "reason": "Final shared requirements, contracts and parallel ownership"}

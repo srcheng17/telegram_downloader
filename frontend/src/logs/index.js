@@ -36,7 +36,7 @@ export function createLogsModule(win, doc) {
         consecutiveFailures: 0,
         pollTimer: null,
         inflightController: null,
-        filters: { status: '', q: '' },
+        filters: { status: '', q: '' }, // Applied filters; the form retains the draft.
         statusCatalog: {},
         downloadInProgressTaskIds: new Set(),
         retryInProgressTaskIds: new Set(),
@@ -55,7 +55,7 @@ export function createLogsModule(win, doc) {
     };
     win.__telegraphLogsState = state;
     const STARTUP_RECOVERY_SESSION_KEY_PREFIX = 'telegraph.startup_recovery.dismissed.';
-    const api = createTasksApi((url, options) => win.fetch(url, options));
+    const api = createTasksApi((url, options) => win.fetch(url, options), { win });
     const logsApi = createLogsApi(api);
     function showFeedback(message, kind) {
         const feedback = doc.getElementById('logs-feedback');
@@ -85,7 +85,7 @@ export function createLogsModule(win, doc) {
         if (!statusInput) {
             return;
         }
-        const selectedValue = normalizeStatusCode(state.filters.status || statusInput.value);
+        const selectedValue = normalizeStatusCode(statusInput.value);
 
         statusInput.innerHTML = '';
         const allOption = doc.createElement('option');
@@ -362,7 +362,20 @@ export function createLogsModule(win, doc) {
             row.appendChild(createTaskTypeCell(log));
             row.appendChild(createLinkCell(view.url, view.urlLabel));
             row.appendChild(createStatusCell(view));
-            row.appendChild(createCell(view.progressText));
+            const progressCell = createCell(view.progressText);
+            if (view.metadataWarnings.length) {
+                const details = doc.createElement('details');
+                const summary = doc.createElement('summary');
+                summary.textContent = '元数据保留提示';
+                details.appendChild(summary);
+                for (const message of view.metadataWarnings) {
+                    const note = doc.createElement('p');
+                    note.textContent = message;
+                    details.appendChild(note);
+                }
+                progressCell.appendChild(details);
+            }
+            row.appendChild(progressCell);
             row.appendChild(createCell(view.startTimeLabel));
             row.appendChild(createErrorCell(view.errorText));
             row.appendChild(createActionCell(log));
@@ -456,17 +469,26 @@ export function createLogsModule(win, doc) {
         });
     }
 
-    function scheduleNextFetch(delayMs) {
+    function clearPollTimer() {
         if (state.pollTimer) {
-            clearTimeout(state.pollTimer);
+            win.clearTimeout(state.pollTimer);
+            state.pollTimer = null;
         }
-        if (!doc.getElementById('logs-page')) {
+    }
+
+    function scheduleNextFetch(delayMs) {
+        clearPollTimer();
+        if (!state.mountedRoot || doc.getElementById('logs-page') !== state.mountedRoot || state.inflightController) {
             return;
         }
-        state.pollTimer = setTimeout(() => fetchLogs(state.currentPage), Math.max(0, delayMs));
+        state.pollTimer = win.setTimeout(() => fetchLogs(state.currentPage), Math.max(0, delayMs));
     }
 
     async function fetchLogs(page = 1) {
+        clearPollTimer();
+        if (!state.mountedRoot || doc.getElementById('logs-page') !== state.mountedRoot) {
+            return;
+        }
         if (state.inflightController) {
             state.inflightController.abort();
         }
@@ -503,7 +525,6 @@ export function createLogsModule(win, doc) {
             const filters = data.filters || {};
             state.filters.status = normalizeStatusCode(filters.status);
             state.filters.q = String(filters.q || '');
-            syncFormWithFilters();
 
             state.consecutiveFailures = 0;
             nextDelayMs = resolveNextPollDelay(Boolean(data.has_active_tasks));
@@ -533,6 +554,7 @@ export function createLogsModule(win, doc) {
     function onFilterSubmit(event) {
         event.preventDefault();
         state.filters = readLogsFiltersFromForm(doc);
+        syncFormWithFilters();
         state.currentPage = 1;
         showFeedback('已应用筛选条件。', 'info');
         fetchLogs(1);
@@ -607,10 +629,6 @@ export function createLogsModule(win, doc) {
                 return;
             }
             if (doc.visibilityState === 'visible') {
-                if (state.pollTimer) {
-                    clearTimeout(state.pollTimer);
-                    state.pollTimer = null;
-                }
                 fetchLogs(state.currentPage);
                 return;
             }
@@ -747,10 +765,7 @@ export function createLogsModule(win, doc) {
         state.startupRecoveryDismissKey = '';
         state.modalRestoreFocusEl = null;
 
-        if (state.pollTimer) {
-            clearTimeout(state.pollTimer);
-            state.pollTimer = null;
-        }
+        clearPollTimer();
         if (state.inflightController) {
             state.inflightController.abort();
             state.inflightController = null;

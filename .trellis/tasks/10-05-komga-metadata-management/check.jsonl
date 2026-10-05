@@ -1,0 +1,12 @@
+{"file":".trellis/spec/backend/metadata-packaging.md","reason":"审查 ComicInfo 字段、XSD、ZIP 页面和保留不变量"}
+{"file":".trellis/spec/backend/workspace-metadata-auth.md","reason":"审查管理员授权、CSRF 和凭据隔离"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"审查冲突、部分完成与错误身份"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"审查日志与路径/内容脱敏"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Go、数据库和外部验收要求"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端状态、测试与 dist 同步要求"}
+{"file":"docs/development/testing-strategy.md","reason":"隔离环境与真实阅读器证据边界"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/prd.md","reason":"K1-K8 的可观察验收标准"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/design.md","reason":"CBZ 原子写回、恢复和 Komga 同步合同"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/research/komga-official-api.md","reason":"官方分析/刷新接口及锁定限制"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/research/komga-field-semantics.md","reason":"核对 clear 与补充 PATCH 不误报 analyze 成功"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/research/safe-cbz-writeback.md","reason":"逐条 ZIP 不变量与失败矩阵"}

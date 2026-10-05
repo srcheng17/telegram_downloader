@@ -18,6 +18,11 @@ current code; [README](../../../README.md) owns the broader project overview.
 | [Errors](./error-handling.md) | Service errors and HTTP contracts |
 | [Logging](./logging-guidelines.md) | Standard-library logging and redaction |
 | [Task runtime contracts](./task-runtime-contract.md) | Execution, uploads, settings and CI |
+| [Workspace metadata and auth](./workspace-metadata-auth.md) | Versioned documents, administrator and encrypted settings |
+| [Extraction protocol](./extraction-protocol.md) | Finite rules, saved AI snapshots and exact model budgeting |
+| [Metadata packaging](./metadata-packaging.md) | ComicInfo roundtrip, private retention and fenced publication |
+| [Komga existing-book editing](./komga-edit.md) | Allowlisted CBZ writeback, independent backup and Komga projection |
+| [Telegram runtime](./telegram-runtime.md) | Account authorization, process locks and bounded downloads |
 | [Quality](./quality-guidelines.md) | Regression checks and review |
 
 ## Quality Check

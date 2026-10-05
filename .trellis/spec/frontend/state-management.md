@@ -8,6 +8,8 @@ See `frontend/src/home/index.js`, `frontend/src/logs/index.js`, and `frontend/sr
 - Page modules own handlers, current roots, in-flight requests, polling timers, and transient UI state.
 - Preserve existing `win.__telegraphHomeState`, `win.__telegraphLogsState`, and settings state where used.
 - `frontend/src/home/state.js` collects form fields; `frontend/src/logs/state.js` builds filters/query strings.
+- Logs form controls hold the draft; `state.filters` holds applied query conditions. Submit reads/normalizes the draft and starts page 1; polling and pagination use only applied filters. A response may update applied filters from `data.filters`, but must not call `syncFormWithFilters` or replace the user's current status selection while rebuilding catalog options.
+- Synchronize logs form fields only on mount, explicit submit, or clear/reset. History remount retains existing lifecycle reset behavior; edits made while a fetch is pending survive its response. Verify query and status drafts, submit and clear using the real module fixture in `logs_polling.test.mjs`.
 - `frontend/src/settings/state.js` applies successful server snapshots and caches the download-action mode.
 - Derive logs presentation in `frontend/src/logs/view_model.js`, keeping render functions separate.
 

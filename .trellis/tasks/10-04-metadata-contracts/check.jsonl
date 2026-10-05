@@ -1,0 +1,18 @@
+{"file": "docs/development/module-boundaries.md", "reason": "领域、应用、协议和基础设施边界"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端预检和实际检查要求"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "当前 Go 模块与 worker 职责"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "pgx、事务、新迁移与隔离数据库"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误身份和现有 HTTP 契约"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "原文、来源和凭据脱敏"}
+{"file": ".trellis/spec/backend/task-runtime-contract.md", "reason": "快照、代际、归档限制与清理合同"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试与真实链路要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层类型、存储和投影一致性"}
+{"file": "docs/development/testing-strategy.md", "reason": "分层回归和隔离测试"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/prd.md", "reason": "用户需求和父任务范围"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/public-metadata-sources.md", "reason": "来源许可、角色和分类语义"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/metadata-packaging.md", "reason": "格式版本和消费者兼容性"}
+{"file": ".trellis/tasks/10-04-metadata-contracts/prd.md", "reason": "本任务范围、固定契约和执行边界"}
+{"file": ".trellis/tasks/10-04-metadata-contracts/design.md", "reason": "本任务范围、固定契约和执行边界"}
+{"file": ".trellis/tasks/10-04-metadata-contracts/implement.md", "reason": "本任务范围、固定契约和执行边界"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/design.md", "reason": "Final shared requirements, contracts and parallel ownership"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/implement.md", "reason": "Final shared requirements, contracts and parallel ownership"}

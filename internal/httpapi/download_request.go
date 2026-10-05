@@ -1,16 +1,21 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"unicode"
 
 	apptasks "github.com/ryancheng/telegram-downloader/internal/app/tasks"
+	metadataDomain "github.com/ryancheng/telegram-downloader/internal/domain/metadata"
 )
 
 type downloadMetadata struct {
+	document         *metadataDomain.Document
+	explicitLegacy   map[string]string
 	author           *string
 	seriesName       *string
 	seriesNumber     *string
@@ -24,11 +29,14 @@ type downloadMetadata struct {
 
 func extractDownloadRequest(r *http.Request) (string, bool, downloadMetadata, error) {
 	if strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
-		var payload map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		payload, err := decodeTaskJSON(r.Body)
+		if err != nil {
 			return "", false, downloadMetadata{}, err
 		}
 		rawURL, forceDownload, metadata := extractFromMap(payload)
+		if err := extractDocumentPayload(payload, &metadata); err != nil {
+			return "", false, downloadMetadata{}, err
+		}
 		return rawURL, forceDownload, metadata, nil
 	}
 
@@ -43,7 +51,28 @@ func extractDownloadRequest(r *http.Request) (string, bool, downloadMetadata, er
 		payload[key] = values[0]
 	}
 	rawURL, forceDownload, metadata := extractFromMap(payload)
+	if err := extractDocumentPayload(payload, &metadata); err != nil {
+		return "", false, downloadMetadata{}, err
+	}
 	return rawURL, forceDownload, metadata, nil
+}
+
+// Validate the original bytes before decoding an envelope to a map. Otherwise
+// duplicate keys inside metadata_document would already be lost on re-encoding.
+func decodeTaskJSON(body io.Reader) (map[string]any, error) {
+	const maxEnvelopeBytes = 1 << 20
+	data, err := io.ReadAll(io.LimitReader(body, maxEnvelopeBytes+1))
+	if err != nil || len(data) > maxEnvelopeBytes {
+		return nil, fmt.Errorf("invalid task JSON payload")
+	}
+	var payload map[string]any
+	if err := metadataDomain.DecodeJSON(data, &payload); err != nil {
+		return nil, err
+	}
+	if payload == nil {
+		return nil, fmt.Errorf("task JSON object required")
+	}
+	return payload, nil
 }
 
 func extractFromMap(payload map[string]any) (string, bool, downloadMetadata) {
@@ -158,4 +187,33 @@ func optionalString(value string) *string {
 	}
 	copied := normalized
 	return &copied
+}
+
+func extractDocumentPayload(payload map[string]any, out *downloadMetadata) error {
+	raw, exists := payload["metadata_document"]
+	if !exists {
+		return nil
+	}
+	var encoded []byte
+	var err error
+	if text, ok := raw.(string); ok {
+		encoded = []byte(text)
+	} else {
+		encoded, err = json.Marshal(raw)
+	}
+	if err != nil || len(encoded) > metadataDomain.MaxDocumentBytes || bytes.Equal(bytes.TrimSpace(encoded), []byte("null")) {
+		return fmt.Errorf("invalid metadata document")
+	}
+	doc := &metadataDomain.Document{}
+	if err := metadataDomain.DecodeJSON(encoded, doc); err != nil {
+		return fmt.Errorf("invalid metadata document")
+	}
+	out.document = doc
+	out.explicitLegacy = map[string]string{}
+	for _, key := range []string{"author", "comic_name", "series_name", "series_number", "summary", "tags", "genres"} {
+		if value, ok := payload[key]; ok {
+			out.explicitLegacy[key] = normalizePayloadText(value, 0)
+		}
+	}
+	return nil
 }

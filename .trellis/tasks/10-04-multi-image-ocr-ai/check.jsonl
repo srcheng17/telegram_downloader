@@ -1,0 +1,25 @@
+{"file": "docs/development/module-boundaries.md", "reason": "Keep extraction rules/application/HTTP/model transport responsibilities separate"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend preflight and quality requirements"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Preserve API envelope and cancellation semantics"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Never log OCR text, model body or credentials"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Versioned rule persistence and migration016 coordination"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Native JavaScript layer preflight and required bundle checks"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Page ownership, Vite and dist boundary"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Chinese accessible controls and mount/unmount contract"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Navigation, abort, stale requests and resource cleanup"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Protect manual changes and canonical shared draft"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Validate clipboard, worker and HTTP boundary data"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Single candidate/schema decoder across layers"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/prd.md", "reason": "Confirmed multi-image, extensible fields, local OCR and optional AI scope"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/design.md", "reason": "Frozen shared endpoints, limits, ownership and versions"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/implement.md", "reason": "Batch2 dependencies and per-wave root integration"}
+{"file": ".trellis/tasks/10-04-metadata-contracts/design.md", "reason": "Canonical candidate, typed registry, definitions and atomic adoption"}
+{"file": ".trellis/tasks/10-04-source-settings-auth/design.md", "reason": "Protected credentials, models, saved config and shared client constraints"}
+{"file": ".trellis/tasks/10-04-modern-ui-shell/prd.md", "reason": "Workspace and settings mount points; no duplicate shell ownership"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/ai-rules.md", "reason": "Finite configurable rules and user-triggered text-only model use"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/multi-image-ocr.md", "reason": "Raw/edit/merge/send state separation and MiniCPM full-context budget"}
+{"file": ".trellis/tasks/10-04-clipboard-ocr-tdl-ui/research/context.md", "reason": "Tesseract local worker evidence and actual unresolved OCR checks"}
+{"file": ".trellis/tasks/10-04-multi-image-ocr-ai/design.md", "reason": "Child module boundaries and rules/extract endpoint contracts"}
+{"file": ".trellis/tasks/10-04-multi-image-ocr-ai/implement.md", "reason": "Ordered capability gates, independent acceptance and planned tests"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Actual backend test reporting and isolated PG checks"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Focused race/lifecycle checks and generated frontend outputs"}

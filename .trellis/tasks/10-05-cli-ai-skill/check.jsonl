@@ -1,0 +1,10 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Go API/状态/安全回归检查"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"共享 JS、测试和 dist 生成检查"}
+{"file":".trellis/spec/backend/workspace-metadata-auth.md","reason":"认证、CSRF、版本与秘密审查"}
+{"file":".trellis/spec/backend/extraction-protocol.md","reason":"AI/规则只读快照、预算和隐私核查"}
+{"file":".trellis/spec/frontend/candidate-adoption.md","reason":"多图 OCR、规则候选、并发采用审查"}
+{"file":".trellis/spec/backend/task-runtime-contract.md","reason":"任务动作、上传、取消、下载审查"}
+{"file":".trellis/spec/backend/metadata-packaging.md","reason":"CBZ 写回与隐私审查"}
+{"file":".trellis/tasks/10-05-cli-ai-skill/research/current-cli-and-skill-surface.md","reason":"对照现有页面与 API 逐项验收"}
+{"file":".trellis/tasks/10-05-komga-metadata-management/prd.md","reason":"Komga 子任务真实持久化门槛"}
+{"file":"docs/development/testing-strategy.md","reason":"隔离环境、实际服务与 mock 证据边界"}

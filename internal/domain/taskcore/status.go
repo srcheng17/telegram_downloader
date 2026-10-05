@@ -14,8 +14,9 @@ type Actor string
 type Action string
 
 const (
-	KindURL    Kind = "url"
-	KindUpload Kind = "upload"
+	KindURL      Kind = "url"
+	KindUpload   Kind = "upload"
+	KindTelegram Kind = "telegram"
 )
 
 const (

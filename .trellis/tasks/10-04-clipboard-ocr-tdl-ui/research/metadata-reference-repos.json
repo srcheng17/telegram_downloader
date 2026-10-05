@@ -1,0 +1,50 @@
+{
+  "checked_on": "2026-10-04",
+  "notes": "GitHub public repository metadata. Popularity is not evidence of archive correctness; last push is not the latest release date. This is a point-in-time snapshot.",
+  "repositories": [
+    {
+      "repository": "aurora7795/InkTag",
+      "stars": 8,
+      "license": "MIT",
+      "pushed_at": "2026-09-15T10:31:13Z",
+      "source_revision": "c17ec6dc0763fc4a5f54af3a6355f55511025139",
+      "source": "https://api.github.com/repos/aurora7795/InkTag"
+    },
+    {
+      "repository": "comictagger/comictagger",
+      "stars": 837,
+      "license": "Apache-2.0",
+      "pushed_at": "2026-09-28T17:27:35Z",
+      "source_revision": "fa11a3456cbe5aa9f54f47bdc374ba26b2b946f3",
+      "source": "https://api.github.com/repos/comictagger/comictagger"
+    },
+    {
+      "repository": "anansi-project/comicinfo",
+      "stars": 240,
+      "license": "MIT",
+      "pushed_at": "2026-06-23T01:59:40Z",
+      "source_revision": "99e1453a163c777b4b5320a68732f6f133ac7918",
+      "source": "https://api.github.com/repos/anansi-project/comicinfo"
+    },
+    {
+      "repository": "Kareadita/Kavita",
+      "stars": 11798,
+      "license": "GPL-3.0",
+      "pushed_at": "2026-10-03T19:53:03Z",
+      "source": "https://api.github.com/repos/Kareadita/Kavita"
+    },
+    {
+      "repository": "Snd-R/komf",
+      "stars": 715,
+      "license": "MIT",
+      "pushed_at": "2026-09-27T05:08:12Z",
+      "source": "https://api.github.com/repos/Snd-R/komf"
+    },
+    {
+      "repository": "gotson/komga",
+      "stars": null,
+      "notes": "Repository API first transport failure then HTTP 403; no current star count asserted.",
+      "source": "https://api.github.com/repos/gotson/komga"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "id": "media-workspace-integration",
+  "name": "media-workspace-integration",
+  "title": "Verify the integrated media workspace",
+  "description": "Cross-feature wiring, migrations, browser flows, reader interoperability and rollout documentation",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "integration",
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-04-clipboard-ocr-tdl-ui",
+  "relatedFiles": [
+    ".trellis/tasks/10-04-media-workspace-integration/prd.md",
+    ".trellis/tasks/10-04-media-workspace-integration/design.md",
+    ".trellis/tasks/10-04-media-workspace-integration/implement.md",
+    ".trellis/tasks/10-04-media-workspace-integration/implement.jsonl",
+    ".trellis/tasks/10-04-media-workspace-integration/check.jsonl"
+  ],
+  "notes": "Planning artifacts ready for final review; do not start before approval of the parent summary. Preserve existing runtime fixes. UI v2 user change: remove Telegram new-task source, keep login in Settings Connections; preserve APIs/history/account state.",
+  "meta": {
+    "batch": 3,
+    "depends_on": [
+      "10-04-metadata-contracts",
+      "10-04-source-settings-auth",
+      "10-04-modern-ui-shell",
+      "10-04-multi-image-ocr-ai",
+      "10-04-metadata-provider-search",
+      "10-04-tdl-account-download",
+      "10-04-comicinfo-roundtrip"
+    ],
+    "owner_role": "root-integrator",
+    "exclusive_scope": "cmd; shared router/config/Task Core/store/history/worker wiring; migrations; app/page_modules/transport; dependency manifests/Vite/dist; E2E/deployment docs",
+    "max_parallel_workers": 3,
+    "coordination_starts_batch": 1,
+    "dependency_gate": "Final acceptance; shared integration begins with Batch 1 deliveries."
+  }
+}

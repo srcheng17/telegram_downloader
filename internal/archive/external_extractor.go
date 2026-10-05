@@ -81,6 +81,6 @@ func extractTarImages(ctx context.Context, stream io.Reader, limits ExtractorCon
 		}
 		images = append(images, ExtractedImage{Name: path.Clean(header.Name), ContentType: contentTypeForPath(header.Name), Data: data})
 	}
-	sort.Slice(images, func(i, j int) bool { return images[i].Name < images[j].Name })
+	sort.SliceStable(images, func(i, j int) bool { return naturalNameLess(images[i].Name, images[j].Name) })
 	return images, nil
 }

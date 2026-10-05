@@ -1,0 +1,30 @@
+{
+  "id": "architecture-review-followup",
+  "name": "architecture-review-followup",
+  "title": "Follow up architecture review and Telegram metadata research",
+  "description": "Implement verified runtime fixes and validate a read-only Telegram metadata preview path",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ryancheng",
+  "assignee": "ryancheng",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-04-runtime-review-fixes",
+    "10-04-telegram-metadata-preview",
+    "10-04-clipboard-ocr-tdl-ui"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

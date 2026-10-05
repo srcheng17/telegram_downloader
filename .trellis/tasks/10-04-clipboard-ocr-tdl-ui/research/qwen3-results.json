@@ -1,0 +1,852 @@
+{
+  "version": 1,
+  "created_at": "2026-10-04T13:40:09.859174+00:00",
+  "model": "qwen3-1.7b-abliterated-q4",
+  "base_url": "http://127.0.0.1:18085/v1",
+  "fixture_sha256": "696f0db7abc4799de2ae4d3330b3d526078d74cf9660e98facc9b6770e9068a3",
+  "temperature": 0,
+  "max_tokens": 512,
+  "timeout_seconds": 90.0,
+  "request_options_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+  "notes": [
+    "Synthetic text extraction only; not OCR accuracy or real adult-content acceptance.",
+    "All requests remain in accuracy denominators; HTTP failures are not inferred refusals.",
+    "Unexpected nonempty fields and unsupported labels are partial hallucination indicators.",
+    "Normalization ignores whitespace and tag order/separators, not meaning; inspect exact accuracy too.",
+    "Latency includes network and cold start; usage may be missing or provider-specific.",
+    "Modes alternate order by fixture/repeat; no warm-up request or automatic retry.",
+    "Reports omit prompts, model outputs, upstream error bodies and credentials."
+  ],
+  "results": [
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [],
+      "unexpected_nonempty_fields": [],
+      "unsupported_label_count": 0,
+      "all_fields_correct": true,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 381,
+        "completion_tokens": 86,
+        "total_tokens": 467
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 17.6973,
+      "fixture_id": "ordinary",
+      "mode": "prompt",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [],
+      "unexpected_nonempty_fields": [],
+      "unsupported_label_count": 0,
+      "all_fields_correct": true,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 381,
+        "completion_tokens": 86,
+        "total_tokens": 467
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 7.3324,
+      "fixture_id": "ordinary",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "series_name",
+        "series_number"
+      ],
+      "unexpected_nonempty_fields": [
+        "series_name",
+        "series_number"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 374,
+        "completion_tokens": 92,
+        "total_tokens": 466
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 9.6868,
+      "fixture_id": "adult_labels",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "series_name",
+        "series_number"
+      ],
+      "unexpected_nonempty_fields": [
+        "series_name",
+        "series_number"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 374,
+        "completion_tokens": 92,
+        "total_tokens": 466
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 7.9653,
+      "fixture_id": "adult_labels",
+      "mode": "prompt",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "series_name",
+        "series_number",
+        "summary"
+      ],
+      "unexpected_nonempty_fields": [
+        "series_name",
+        "series_number",
+        "summary"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 363,
+        "completion_tokens": 107,
+        "total_tokens": 470
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 10.563,
+      "fixture_id": "distinct_roles",
+      "mode": "prompt",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "series_name",
+        "series_number",
+        "summary"
+      ],
+      "unexpected_nonempty_fields": [
+        "series_name",
+        "series_number",
+        "summary"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 363,
+        "completion_tokens": 107,
+        "total_tokens": 470
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 8.6416,
+      "fixture_id": "distinct_roles",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "comic_name",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "comic_name",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "author",
+        "series_name",
+        "series_number",
+        "summary"
+      ],
+      "unexpected_nonempty_fields": [
+        "author",
+        "series_name",
+        "series_number",
+        "summary"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 356,
+        "completion_tokens": 58,
+        "total_tokens": 414
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 6.1803,
+      "fixture_id": "missing_fields",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "comic_name",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "comic_name",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "author",
+        "series_name",
+        "series_number",
+        "summary"
+      ],
+      "unexpected_nonempty_fields": [
+        "author",
+        "series_name",
+        "series_number",
+        "summary"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 356,
+        "completion_tokens": 58,
+        "total_tokens": 414
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 4.9858,
+      "fixture_id": "missing_fields",
+      "mode": "prompt",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [],
+      "unexpected_nonempty_fields": [],
+      "unsupported_label_count": 0,
+      "all_fields_correct": true,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 354,
+        "completion_tokens": 71,
+        "total_tokens": 425
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 7.4916,
+      "fixture_id": "hashtags",
+      "mode": "prompt",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [],
+      "unexpected_nonempty_fields": [],
+      "unsupported_label_count": 0,
+      "all_fields_correct": true,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 354,
+        "completion_tokens": 71,
+        "total_tokens": 425
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 5.8581,
+      "fixture_id": "hashtags",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [],
+      "unexpected_nonempty_fields": [],
+      "unsupported_label_count": 0,
+      "all_fields_correct": true,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 375,
+        "completion_tokens": 88,
+        "total_tokens": 463
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 8.8599,
+      "fixture_id": "multiline_summary",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "series_name",
+        "series_number"
+      ],
+      "unexpected_nonempty_fields": [
+        "series_name",
+        "series_number"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 375,
+        "completion_tokens": 93,
+        "total_tokens": 468
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 7.5617,
+      "fixture_id": "multiline_summary",
+      "mode": "prompt",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [],
+      "unexpected_nonempty_fields": [],
+      "unsupported_label_count": 0,
+      "all_fields_correct": true,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 396,
+        "completion_tokens": 74,
+        "total_tokens": 470
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 8.6209,
+      "fixture_id": "ocr_spacing",
+      "mode": "prompt",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [],
+      "unexpected_nonempty_fields": [],
+      "unsupported_label_count": 0,
+      "all_fields_correct": true,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 396,
+        "completion_tokens": 74,
+        "total_tokens": 470
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 6.205,
+      "fixture_id": "ocr_spacing",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "author",
+        "series_name",
+        "series_number"
+      ],
+      "unexpected_nonempty_fields": [
+        "author",
+        "series_name",
+        "series_number"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 371,
+        "completion_tokens": 75,
+        "total_tokens": 446
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 7.9393,
+      "fixture_id": "ocr_ambiguous",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "author",
+        "series_name",
+        "series_number"
+      ],
+      "unexpected_nonempty_fields": [
+        "author",
+        "series_name",
+        "series_number"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 371,
+        "completion_tokens": 75,
+        "total_tokens": 446
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 6.3829,
+      "fixture_id": "ocr_ambiguous",
+      "mode": "prompt",
+      "repeat": 1
+    },
+    {
+      "schema_valid": false,
+      "schema_errors": [
+        "wrong_type:genres"
+      ],
+      "exact_fields": [
+        "comic_name",
+        "summary",
+        "tags"
+      ],
+      "normalized_correct_fields": [
+        "comic_name",
+        "summary",
+        "tags"
+      ],
+      "incorrect_fields": [
+        "author",
+        "series_name",
+        "series_number",
+        "genres"
+      ],
+      "unexpected_nonempty_fields": [
+        "series_name",
+        "series_number"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "invalid_schema",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 419,
+        "completion_tokens": 67,
+        "total_tokens": 486
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 8.6733,
+      "fixture_id": "instruction_in_text",
+      "mode": "prompt",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "comic_name",
+        "summary",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "author",
+        "series_name",
+        "series_number"
+      ],
+      "unexpected_nonempty_fields": [
+        "series_name",
+        "series_number"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 419,
+        "completion_tokens": 67,
+        "total_tokens": 486
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 5.7574,
+      "fixture_id": "instruction_in_text",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "summary"
+      ],
+      "unexpected_nonempty_fields": [
+        "summary"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 387,
+        "completion_tokens": 72,
+        "total_tokens": 459
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 8.3498,
+      "fixture_id": "numbers_and_multiple_authors",
+      "mode": "json_schema",
+      "repeat": 1
+    },
+    {
+      "schema_valid": true,
+      "schema_errors": [],
+      "exact_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "tags",
+        "genres"
+      ],
+      "normalized_correct_fields": [
+        "author",
+        "comic_name",
+        "series_name",
+        "series_number",
+        "tags",
+        "genres"
+      ],
+      "incorrect_fields": [
+        "summary"
+      ],
+      "unexpected_nonempty_fields": [
+        "summary"
+      ],
+      "unsupported_label_count": 0,
+      "all_fields_correct": false,
+      "status": "ok",
+      "refusal": "none",
+      "usage": {
+        "prompt_tokens": 387,
+        "completion_tokens": 72,
+        "total_tokens": 459
+      },
+      "finish_reason": "stop",
+      "elapsed_seconds": 6.3812,
+      "fixture_id": "numbers_and_multiple_authors",
+      "mode": "prompt",
+      "repeat": 1
+    }
+  ],
+  "summary_by_mode": {
+    "prompt": {
+      "requests": 10,
+      "schema_valid_count": 9,
+      "all_fields_correct_count": 3,
+      "exact_field_accuracy_all_requests": 0.7142857142857143,
+      "normalized_field_accuracy_all_requests": 0.7285714285714285,
+      "unexpected_nonempty_field_count": 17,
+      "unsupported_label_count": 0,
+      "explicit_refusals": 0,
+      "suspected_refusals": 0,
+      "status_counts": {
+        "invalid_schema": 1,
+        "ok": 9
+      },
+      "elapsed_median_seconds": 7.7635000000000005,
+      "elapsed_max_seconds": 17.6973,
+      "usage_reported_count": 10,
+      "reported_usage_totals": {
+        "prompt_tokens": 3776,
+        "completion_tokens": 795,
+        "total_tokens": 4571
+      }
+    },
+    "json_schema": {
+      "requests": 10,
+      "schema_valid_count": 10,
+      "all_fields_correct_count": 4,
+      "exact_field_accuracy_all_requests": 0.7571428571428571,
+      "normalized_field_accuracy_all_requests": 0.7714285714285715,
+      "unexpected_nonempty_field_count": 15,
+      "unsupported_label_count": 0,
+      "explicit_refusals": 0,
+      "suspected_refusals": 0,
+      "status_counts": {
+        "ok": 10
+      },
+      "elapsed_median_seconds": 7.63585,
+      "elapsed_max_seconds": 9.6868,
+      "usage_reported_count": 10,
+      "reported_usage_totals": {
+        "prompt_tokens": 3776,
+        "completion_tokens": 790,
+        "total_tokens": 4566
+      }
+    }
+  }
+}
