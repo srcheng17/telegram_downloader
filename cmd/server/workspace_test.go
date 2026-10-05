@@ -102,10 +102,23 @@ func workspaceTestConfig(t *testing.T) config.Config {
 	}
 	t.Setenv("GO_UI_STATIC_DIR", static)
 	t.Setenv("TEMP_PATH", t.TempDir())
-	backupParent, err := filepath.EvalSymlinks(t.TempDir())
+	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
 	}
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupParent, err := os.MkdirTemp(home, "komga-edit-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(backupParent); err != nil {
+			t.Errorf("remove private backup test directory: %v", err)
+		}
+	})
 	return config.Config{PublicOrigin: workspaceOrigin, DownloadTimeout: 30, DownloadRetries: 1, ImageConcurrency: 1,
 		KomgaEditBackupRoot: filepath.Join(backupParent, "komga-edit-backups")}
 }

@@ -158,6 +158,12 @@ instances; `Update` compares the operation version.
 
 Run `go test ./... -count=1`; for repository, lock or lifecycle changes also
 run `go test -race ./... -count=1` with isolated PostgreSQL test state.
+Tests that start `EditService` or the server must place their private backup
+root beneath a non-group/world-writable ancestor (for example, an `os.MkdirTemp`
+directory under the resolved user home, removed with `t.Cleanup`). Keep ordinary
+media fixtures in `t.TempDir()`. On Linux, `t.TempDir()` is commonly under
+world-writable `/tmp` (`01777`), and the production backup-root check must
+reject that ancestor; do not relax the check just to make a fixture pass.
 
 ## 7. Wrong vs Correct
 

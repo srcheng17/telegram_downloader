@@ -154,10 +154,23 @@ func (r *memoryOperationRepo) WithBookLock(ctx context.Context, _ string, fn fun
 func makeEditFixture(t *testing.T, xml string) (*EditService, *editFakeGateway, string) {
 	t.Helper()
 	libraryRoot := t.TempDir()
-	privateParent, err := filepath.EvalSymlinks(t.TempDir())
+	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
 	}
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateParent, err := os.MkdirTemp(home, "komga-edit-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(privateParent); err != nil {
+			t.Errorf("remove private backup test directory: %v", err)
+		}
+	})
 	backupRoot := filepath.Join(privateParent, "private")
 	if err := os.Mkdir(backupRoot, 0700); err != nil {
 		t.Fatal(err)

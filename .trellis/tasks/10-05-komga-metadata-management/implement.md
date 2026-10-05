@@ -34,5 +34,6 @@
 ## 2026-10-05 隔离验收补记
 
 - 在隔离 Komga 1.28.1、独立 PostgreSQL 和合成 CBZ 上，服务端路径已验证标题写回、简介清空、Komga 规范化回读和原件恢复。旧 `PageCount=9`、实际 1 页时，未确认的预览拒绝；显式确认后可单独修正。生成的 ComicInfo 通过固定 XSD 的 `xmllint --nonet` 校验。
-- 本轮又用实际 `mediactl` 经新编译的隔离 Go 服务完成 `books edit → metadata preview → update → edits status → restore`；保存状态为 `current_value_consistent`，恢复后原 CBZ SHA-256 与编辑前完全一致。CLI 只持有管理员会话，不直连 Komga 文件。最终 release gate 在独立 PostgreSQL 数据库上通过完整 Go 与 race、vet、前端 214/214、构建及浏览器 E2E 30/30；见[集成验收矩阵](../10-04-media-workspace-integration/research/verification-2026-10-05.md)。
+- 本轮又用实际 `mediactl` 经新编译的隔离 Go 服务完成 `books edit → metadata preview → update → edits status → restore`；保存状态为 `current_value_consistent`，恢复后原 CBZ SHA-256 与编辑前完全一致。CLI 只持有管理员会话，不直连 Komga 文件。本地 macOS release gate 在独立 PostgreSQL 数据库上通过完整 Go 与 race、vet、前端 214/214、构建及浏览器 E2E 30/30；见[集成验收矩阵](../10-04-media-workspace-integration/research/verification-2026-10-05.md)。
 - 独立 reviewer 已修复 PostgreSQL advisory lock 错误路径、系列级字段误开放、页面失败保存后的锁死状态和前端状态文案。外部进程在最后一次源文件校验与原子替换之间仍有竞态，不能宣称跨进程强 CAS。Kavita 实例、所有 ZIP 边界及用户真实书库均未用于本轮现场验收；保持 `in_progress`，不在生产文件上补测。
+- PR #4 首次 Ubuntu CI 暴露夹具环境差异：`t.TempDir()` 位于 `/tmp`（`01777`），被私密备份根的祖先权限检查正确拒绝。两个测试夹具改在解析后的用户主目录下创建并清理私有备份父目录；产品安全检查不变。远端复跑结论以 PR Checks 为准。
