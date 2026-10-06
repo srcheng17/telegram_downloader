@@ -1,4 +1,4 @@
-const { test, expect, waitForMetadata } = require('../fixtures/auth');
+const { test, expect, enterReview, waitForMetadata } = require('../fixtures/auth');
 
 function decodeFormBody(request) {
   const body = request.postData() || '';
@@ -7,72 +7,31 @@ function decodeFormBody(request) {
   return payload;
 }
 
-test('首页 duplicate SUCCESS 取消分支：展示确认并可下载已有文件', async ({ page }) => {
-  const submissions = [];
-  let createAttempts = 0;
-  let existingDownloadRequests = 0;
-
-  await page.route('**/api/summary', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        total_tasks: 6,
-        active_tasks: 2,
-        success_tasks: 3,
-        failed_tasks: 1,
-        canceled_tasks: 0,
-      }),
-    });
-  });
-
-  await page.route('**/download', async (route) => {
+async function mockExistingSuccessfulTask(page, taskId, submissions) {
+  await page.route('**/api/summary', route => route.fulfill({ json: { total_tasks: 1, active_tasks: 0, success_tasks: 1 } }));
+  await page.route('**/download', route => {
     submissions.push(decodeFormBody(route.request()));
-    createAttempts += 1;
-
-    if (createAttempts === 1) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          ok: true,
-          duplicate: true,
-          needs_confirmation: true,
-          logs_url: '/logs',
-          download_url: '/api/tasks/e2e-success-download/download',
-        }),
-      });
-      return;
-    }
-
-    await route.fulfill({
-      status: 202,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        ok: true,
-        duplicate: false,
-        logs_url: '/logs',
-      }),
-    });
+    return route.fulfill({ json: {
+      ok: true, task_id: taskId, status: 'SUCCEEDED', duplicate: true, needs_confirmation: true,
+      logs_url: '/logs', download_url: `/api/tasks/${taskId}/download`,
+    } });
   });
+  await page.route(`**/api/tasks/${taskId}`, route => route.fulfill({ json: {
+    ok: true, task: { id: taskId, status: 'SUCCEEDED', status_label: '成功', available_actions: ['download'] },
+  } }));
+}
 
-  await page.route('**/api/tasks/e2e-success-download/download**', async (route) => {
+test('首页已有成功作品：一次确认复用同一任务并下载，不要求二次选择', async ({ page }) => {
+  const submissions = []; let existingDownloadRequests = 0;
+  await mockExistingSuccessfulTask(page, 'e2e-success-download', submissions);
+  await page.route('**/api/tasks/e2e-success-download/download', async route => {
     existingDownloadRequests += 1;
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/zip',
-      headers: {
-        'Content-Disposition': 'attachment; filename="e2e-success-download.zip"',
-      },
-      body: 'PK\x03\x04mock',
-    });
+    await route.fulfill({ status: 200, contentType: 'application/zip',
+      headers: { 'Content-Disposition': 'attachment; filename="e2e-success-download.zip"' }, body: 'PK\x03\x04mock' });
   });
-
-  await page.goto('/');
-  await waitForMetadata(page);
-
-
+  await page.goto('/'); await waitForMetadata(page);
   await page.locator('#url').fill('https://www.telegra.ph/E2E-Success-01-01');
+  await enterReview(page);
   await page.locator('#metadata-creators-writer').fill('E2E作者');
   await page.locator('#metadata-series').fill('E2E系列');
   await page.locator('#metadata-title').fill('E2E漫画');
@@ -80,102 +39,50 @@ test('首页 duplicate SUCCESS 取消分支：展示确认并可下载已有文�
   await page.locator('#metadata-summary').fill('E2E简介');
   await page.locator('#metadata-tags').fill('科幻\n冒险\n连载');
   await page.locator('#metadata-genres').fill('青年\n悬疑\n热血');
-
-  await page.getByRole('button', { name: '开始下载' }).click();
-
-  await expect(page.locator('#download-feedback')).toContainText('该文件已有下载，是否生成新的CBZ文件？');
-  await expect(page.getByRole('button', { name: '生成新的CBZ' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '取消并下载已有文件' })).toBeVisible();
-
-  await expect.poll(() => submissions.length).toBe(1);
-  expect(submissions[0]).toMatchObject({ url: 'https://www.telegra.ph/E2E-Success-01-01', force: 'false' });
+  await page.locator('#delivery-target').selectOption('download');
+  expect(submissions).toHaveLength(0);
+  await page.getByRole('button', { name: '确认并开始', exact: true }).click();
+  await expect(page.locator('section[data-workflow-step="result"]')).toBeVisible();
+  await expect(page.locator('#download-feedback')).toContainText('已复用内容一致的已有任务');
+  await expect(page.locator('[data-task-result]')).toContainText('归档已生成');
+  await expect(page.getByRole('button', { name: '生成新的CBZ', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: '取消并下载已有文件', exact: true })).toBeHidden();
+  expect(submissions).toHaveLength(1);
+  expect(submissions[0]).toMatchObject({ url: 'https://www.telegra.ph/E2E-Success-01-01', force: 'false', delivery_target: 'download' });
+  expect(submissions[0].idempotency_key).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
   expect(submissions[0].metadata_document.fields).toMatchObject({
     'creators.writer': { value: ['E2E作者'] }, series: { value: 'E2E系列' }, title: { value: 'E2E漫画' },
     summary: { value: 'E2E简介' }, tags: { value: ['科幻', '冒险', '连载'] }, genres: { value: ['青年', '悬疑', '热血'] },
   });
   expect(submissions[0]).not.toHaveProperty('author');
-
-  await page.getByRole('button', { name: '取消并下载已有文件' }).click();
-  await expect(page.getByRole('button', { name: '下载已有文件' })).toBeVisible();
-  await page.getByRole('button', { name: '下载已有文件' }).click();
-  await expect.poll(() => existingDownloadRequests).toBe(1);
+  const download = page.waitForEvent('download');
+  await page.getByRole('link', { name: '下载 CBZ', exact: true }).click(); await download;
+  expect(existingDownloadRequests).toBe(1); expect(submissions).toHaveLength(1);
 });
 
-test('首页 duplicate SUCCESS 确认分支：force=true 二次提交创建新任务', async ({ page }) => {
+test('首页已有成功作品：返回核对再查看结果仍复用原任务且不重新创建', async ({ page }) => {
   const submissions = [];
-  let createAttempts = 0;
-
-  await page.route('**/api/summary', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        total_tasks: 3,
-        active_tasks: 1,
-        success_tasks: 2,
-        failed_tasks: 0,
-        canceled_tasks: 0,
-      }),
-    });
-  });
-
-  await page.route('**/download', async (route) => {
-    submissions.push(decodeFormBody(route.request()));
-    createAttempts += 1;
-
-    if (createAttempts === 1) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          ok: true,
-          duplicate: true,
-          needs_confirmation: true,
-          logs_url: '/logs',
-          download_url: '/api/tasks/e2e-success-download/download',
-        }),
-      });
-      return;
-    }
-
-    await route.fulfill({
-      status: 202,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        ok: true,
-        duplicate: false,
-        logs_url: '/logs',
-      }),
-    });
-  });
-
-  await page.goto('/');
-  await waitForMetadata(page);
-
-  await page.locator('#url').fill('https://www.telegra.ph/E2E-Success-01-01');
-  await page.locator('#metadata-creators-writer').fill('二次提交作者');
-  await page.locator('#metadata-series').fill('二次提交系列');
-  await page.locator('#metadata-title').fill('二次提交漫画');
-  await page.locator('.metadata-group').filter({ has: page.locator('summary', { hasText: '简介与分类' }) }).locator('summary').click();
-  await page.locator('#metadata-summary').fill('二次提交简介');
-  await page.locator('#metadata-tags').fill('剧情\n动作');
-  await page.locator('#metadata-genres').fill('冒险\n奇幻');
-
-  await page.getByRole('button', { name: '开始下载' }).click();
-  await expect(page.locator('#download-feedback')).toContainText('该文件已有下载，是否生成新的CBZ文件？');
-
-  await page.getByRole('button', { name: '生成新的CBZ' }).click();
-
-  await expect.poll(() => submissions.length).toBe(2);
-  expect(submissions[1]).toMatchObject({ url: 'https://www.telegra.ph/E2E-Success-01-01', force: 'true' });
-  expect(submissions[1].metadata_document.fields).toMatchObject({
-    'creators.writer': { value: ['二次提交作者'] }, series: { value: '二次提交系列' }, title: { value: '二次提交漫画' },
-    summary: { value: '二次提交简介' }, tags: { value: ['剧情', '动作'] }, genres: { value: ['冒险', '奇幻'] },
-  });
-  expect(submissions[1].metadata_document).toEqual(submissions[0].metadata_document);
-
-  await expect(page.locator('#download-feedback')).toContainText('任务已加入队列。');
-  await expect(page.getByRole('button', { name: '查看任务' })).toBeVisible();
+  await mockExistingSuccessfulTask(page, 'e2e-success-revisit', submissions);
+  await page.goto('/'); await waitForMetadata(page);
+  await page.locator('#url').fill('https://www.telegra.ph/E2E-Success-Revisit-01-01');
+  await enterReview(page);
+  await page.locator('#metadata-title').fill('复用的作品');
+  await page.locator('#delivery-target').selectOption('download');
+  await page.getByRole('button', { name: '确认并开始', exact: true }).click();
+  await expect(page.locator('section[data-workflow-step="result"]')).toBeVisible();
+  await expect(page.locator('[data-task-result]')).toContainText('归档已生成');
+  await expect(page.getByRole('link', { name: '下载 CBZ', exact: true })).toHaveAttribute('href', '/api/tasks/e2e-success-revisit/download');
+  await page.getByRole('button', { name: '查看已提交信息', exact: true }).click();
+  await expect(page.locator('section[data-workflow-step="review"]')).toBeVisible();
+  await expect(page.locator('#metadata-title')).toHaveValue('复用的作品');
+  await expect(page.locator('#metadata-title')).toBeDisabled();
+  await expect(page.getByRole('button', { name: '确认并开始', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: '返回处理结果', exact: true }).click();
+  await expect(page.locator('section[data-workflow-step="result"]')).toBeVisible();
+  await expect(page.getByRole('link', { name: '下载 CBZ', exact: true })).toHaveAttribute('href', '/api/tasks/e2e-success-revisit/download');
+  expect(submissions).toHaveLength(1);
+  expect(submissions[0].force).toBe('false');
+  expect(submissions[0].metadata_document.fields.title.value).toBe('复用的作品');
 });
 
 test('日志页：筛选、错误详情弹窗、取消任务、下载预检', async ({ page }) => {

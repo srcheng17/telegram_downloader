@@ -34,7 +34,12 @@ type TaskCoreService interface {
 	GetTask(ctx context.Context, taskID string) (*app.TaskView, error)
 }
 
+type KomgaDeliveryService interface {
+	Deliver(context.Context, string, string, string) (apptasks.KomgaDeliveryResult, error)
+}
+
 type taskCoreHandlers struct {
+	komgaDelivery        KomgaDeliveryService
 	service              TaskCoreService
 	metadataHistoryStore UploadTaskStore
 	komgaConfigured      bool
@@ -59,6 +64,7 @@ func (h *taskCoreHandlers) registerRoutes(router chi.Router) {
 	router.Post("/download", h.handleCreateURLTask)
 	router.Get("/api/tasks", h.handleListTasks)
 	router.Get("/api/tasks/{task_id}", h.handleGetTask)
+	router.Get("/api/tasks/submissions/{key}", h.handleGetSubmission)
 	router.Post("/api/tasks/upload/init", h.handleUploadInit)
 	router.Put("/api/tasks/{task_id}/upload-source", h.handleUploadSource)
 	router.Post("/api/tasks/{task_id}/cancel", h.handleCancelTask)
@@ -90,7 +96,8 @@ func (h *taskCoreHandlers) handleCreateURLTask(w http.ResponseWriter, r *http.Re
 		return
 	}
 	result, err := h.service.CreateURLTask(r.Context(), app.CreateURLInput{
-		ID:               uuid.NewString(),
+		ID:             uuid.NewString(),
+		IdempotencyKey: metadata.idempotencyKey, DeliveryTarget: metadata.deliveryTarget,
 		URL:              rawURL,
 		CanonicalURL:     canonicalURL,
 		Metadata:         taskCoreMetadataMap(metadata),
@@ -275,17 +282,27 @@ func (h *taskCoreHandlers) handleCopyToKomga(w http.ResponseWriter, r *http.Requ
 		writeAPIErrorResponse(w, http.StatusNotFound, apiErrorCodeArtifactUnavailable, "Stored file is unavailable.", nil)
 		return
 	}
-	copier := apptasks.NewKomgaCopier(apptasks.KomgaCopyConfig{Root: h.komgaRootDir})
-	targetPath, err := copier.CopyFromPath(artifactPath, fileName, taskCoreSeriesName(*view))
+	var delivery apptasks.KomgaDeliveryResult
+	if h.komgaDelivery != nil {
+		delivery, err = h.komgaDelivery.Deliver(r.Context(), artifactPath, fileName, taskCoreSeriesName(*view))
+	} else {
+		copier := apptasks.NewKomgaCopier(apptasks.KomgaCopyConfig{Root: h.komgaRootDir})
+		delivery.TargetPath, err = copier.CopyFromPath(artifactPath, fileName, taskCoreSeriesName(*view))
+		delivery.Copied, delivery.Status, delivery.Indexed, delivery.Reason = err == nil, "pending", "pending", "connection_unconfigured"
+	}
 	if err != nil {
-		writeInternalError(w, err)
+		if errors.Is(err, apptasks.ErrKomgaTargetConflict) {
+			writeAPIErrorResponse(w, http.StatusConflict, "komga_target_conflict", "书库已有同名且内容不同的文件，未覆盖。", nil)
+		} else {
+			writeInternalError(w, err)
+		}
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"task_id":     taskID,
-		"target_path": targetPath,
-	})
+	writeJSON(w, http.StatusOK, struct {
+		OK     bool   `json:"ok"`
+		TaskID string `json:"task_id"`
+		apptasks.KomgaDeliveryResult
+	}{true, taskID, delivery})
 }
 
 func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Request) {
@@ -305,6 +322,7 @@ func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Reque
 		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "请选择 ZIP、RAR 或 7Z 文件。", nil)
 		return
 	}
+	var fileSize int64
 	if raw, ok := payload["file_size"]; ok {
 		n, valid := raw.(json.Number)
 		size, err := n.Int64()
@@ -312,6 +330,12 @@ func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Reque
 			writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "上传文件不得超过 64 MiB。", nil)
 			return
 		}
+		fileSize = size
+	}
+	fileHash, hashValid := payload["file_sha256"].(string)
+	if _, exists := payload["file_sha256"]; exists && !hashValid {
+		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Invalid source fingerprint.", nil)
+		return
 	}
 	settings, err := h.taskSettings(r.Context())
 	if err != nil {
@@ -319,6 +343,8 @@ func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	task, err := h.service.InitUploadTask(r.Context(), app.InitUploadInput{
+		IdempotencyKey: metadata.idempotencyKey, DeliveryTarget: metadata.deliveryTarget,
+		FileName: fileName, FileSize: fileSize, FileSHA256: fileHash,
 		ID:               uuid.NewString(),
 		Metadata:         taskCoreMetadataMap(metadata),
 		MetadataDocument: metadata.document,
@@ -334,10 +360,17 @@ func (h *taskCoreHandlers) handleUploadInit(w http.ResponseWriter, r *http.Reque
 		Input:    app.Input{TaskID: task.ID, Metadata: taskCoreMetadataMap(metadata), MetadataDocument: metadata.document},
 		Progress: domain.NewProgress(domain.PhaseUploading, 0, 0, domain.UnitBytes, "等待上传"),
 	}
-	uploadURL := "/api/tasks/" + url.PathEscape(strings.TrimSpace(task.ID)) + "/upload-source"
-	if fileName != "" {
-		uploadURL += "?file_name=" + url.QueryEscape(fileName)
+	if metadata.idempotencyKey != "" {
+		existing, err := h.service.GetTask(r.Context(), task.ID)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		if existing != nil {
+			view = *existing
+		}
 	}
+	uploadURL := taskCoreUploadURL(task.ID, fileName)
 	payloadOut := h.taskPayload(view)
 	payloadOut["upload_url"] = uploadURL
 	writeJSON(w, http.StatusAccepted, payloadOut)
@@ -421,6 +454,10 @@ func (h *taskCoreHandlers) taskPayload(view app.TaskView) map[string]any {
 
 func (h *taskCoreHandlers) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, app.ErrSubmissionSourceConflict):
+		writeAPIErrorResponse(w, http.StatusConflict, "submission_source_conflict", "已有同来源任务使用不同作品信息，请先核对该任务。", nil)
+	case errors.Is(err, app.ErrIdempotencyConflict):
+		writeAPIErrorResponse(w, http.StatusConflict, "idempotency_conflict", "提交内容与已确认的请求不同，请重新核对。", nil)
 	case errors.Is(err, app.ErrInvalidInput):
 		writeAPIErrorResponse(w, http.StatusBadRequest, apiErrorCodeValidation, "Invalid task request.", nil)
 	case errors.Is(err, app.ErrNotFound):
@@ -601,4 +638,33 @@ func (h *taskCoreHandlers) taskSettings(ctx context.Context) (*config.SettingsSn
 	}
 	snapshot = config.NormalizeSettingsSnapshot(snapshot)
 	return &snapshot, nil
+}
+
+func taskCoreUploadURL(taskID, fileName string) string {
+	return "/api/tasks/" + url.PathEscape(taskID) + "/upload-source?file_name=" + url.QueryEscape(fileName)
+}
+
+func (h *taskCoreHandlers) handleGetSubmission(w http.ResponseWriter, r *http.Request) {
+	service, ok := h.service.(interface {
+		GetSubmission(context.Context, string) (*app.TaskView, error)
+	})
+	if !ok {
+		h.writeServiceError(w, app.ErrNotFound)
+		return
+	}
+	view, err := service.GetSubmission(r.Context(), chi.URLParam(r, "key"))
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	if view == nil {
+		h.writeServiceError(w, app.ErrNotFound)
+		return
+	}
+	payload := h.taskPayload(*view)
+	if view.Task.Kind == domain.KindUpload && view.Task.Status == domain.StatusCreated {
+		payload["upload_url"] = taskCoreUploadURL(view.Task.ID, view.Input.SourceArchiveName)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, payload)
 }

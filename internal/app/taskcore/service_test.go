@@ -682,7 +682,7 @@ func (r *memoryRepo) CreateURLTask(ctx context.Context, task Task, input Input, 
 		if !domain.IsTerminal(existing.Status) {
 			return CreateURLResult{Task: existing, Reused: true}, nil
 		}
-		if existing.Status == domain.StatusSucceeded && !force && r.results[id] != nil {
+		if existing.Status == domain.StatusSucceeded && !force && r.results[id] != nil && (input.CanReuseResult == nil || input.CanReuseResult(r.results[id])) {
 			return CreateURLResult{Task: existing, Reused: true, NeedsConfirmation: true, Result: r.results[id]}, nil
 		}
 	}

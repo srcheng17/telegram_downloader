@@ -10,6 +10,7 @@
     "frontend/src/ocr/images.js",
     "frontend/src/ocr/queue.js",
     "frontend/src/ocr/rules.js",
+    "frontend/src/ocr/text.js",
     "web/static/ocr/"
   ],
   "scripts": {

@@ -89,13 +89,21 @@ Reject unknown keys, invalid types/bounds, invented/ungrounded values, clears/nu
 truncated/incomplete results and incompatible definitions/config after inference.
 An empty fields object yields no candidate. Quotes locate evidence; provenance
 stores UTF-16 start/end offsets and non-secret references, never the quote/OCR body.
-Repeated quotes get ambiguity warnings. Persist only explicitly adopted metadata;
+Repeated quotes get ambiguity warnings. Persist only metadata from the finally confirmed draft; guided evidence-backed empty-field
+prefill and explicit conflict decisions both use shared draft adoption. Keep
 no OCR/request/model body in DB, logs, errors, traces or CBZ.
 
 Fixed extraction instructions distinguish structural field labels and their
 separators from values while preserving punctuation inside the values. Keep this
 guidance outside `INPUT_DATA_JSON`; never trim or rewrite the source text or model
 output as a substitute for correct inference and exact evidence validation.
+For `summary`, require the model to generate identical value/evidence_quote containing
+only the paragraph, without its label. A labeled quote with an unlabeled summary
+still fails; do not trim it in the validator. Common six field descriptions distinguish
+primary title/alternate name, author/translator/characters, and UI noise. Controlled
+CPA six-field sampling showed complete 110-token output and exact evidence for all
+five returned fields; missing title remains omitted rather than invented. The local
+caption candidate can independently provide it.
 
 Serialize each selected field's schema `properties` in the order `value`, then
 `evidence_quote`. The pinned llama.cpp grammar follows this order; generating a

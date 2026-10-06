@@ -159,11 +159,48 @@ func TestExtractGroundedCandidate(t *testing.T) {
 	if !found || !strings.Contains(instructions, "用于标识字段的“标题：”等标签及其分隔符") || !strings.Contains(instructions, "保留字段值本身的标点") {
 		t.Fatal("fixed instructions must distinguish structural labels from value punctuation")
 	}
+	if !strings.Contains(instructions, "For summary, evidence_quote must equal value exactly") {
+		t.Fatal("summary instructions must require a quote without its structural label")
+	}
 	var sent struct {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal([]byte(encodedInput), &sent); err != nil || sent.Text != in.Text {
 		t.Fatal("label guidance must not alter the input or its evidence offsets")
+	}
+}
+
+func TestCommonFieldDescriptionsSeparateCaptionRolesAndSummaryEvidence(t *testing.T) {
+	registry := domain.StandardRegistry()
+	for key, expected := range map[string]string{
+		"title": "英文名放 aliases", "aliases": "不重复主标题", "creators.writer": "角色配对",
+		"creators.translator": "汉化组", "summary": "证据必须与正文完全相同", "tags": "浏览量",
+	} {
+		if got := fieldDescription(registry.Definitions[key]); !strings.Contains(got, expected) {
+			t.Errorf("%s lacks role guidance", key)
+		}
+	}
+	if fieldDescription(registry.Definitions["publisher"]) != registry.Definitions["publisher"].Label {
+		t.Fatal("unrelated fields must retain their definition labels")
+	}
+}
+
+func TestSummaryKeepsExactParagraphEvidenceWithoutTrimmingModelOutput(t *testing.T) {
+	in := sampleInput()
+	in.Text = "剧情介绍: 主人公在图书馆发现一本星图。"
+	in.FieldKeys = []string{"summary"}
+	in.FieldRevisions = map[string]uint64{"summary": 0}
+	for _, quote := range []string{in.Text, "主人公在图书馆发现一本星图。"} {
+		output, _ := json.Marshal(map[string]any{"fields": map[string]any{"summary": map[string]string{"value": "主人公在图书馆发现一本星图。", "evidence_quote": quote}}})
+		got, err := NewService(schemaStub{domain.StandardRegistry()}, model(string(output))).Extract(context.Background(), in)
+		if quote == in.Text {
+			var typed *Error
+			if !errors.As(err, &typed) || typed.Code != "invalid_response" || len(got.Candidates) != 0 {
+				t.Fatal("a labeled summary quote must still fail exact paragraph grounding")
+			}
+		} else if err != nil || len(got.Candidates) != 1 {
+			t.Fatalf("exact paragraph quote rejected: %v", err)
+		}
 	}
 }
 func TestSchemaGeneratesValuesBeforeQuotesWithoutChangingConstraints(t *testing.T) {

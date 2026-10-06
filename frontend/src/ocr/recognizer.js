@@ -1,11 +1,12 @@
 import { OCR_LANGUAGES } from './queue.js';
+import { prepareOCRImage } from './preprocess.js';
 
 export const OCR_RESOURCE_ROOT = '/static/ocr/tesseract-7.0.0';
 
 // Tesseract 7's createWorker resolves only after model initialization. Its pinned
 // worker protocol lets us own the Worker immediately, so cancel/unmount also
 // terminates a worker still downloading WASM/language resources.
-export function createLocalRecognizer({ WorkerClass = Worker, resourceRoot = OCR_RESOURCE_ROOT, origin = location.origin } = {}) {
+export function createLocalRecognizer({ WorkerClass = Worker, resourceRoot = OCR_RESOURCE_ROOT, origin = location.origin, prepareImage = prepareOCRImage } = {}) {
     const base = new URL(resourceRoot, origin);
     if (base.origin !== origin || base.search || base.hash) throw new Error('识别资源必须来自本站。');
     let worker = null; let serial = 0; let initialized = ''; let dead = false; let progress = () => {};
@@ -37,6 +38,8 @@ export function createLocalRecognizer({ WorkerClass = Worker, resourceRoot = OCR
     return {
         async recognize(file, languages, onProgress) {
             if (!languages.length || languages.some(lang => !OCR_LANGUAGES.includes(lang))) throw new Error('识别语言无效。');
+            const input = await prepareImage(file);
+            if (dead) throw new Error('本地识别已取消。');
             progress = onProgress;
             if (!worker) await request('load', { options: { lstmOnly: true, corePath: `${base.href}/core`, logging: false } });
             const selection = languages.join('+');
@@ -44,7 +47,7 @@ export function createLocalRecognizer({ WorkerClass = Worker, resourceRoot = OCR
                 await request('loadLanguage', { langs: languages, options: { langPath: `${base.href}/lang`, gzip: true, cacheMethod: 'none', lstmOnly: true } });
                 await request('initialize', { langs: languages, oem: 1, config: {} }); initialized = selection;
             }
-            const bytes = new Uint8Array(await file.arrayBuffer());
+            const bytes = new Uint8Array(await input.arrayBuffer());
             const result = await request('recognize', { image: bytes, options: {}, output: { text: true, blocks: false, hocr: false, tsv: false } });
             if (typeof result?.text !== 'string') throw new Error('本地识别结果无效。');
             return result.text;

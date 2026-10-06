@@ -1,4 +1,4 @@
-const { test, anonymousTest, expect, waitForMetadata } = require('../fixtures/auth');
+const { test, anonymousTest, expect, enterReview, waitForMetadata } = require('../fixtures/auth');
 
 anonymousTest('采集工作区：新接口和 OCR 资源继续受管理员保护', async ({ context }) => {
   for (const endpoint of ['/api/settings/extraction-rules', '/api/metadata/providers', '/api/telegram/account', '/static/ocr/tesseract-7.0.0/worker.min.js']) {
@@ -23,7 +23,9 @@ test('多图识别：生产资源、本地规则和手工锁定字段', async ({
   });
   const slot = page.locator('[data-module-slot="evidence"]');
   await expect(slot).toContainText('已载入 1 条本地规则');
+  await slot.getByText('高级识别语言', { exact: true }).click();
   await slot.getByLabel('简体中文', { exact: true }).uncheck();
+  await slot.locator('.ocr-edit-section > summary').click();
   await slot.locator('input[type=file]').setInputFiles([
     { name: 'first.png', mimeType: 'image/png', buffer: require('node:fs').readFileSync('tests/e2e/fixtures/ocr/eng.png') },
     { name: 'second.png', mimeType: 'image/png', buffer: require('node:fs').readFileSync('tests/e2e/fixtures/ocr/eng.png') },
@@ -31,20 +33,17 @@ test('多图识别：生产资源、本地规则和手工锁定字段', async ({
   await expect(slot.locator('.ocr-images')).toContainText('识别完成', { timeout: 45_000 });
   await expect(slot.getByLabel('合并文字预览（保留图片顺序和段落）')).toHaveValue(/Star Atlas[\s\S]*Star Atlas/, { timeout: 45_000 });
   await slot.getByLabel('补充或手工录入文字（加入合并预览）').fill('Title: Verified Atlas');
-  await slot.getByRole('button', { name: '使用本地规则提取', exact: true }).click();
-  await expect(slot).toContainText('Verified Atlas');
-  await slot.getByRole('button', { name: '核对此候选', exact: true }).last().click();
-  await page.locator('.metadata-candidates').getByRole('checkbox', { name: '标题', exact: true }).check();
-  await page.getByRole('button', { name: '采用所选字段', exact: true }).click();
-  await expect(page.locator('#metadata-title')).toHaveValue('Verified Atlas');
+  await enterReview(page, { automatic: true });
+  await expect(page.locator('#metadata-title')).toHaveValue('');
+  // Two different title suggestions are a real conflict, not an automatic first hit.
+  await expect(page.locator('.metadata-candidates')).toContainText('Verified Atlas');
   await page.locator('#metadata-title').fill('手工保留标题');
-  await slot.getByRole('button', { name: '使用本地规则提取', exact: true }).click();
-  await slot.getByRole('button', { name: '核对此候选', exact: true }).last().click();
-  await expect(page.locator('#metadata-title')).toHaveValue('手工保留标题');
+  await page.getByRole('button', { name: '上一步', exact: true }).click();
   await page.getByRole('tab', { name: '书目搜索', exact: true }).click();
   await expect(slot).not.toBeVisible();
   await page.getByRole('tab', { name: '截图识别', exact: true }).click();
   await expect(slot.getByLabel('合并文字预览（保留图片顺序和段落）')).toHaveValue(/Star Atlas[\s\S]*Star Atlas/);
+  await enterReview(page, { automatic: true });
   await expect(page.locator('#metadata-title')).toHaveValue('手工保留标题');
   await page.screenshot({ path: testInfo.outputPath('ocr-review-workspace.png'), fullPage: true });
   expect(external).toEqual([]);

@@ -1,4 +1,5 @@
 import { formatFieldValue, parseFieldInput } from './schema.js';
+import { createCandidateReview } from './candidate_review.js';
 
 function groupFor(key) {
     if (key.startsWith('custom.')) return '自定义字段';
@@ -21,9 +22,11 @@ export function createMetadataEditor({ root, draft, schema, doc = globalThis.doc
     let pendingEdits = false;
     let unsubscribe;
     let candidatePanel;
+    let candidateMode = null;
     let candidateGeneration = 0;
     let adoptionController;
     let feedback;
+    let preparedReview;
     const el = (tag, className, text) => {
         const node = doc.createElement(tag);
         if (className) node.className = className;
@@ -149,6 +152,7 @@ export function createMetadataEditor({ root, draft, schema, doc = globalThis.doc
         candidatePanel = el('section', 'metadata-candidates');
         candidatePanel.hidden = true;
         root.appendChild(candidatePanel);
+        preparedReview = createCandidateReview({ draft, onChange: renderPrepared });
         const document = draft.getSnapshot();
         const definitions = { ...document.definition_snapshot, ...schema.definitions };
         // An older document must retain the definitions that gave its values meaning.
@@ -182,6 +186,8 @@ export function createMetadataEditor({ root, draft, schema, doc = globalThis.doc
     }
     function showCandidate(candidate, { beforeApply } = {}) {
         cancelAdoption();
+        candidateMode = candidate ? 'manual' : null;
+        preparedReview?.clear();
         if (!candidate) {
             candidatePanel?.replaceChildren();
             if (candidatePanel) candidatePanel.hidden = true;
@@ -260,6 +266,7 @@ export function createMetadataEditor({ root, draft, schema, doc = globalThis.doc
             try {
                 // Recheck field/input revisions after the asynchronous preflight as well.
                 draft.applyCandidate(candidate, keys, { confirmLocked });
+                preparedReview.recordAdopted({ candidate, beforeApply }, keys);
                 showCandidate(null);
                 feedback.textContent = '已采用所选字段，其他内容保持不变。';
             } catch (error) { feedback.textContent = error.message; }
@@ -274,16 +281,69 @@ export function createMetadataEditor({ root, draft, schema, doc = globalThis.doc
         };
         candidatePanel.appendChild(cancel);
     }
+    function renderPrepared(review) {
+        if (!mounted || !candidatePanel || candidateMode !== 'prepared') return;
+        candidatePanel.replaceChildren();
+        candidatePanel.hidden = !review.pending.length && !review.prepared.length;
+        if (review.pending.length) {
+            candidatePanel.appendChild(el('h3', '', `${review.pending.length} 项信息需要核对`));
+            candidatePanel.appendChild(el('p', 'field-help', '请选择有依据的值，也可保留当前内容或直接修改下方字段。'));
+        }
+        for (const group of review.pending) {
+            const definition = draft.getDefinition(group.key);
+            const section = el('section', 'candidate-field');
+            section.setAttribute('data-review-field', group.key);
+            section.appendChild(el('h4', '', definition.label || group.key));
+            const current = group.current?.state === 'cleared' ? '已明确清空' : group.current ? formatFieldValue(definition, group.current.value) : '未填写';
+            section.appendChild(el('p', 'candidate-value', `当前：${current}`));
+            const controls = [];
+            const decision = (text, selection) => {
+                const button = el('button', 'btn btn-secondary', text); button.type = 'button';
+                button.onclick = async () => {
+                    controls.forEach(control => { control.disabled = true; });
+                    try { await preparedReview.resolve(group.key, selection); }
+                    catch (error) { if (mounted) feedback.textContent = error.message; }
+                    finally { controls.forEach(control => { control.disabled = false; }); }
+                };
+                controls.push(button); section.appendChild(button);
+            };
+            group.options.forEach((option, index) => {
+                const value = option.field.state === 'cleared' ? '明确清空' : formatFieldValue(definition, option.field.value);
+                section.appendChild(el('p', 'candidate-value', `${option.sources.map(source => sourceLabels[source] || '已保存来源').join('、')}：${value}`));
+                decision(`使用建议 ${index + 1}`, index);
+            });
+            decision(group.current ? '保留当前内容' : '暂不填写', 'keep');
+            candidatePanel.appendChild(section);
+        }
+        if (review.prepared.length) {
+            const details = el('details');
+            details.appendChild(el('summary', '', `已准备 ${review.prepared.length} 项信息，查看来源`));
+            for (const item of review.prepared) details.appendChild(el('p', 'field-help', `${draft.getDefinition(item.key)?.label || item.key}：${item.sources.map(source => sourceLabels[source] || '已保存来源').join('、')}`));
+            candidatePanel.appendChild(details);
+        }
+    }
     return {
         mount,
         showCandidate,
+        async prepareCandidates(entries, options) {
+            if (!mounted) throw new Error('工作区尚未就绪。');
+            cancelAdoption();
+            candidateMode = 'prepared';
+            renderPrepared(preparedReview.snapshot());
+            return preparedReview.prepare(entries, options);
+        },
+        hasUnresolvedCandidates: () => Boolean(preparedReview?.hasUnresolved()),
+        preflightPreparedCandidates: options => preparedReview?.preflight(options),
         hasPendingEdits: () => pendingEdits,
         markClean() { pendingEdits = false; },
         hasErrors: () => [...controls.values()].some(item => !item.error.hidden),
         unmount() {
             if (!mounted) return;
             mounted = false;
+            candidateMode = null;
             cancelAdoption();
+            preparedReview?.dispose();
+            preparedReview = null;
             unsubscribe?.();
             unsubscribe = null;
             cleanup.splice(0).forEach(remove => remove());

@@ -101,6 +101,12 @@ AI extraction, or reveal operations.
   submitted document revision. Argument parsing leaves an absent `--force` as
   `undefined`, so compare its boolean meaning with JSON `force:false`; do not
   reject an ordinary structured URL request for `undefined !== false`.
+- `tasks copy-to-komga` returns `copy_completed` separately from `komga_indexed`.
+  New servers return `pending` or `verified`; the latter requires bounded valid
+  `book_id` and `library_id`. Old responses remain `unverified`. Never expose
+  target paths or infer indexing from a successful copy. Finite extraction errors
+  such as `invalid_response` must survive the HTTP adapter instead of becoming
+  generic `unavailable`; no upstream error body is printed.
 - Komga `books edit` returns safe field eligibility and versions. `metadata
   preview` takes `source_version`, `definitions_version`, and `changes`;
   `update` also requires the preview token and idempotency key. The operation

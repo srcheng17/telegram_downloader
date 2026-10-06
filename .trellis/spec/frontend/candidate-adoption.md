@@ -1,4 +1,4 @@
-# Local OCR and explicit candidate adoption
+# Local OCR and guided candidate review
 
 ## 1. Scope / Trigger
 
@@ -15,7 +15,12 @@ mountOCR(root, {
   draft, api, schema, onInputChange, setConfigRevision,
   onCandidates, // ([candidate], { beforeApply }) or ([]) when invalidated
   recognizerFactory, queueOptions,
-}) // { queue, reloadSettings, isDirty, dispose }
+}) // { queue, reloadSettings, isDirty, prepare, getInputRevision, markClean, cancelPreparation, dispose }
+
+ocr.prepare({ allowAI: true, signal, retry: false }) // { entries, warnings }
+search.prepare({ title, aliases, writers, signal, retry: false }) // { entries, warnings }
+editor.prepareCandidates(entries, { signal }) // { appliedKeys, unresolvedCount, warnings }
+shell.preflightPreparedCandidates({ signal }) // final confirmation authority gate
 
 editor.showCandidate(candidate, { beforeApply })
 shell.showCandidate(candidate, { beforeApply }) // forwards the same options
@@ -39,6 +44,15 @@ Accept only static PNG/JPEG/WebP through one paste/multifile queue. Limits from
 8192px/edge. Validate bounded container/MIME/extension/animation/size **before**
 pixel decoding, then verify decoded dimensions and close ImageBitmap. Reject the
 individual bad image while retaining previously accepted items; no silent resizing.
+Browser recognition may use a temporary same-size contrast input from
+`ocr/preprocess.js`: short edge >=1000px, >=85% pixels <=80 gray, 0.2–15%
+pixels >=160 gray, and fully opaque. Only then map gray >110 to black and
+remaining pixels to white. Preserve the original File and preview. Smaller,
+light, translucent or ambiguous images stay unchanged; decoded dimensions
+must match the bounded header and every bitmap/canvas must be released. This
+is a measured browser-only enhancement, not a general accuracy guarantee or
+CLI decoder dependency. Cancellation before preprocessing ends must never
+start/revive the worker.
 Only the dedicated image paste area prevents a paste event containing image files;
 ordinary text controls keep native paste behavior. Screenshots never enter archive upload.
 
@@ -54,7 +68,9 @@ use private immutable HTTP caching; the static route remains authenticated.
 Keep image raw OCR, image editable text, merged preview, editable AI send snapshot
 and metadata document separate in memory. No screenshots/OCR/send text in
 localStorage, sessionStorage, IndexedDB, history snapshots, URLs, logs or CBZ.
-AI sends only the explicitly confirmed text and allowed request metadata.
+Guided automatic preparation sends derived text to the saved AI target after the visible
+automatic-preparation choice; the entry explains text/source requests and allows opting out.
+Manual advanced extraction keeps its explicit send preview. Images remain local.
 Provenance carries references/UTF-16 ranges, not original text or screenshots.
 
 Stable image IDs/generations fence callbacks; indices are not identities. Reorder,
@@ -70,11 +86,13 @@ Local rules use finite modes/options and the exact Go/JS normalization contract.
 Distinct conflicting field values remain separate candidates. No regex/eval or
 automatic field registration. Rule previews stay local; saved rules contain no text.
 
-OCR completion, settings/model discovery, rules and book search never automatically
-trigger AI. User reviews actual send text, destination/model and selected fields,
-then explicitly confirms. An edited send snapshot survives later OCR changes and
-is marked stale; the user regenerates or explicitly retains it before sending.
-No automatic retry, provider switch, chunking, truncation or filling missing values.
+The approved guided flow invokes OCR, finite captions/rules, the saved AI and enabled
+book sources from one preparation action. Common six fields are selected by default;
+advanced manual send preview remains available. An edited send snapshot survives later
+OCR changes and is marked stale; it must be regenerated or deliberately retained.
+No automatic retry, provider switch, chunking or truncation. Ordinary next reuses
+unchanged successful preparation; explicit retry rereads saved settings/sources and
+invalidates caches while preserving image corrections and metadata.
 
 The shared draft is the sole metadata truth/adoption authority. `inputRevision`
 comes from the home coordinator; `configRevision` is saved **AI config_version**.
@@ -86,12 +104,18 @@ manual locks, explicit clears, revisions, invalid input and source eligibility.
 
 ### Actual adoption preflight
 
-Opening “核对此候选” only shows comparison; authority checks run when the user
-clicks “采用所选字段”. Capture immutable generation/request-time versions in the
-closure, never read a mutable new settings object as the old candidate's baseline.
+Guided prepare checks authority before filling only empty, unprotected fields with
+one evidenced value. Equal values merge visible sources; different values, manual
+locks and clear tombstones need a field decision in the shared editor. Unresolved
+fields block final submission. Manual advanced comparison still checks authority
+on adoption. Capture immutable request-time versions in each closure, never read
+a mutable new settings object as the old candidate's baseline. Final confirmation
+rechecks authority for actually adopted fields still present; comparison cleanup
+must not discard this check, and a refreshed equal candidate refreshes its authority.
 
 | Candidate | Fresh no-store GETs | Required match |
 | --- | --- | --- |
+| Finite local caption (`origin=ocr`) | `/api/metadata/schema` | Current definitions; source is `local-caption-v1`, not saved rules |
 | OCR rule | `/api/metadata/schema`, `/api/settings/extraction-rules` | Schema/definitions and captured rules_version; validate rules against current schema |
 | OCR AI | `/api/metadata/schema`, `/api/settings/ai` | Schema/definitions, captured AI config_version; still enabled with model |
 | Book provider | `/api/metadata/schema`, `/api/settings/sources` | Schema/definitions, resolve-time provider_id/source config_version; source exists and enabled |
@@ -133,6 +157,8 @@ Home must forward the second candidate callback argument through the shell to ed
 | Some images unfinished | Require explicit completed-subset selection |
 | OCR changed after send text edited | Keep edited snapshot, mark stale, require renewed confirmation |
 | AI/refusal/auth/timeout/context/schema failure | Keep all text and metadata; no automatic retry |
+| Unresolved guided field conflict | Keep current draft; final confirmation blocked until keep/replace/manual edit |
+| Keyed submission response lost | Read protected submission receipt; retry same snapshot/key, not a new task |
 | Preflight error or retired authoritative version | No draft mutation; safe feedback; manual retry/reacquire |
 | Selected field/input/config conflict after preflight | Shared draft rejects the whole selection |
 | Pending adoption cancelled/replaced/unmounted | Abort + retire generation; ignore late success/error |
@@ -140,20 +166,24 @@ Home must forward the second candidate callback argument through the shell to ed
 
 ## 5. Good / Base / Bad Cases
 
-- Good: correct two screenshots, explicitly omit a failed third, review candidates,
-  select fields, recheck current authority and adopt through the one draft.
+- Good: correct two screenshots, explicitly omit a failed third, automatically
+  prepare evidenced empty fields, settle only conflicts, and confirm once. Advanced
+  manual candidates retain the same adoption/final authority checks.
 - Base: AI unavailable; type metadata or use local rules and continue independently.
 - Bad: another tab disables a provider while its comparison is open; applying the
   old candidate must fail without clearing manually entered fields or OCR text.
 
 ## 6. Tests Required
 
+- [Guided review tests](../../../frontend/src/tests/candidate_review.test.mjs):
+  safe prefill, same-value source aggregation, manual clear/locks, stale authority,
+  comparison cleanup retaining actual adopted authority and final preflight.
 - [Image tests](../../../frontend/src/tests/ocr_images.test.mjs): header/animation/
   bounds before decode, decoded-size mismatch, bitmap closure.
 - [Queue tests](../../../frontend/src/tests/ocr_queue.test.mjs): serial recognition,
   generation fencing, cancellation/terminate, edited text across retry, partial consent.
 - [OCR module tests](../../../frontend/src/tests/ocr_module.test.mjs): text paste native,
-  explicit AI confirmation, send snapshot retention, rule/AI authority GET only on actual
+  guided automatic preparation and advanced AI confirmation, send snapshot retention, rule/AI authority GET only on actual
   apply, version/schema/disabled/HTTP/network/malformed rejection and late owner cleanup.
 - [Rule tests](../../../frontend/src/tests/ocr_rules.test.mjs) and
   [settings tests](../../../frontend/src/tests/extraction_rules.test.mjs): typed finite

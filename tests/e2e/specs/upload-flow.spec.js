@@ -1,4 +1,4 @@
-const { test, expect, waitForMetadata, metadataDocument } = require('../fixtures/auth');
+const { test, expect, enterReview, waitForMetadata, metadataDocument } = require('../fixtures/auth');
 
 test('首页：上传模式可初始化任务、上传源包，并支持从历史回填', async ({ page, request }) => {
   const schemaResponse = await request.get('/api/metadata/schema');
@@ -118,7 +118,7 @@ test('首页：上传模式可初始化任务、上传源包，并支持从历�
         upload_token: 'upload-token-1',
         upload_url: '/api/tasks/task-upload-1/upload-source',
         logs_url: '/logs',
-        status: 'UPLOADING',
+        status: 'CREATED',
       }),
     });
   });
@@ -148,6 +148,7 @@ test('首页：上传模式可初始化任务、上传源包，并支持从历�
     mimeType: 'application/zip',
     buffer: Buffer.from('PK\x03\x04demo'),
   });
+  await enterReview(page);
   await page.locator('#metadata-creators-writer').fill('上传作者');
   await page.locator('#metadata-series').fill('上传系列');
   await page.locator('#metadata-title').fill('上传漫画');
@@ -156,14 +157,14 @@ test('首页：上传模式可初始化任务、上传源包，并支持从历�
   await page.locator('#metadata-tags').fill('剧情\n动作');
   await page.locator('#metadata-genres').fill('青年\n悬疑');
 
-  await page.getByRole('button', { name: '开始下载' }).click();
+  await page.getByRole('button', { name: '确认并开始' }).click();
 
   await expect.poll(() => uploadInitRequests).toBe(1);
   await expect.poll(() => uploadSourceRequests).toBe(1);
   await expect(page.locator('#download-feedback')).toContainText('任务已加入队列。');
-  await expect(page.getByRole('button', { name: '查看任务' })).toBeVisible();
+  await expect(page.locator('section[data-workflow-step="result"]')).toBeVisible();
 
-  await page.getByRole('button', { name: '查看任务' }).click();
+  await page.getByRole('link', { name: '查看任务', exact: true }).click();
   await expect(page).toHaveURL(/\/logs$/);
   await expect(page.locator('[data-task-status-label]')).toContainText(['上传中', '准备中', '运行中', '成功']);
   const successfulUploadRow = page.locator('#log-body tr', { hasText: 'task-upload-1-success' });
@@ -173,18 +174,19 @@ test('首页：上传模式可初始化任务、上传源包，并支持从历�
   await page.goto('/');
   await waitForMetadata(page);
   await page.locator('#url').fill('https://telegra.ph/keep-current-source');
+  await enterReview(page);
   await page.locator('#metadata-history-collapsible > summary').click();
   await page.locator('.metadata-history-item').nth(0).click();
   await page.locator('.metadata-candidates').getByRole('checkbox', { name: '作者／原作', exact: true }).check();
   await page.getByRole('button', { name: '采用所选字段' }).click();
-  await expect(page.getByRole('radio', { name: 'Telegraph 链接', exact: true })).toBeChecked();
+  await expect(page.locator('input[name="input_mode"][value="url"]')).toBeChecked();
   await expect(page.locator('#url')).toHaveValue('https://telegra.ph/keep-current-source');
   await expect(page.locator('#metadata-creators-writer')).toHaveValue('历史作者URL');
 
   await page.locator('.metadata-history-item').nth(1).click();
   await page.locator('.metadata-candidates').getByRole('checkbox', { name: '作者／原作', exact: true }).check();
   await page.getByRole('button', { name: '采用所选字段' }).click();
-  await expect(page.getByRole('radio', { name: 'Telegraph 链接', exact: true })).toBeChecked();
+  await expect(page.locator('input[name="input_mode"][value="url"]')).toBeChecked();
   await expect(page.locator('#metadata-creators-writer')).toHaveValue('历史作者上传');
   await expect(page.locator('#url')).toHaveValue('https://telegra.ph/keep-current-source');
 });

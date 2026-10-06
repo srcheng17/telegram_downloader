@@ -39,6 +39,9 @@ type Task struct {
 }
 
 type Input struct {
+	Submission        *Submission
+	SourceSHA256      string
+	CanReuseResult    func(*Result) bool
 	Telegram          *telegram.Input
 	TaskID            string
 	URL               string
@@ -87,6 +90,8 @@ type TaskView struct {
 }
 
 type CreateURLInput struct {
+	IdempotencyKey   string
+	DeliveryTarget   string
 	ID               string
 	URL              string
 	CanonicalURL     string
@@ -124,6 +129,11 @@ type TaskPage struct {
 }
 
 type InitUploadInput struct {
+	IdempotencyKey   string
+	DeliveryTarget   string
+	FileName         string
+	FileSize         int64
+	FileSHA256       string
 	ID               string
 	Metadata         map[string]string
 	MetadataDocument *metadata.Document

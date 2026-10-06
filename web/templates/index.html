@@ -25,9 +25,17 @@
         </div>
     </div>
 
+    <ol class="workflow-steps" aria-label="作品处理步骤">
+        <li data-workflow-indicator="materials" aria-current="step"><span aria-hidden="true">1</span> 添加素材</li>
+        <li data-workflow-indicator="preparing"><span aria-hidden="true">2</span> 自动准备</li>
+        <li data-workflow-indicator="review"><span aria-hidden="true">3</span> 核对并开始</li>
+        <li data-workflow-indicator="result"><span aria-hidden="true">4</span> 处理结果</li>
+    </ol>
     <form id="download-form" action="/download" method="post" novalidate>
+        <section data-workflow-step="materials" aria-labelledby="workflow-materials-title">
+            <h3 id="workflow-materials-title" class="workflow-title" tabindex="-1">添加素材</h3>
         <section class="workspace-source" aria-labelledby="download-source-title">
-            <div class="source-heading"><h3 id="download-source-title">导入作品</h3><span class="field-scope">选择链接或本地文件</span></div>
+            <div class="source-heading"><h3 id="download-source-title">导入作品</h3><span class="field-scope">可以先添加截图，再补下载来源</span></div>
             <fieldset class="input-mode-group">
                 <legend class="sr-only">选择下载来源</legend>
                 <div class="input-mode-options">
@@ -37,7 +45,7 @@
             </fieldset>
             <div id="url-input-group" class="form-group">
                 <label for="url">Telegraph 链接 <span class="required-mark" aria-hidden="true">*</span></label>
-                <input type="text" id="url" name="url" placeholder="https://telegra.ph/..." required>
+                <input type="text" id="url" name="url" placeholder="https://telegra.ph/...">
             </div>
             <div id="archive-input-group" class="form-group is-hidden" aria-hidden="true">
                 <label for="archive_file">压缩包文件 <span class="required-mark" aria-hidden="true">*</span></label>
@@ -45,14 +53,6 @@
                 <p class="field-help">支持 ZIP、CBZ、RAR、7Z，单个文件不超过 64 MiB。</p>
             </div>
         </section>
-        <div class="workspace-columns">
-            <section class="metadata-workspace" aria-labelledby="metadata-workspace-title">
-                <div class="section-heading"><h3 id="metadata-workspace-title">作品信息</h3><span class="field-scope">核对后创建任务</span></div>
-                <p class="field-help" data-metadata-status role="status" aria-live="polite">正在准备元数据字段…</p>
-                <div id="metadata-editor"></div>
-                <button type="button" class="text-button" data-metadata-retry>重新读取字段</button>
-                <a class="metadata-submit-shortcut" href="#create-task-action">前往提交 <span aria-hidden="true">↓</span></a>
-            </section>
             <section class="evidence-workspace" aria-labelledby="evidence-title" data-evidence-tabs>
                 <div class="section-heading"><h3 id="evidence-title">采集信息</h3><span class="field-scope">辅助填写</span></div>
                 <div class="workspace-tabs evidence-tabs" role="tablist" aria-label="信息采集方式">
@@ -71,14 +71,57 @@
                 <div id="evidence-panel-search" data-tab-panel="search" role="tabpanel" aria-labelledby="evidence-tab-search" hidden>
                 <section class="search-slot" data-module-slot="metadata-search" aria-label="书目信息检索">
                     <h4>从公开书目补充</h4>
-                    <p class="field-help">正在载入书目来源。检索结果由你确认后采用。</p>
+                    <p class="field-help">正在载入书目来源。已启用来源会参与自动准备，也可手动检索。</p>
                 </section>
                 </div>
             </section>
-        </div>
-        <section id="create-task-action" class="workspace-submit" aria-label="创建任务">
-            <label for="force_redownload" class="force-toggle-label"><input type="checkbox" id="force_redownload" name="force" value="1"><span>重新抓取已有来源</span></label>
-            <button type="submit">开始下载</button>
+
+            <div class="workflow-preferences">
+                <label class="workflow-check"><input id="automatic-preparation" type="checkbox" checked><span>自动识别并补全作品信息</span></label>
+                <p class="field-help">截图在本机识别；识别文字发送到已保存的 AI，标题和别名发送到已启用的书目来源。关闭后可手动填写。</p>
+            </div>
+            <div class="workflow-navigation"><button type="button" data-workflow-next>下一步</button></div>
+        </section>
+        <section data-workflow-step="preparing" aria-labelledby="workflow-preparing-title" hidden>
+            <h3 id="workflow-preparing-title" class="workflow-title" tabindex="-1">正在准备作品信息</h3>
+            <p data-workflow-progress role="status" aria-live="polite">正在读取素材…</p>
+            <p class="field-help">识别完成后会进入核对页，确认前不会创建任务。</p>
+            <button type="button" class="btn-secondary" data-workflow-back>返回上一步</button>
+        </section>
+        <section data-workflow-step="review" aria-labelledby="workflow-review-title" hidden>
+            <h3 id="workflow-review-title" class="workflow-title" tabindex="-1">核对并开始</h3>
+            <div class="workflow-warnings" data-workflow-warnings role="status" aria-live="polite" hidden></div>
+            <button type="button" class="text-button" data-workflow-retry hidden>重试未完成的准备</button>
+            <fieldset class="workflow-review-fields" data-workflow-editable>
+                <legend class="sr-only">确认的作品信息与交付目标</legend>
+            <section class="metadata-workspace" aria-labelledby="metadata-workspace-title">
+                <div class="section-heading"><h3 id="metadata-workspace-title">作品信息</h3><span class="field-scope">仅需处理有分歧的信息</span></div>
+                <p class="field-help" data-metadata-status role="status" aria-live="polite">正在准备元数据字段…</p>
+                <div id="metadata-editor"></div>
+                <button type="button" class="text-button" data-metadata-retry>重新读取字段</button>
+            </section>
+
+                <section class="workflow-delivery" aria-labelledby="workflow-delivery-title">
+                    <h4 id="workflow-delivery-title">来源与交付</h4>
+                    <p data-workflow-source></p>
+                    <label for="delivery-target">完成后</label>
+                    <select id="delivery-target"><option value="download">生成 CBZ，供下载</option><option value="komga">整理到 Komga 作品库</option></select>
+                    <p class="field-help" data-delivery-help>作品信息会写入 CBZ 内的 ComicInfo。</p>
+                    <details class="workflow-advanced"><summary>高级选项</summary>
+                        <label for="force_redownload" class="force-toggle-label"><input type="checkbox" id="force_redownload" name="force" value="1"><span>重新抓取已有来源</span></label>
+                    </details>
+                </section>
+            </fieldset>
+            <section id="create-task-action" class="workflow-navigation workspace-submit" aria-label="确认创建任务">
+                <button type="button" class="btn-secondary" data-workflow-back>上一步</button>
+                <button type="submit">确认并开始</button>
+                <button type="button" data-workflow-result hidden>返回处理结果</button>
+            </section>
+        </section>
+        <section data-workflow-step="result" aria-labelledby="workflow-result-title" hidden>
+            <h3 id="workflow-result-title" class="workflow-title" tabindex="-1">处理结果</h3>
+            <div class="workflow-result" data-task-result role="status" aria-live="polite"></div>
+            <div class="workflow-navigation"><button type="button" class="btn-secondary" data-workflow-back>查看已提交信息</button><a class="button-link secondary" href="/" hx-get="/" hx-target="#content" hx-push-url="true">处理下一个作品</a></div>
         </section>
     </form>
     <div id="download-feedback" class="inline-feedback" role="status" aria-live="polite"></div>
@@ -89,7 +132,7 @@
         <button type="button" id="download-action-download" class="is-hidden">下载已有文件</button>
     </div>
 
-    <details id="metadata-history-collapsible" class="metadata-history-panel workspace-history">
+    <details id="metadata-history-collapsible" class="metadata-history-panel workspace-history" data-workflow-history hidden>
         <summary id="metadata-history-title">最近填写</summary>
         <p class="field-help">先核对提交信息或最终归档信息，再选择要采用的字段。</p>
         <ul id="metadata-history-list" class="metadata-history-list" aria-live="polite"><li class="metadata-history-empty">暂无最近填写记录。</li></ul>

@@ -1,0 +1,7 @@
+{"file": "docs/development/module-boundaries.md", "reason": "Maintain home, metadata, app-service and Task Core ownership"}
+{"file": ".trellis/spec/frontend/workspace-lifecycle.md", "reason": "Preserve single in-memory workspace and cleanup"}
+{"file": ".trellis/spec/frontend/candidate-adoption.md", "reason": "Preserve versions and manual-field protection; explicitly revise interaction clauses"}
+{"file": ".trellis/spec/backend/extraction-protocol.md", "reason": "OCR/rule/AI evidence, types and budget contracts"}
+{"file": ".trellis/tasks/10-06-guided-media-workflow/research/current-flow.md", "reason": "Current workflow and previous Telegram scope decision"}
+{"file": ".trellis/tasks/10-06-guided-media-workflow/research/recognition-pipeline.md", "reason": "Recognition mechanisms and selection burden"}
+{"file": ".trellis/tasks/10-06-guided-media-workflow/research/screenshot-experiment.md", "reason": "Real screenshot baseline and failed AI boundary"}

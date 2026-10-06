@@ -1,6 +1,8 @@
 package tasks
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,5 +47,69 @@ func TestKomgaCopierCopiesArtifactToTargetFolder(t *testing.T) {
 		t.Fatalf("read copied artifact: %v", err)
 	} else if string(content) != "cbz-data" {
 		t.Fatalf("unexpected copied content %q", string(content))
+	}
+}
+
+func TestKomgaCopyRetryIsSameFileAndConflictNeverOverwrites(t *testing.T) {
+	root, sourceDir := t.TempDir(), t.TempDir()
+	source := filepath.Join(sourceDir, "source.cbz")
+	if err := os.WriteFile(source, []byte("first book"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	copier := NewKomgaCopier(KomgaCopyConfig{Root: root})
+	target, err := copier.CopyFromPath(source, "book.cbz", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(target)
+	if _, err := copier.CopyFromPath(source, "book.cbz", ""); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.Stat(target)
+	if !os.SameFile(before, after) {
+		t.Fatal("retry replaced destination")
+	}
+	if err := os.WriteFile(source, []byte("other book"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := copier.CopyFromPath(source, "book.cbz", ""); !errors.Is(err, ErrKomgaTargetConflict) {
+		t.Fatalf("conflict: %v", err)
+	}
+	actual, _ := os.ReadFile(target)
+	if string(actual) != "first book" {
+		t.Fatal("unrelated book overwritten")
+	}
+	entries, _ := os.ReadDir(filepath.Dir(target))
+	if len(entries) != 1 {
+		t.Fatal("temporary copy leaked")
+	}
+}
+
+func TestKomgaCopyRejectsSymlinkDirectoryAndTarget(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		t.Run(fmt.Sprint(directory), func(t *testing.T) {
+			root, other := t.TempDir(), t.TempDir()
+			source := filepath.Join(other, "source.cbz")
+			if err := os.WriteFile(source, []byte("book"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			folder := filepath.Join(root, "tankobon")
+			if directory {
+				if err := os.Symlink(other, folder); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.Mkdir(folder, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(source, filepath.Join(folder, "book.cbz")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := NewKomgaCopier(KomgaCopyConfig{Root: root}).CopyFromPath(source, "book.cbz", "")
+			if !errors.Is(err, ErrKomgaUnsafeTarget) {
+				t.Fatalf("symlink accepted: %v", err)
+			}
+		})
 	}
 }

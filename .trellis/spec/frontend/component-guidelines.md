@@ -32,6 +32,6 @@ return { mount, unmount };
 
 ## Responsive workbench order and touch targets
 
-- Keep the new-task DOM and keyboard order as source → `.metadata-workspace` → `.evidence-workspace` → submit. On desktop the metadata card occupies the left grid column and evidence the right; on mobile they stack in that same order. Do not use flex `order` to make the visual sequence diverge from Tab and screen-reader order.
+- The guided home keeps source → evidence on the materials step and metadata → delivery → final confirmation on the review step. Inactive steps remain mounted but hidden and inert. Keep visible DOM, Tab and screen-reader order aligned; do not use flex `order` to rearrange them. Focus the step heading after advancing/back, and preserve all controls when moving between steps.
 - At mobile widths, the navigation open/close buttons and each visible source-mode label need at least a 44×44 CSS pixel hit area. The navigation drawer must fit inside a 180px CSS viewport (a 360px phone at 200% zoom), with its close button fully visible and clickable. `tests/e2e/specs/ui-shell.spec.js` and `new-task-mobile.spec.js` assert these bounds and focus order.
 - When a field moves into a closed `<details>` group, browser flows must open its `summary` before filling or clicking that field. Keep the editor state and payload unchanged; the disclosure only changes presentation.

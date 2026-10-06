@@ -211,3 +211,30 @@ func TestBaseURLAndCredentialsValidation(t *testing.T) {
 		t.Fatal("accepted malformed credential")
 	}
 }
+
+func TestScanLibraryRequiresAcceptedAndSendsNoPrivatePayload(t *testing.T) {
+	calls := 0
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/libraries/lib1/scan" || r.Header.Get("X-API-Key") != testKey {
+			t.Fatal("wrong scan contract")
+		}
+		bytes, _ := io.ReadAll(r.Body)
+		if len(bytes) != 0 {
+			t.Fatal("unexpected scan body")
+		}
+		if calls == 1 {
+			w.WriteHeader(http.StatusAccepted)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	})
+	if err := client.ScanLibrary(context.Background(), "lib1"); err != nil {
+		t.Fatal(err)
+	}
+	errorCode(t, client.ScanLibrary(context.Background(), "lib1"), "unavailable")
+	errorCode(t, client.ScanLibrary(context.Background(), "../unsafe"), "invalid_input")
+	if calls != 2 {
+		t.Fatal("invalid library sent upstream")
+	}
+}

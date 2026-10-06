@@ -1,4 +1,4 @@
-const { test, anonymousTest, expect, adminPassword, waitForMetadata, metadataDocument } = require('../fixtures/auth');
+const { test, anonymousTest, expect, adminPassword, enterReview, waitForMetadata, metadataDocument } = require('../fixtures/auth');
 const { execFileSync } = require('node:child_process');
 
 anonymousTest('工作台：匿名路由保护、网页登录与退出后的旧会话失效', async ({ page, context, browser, baseURL }) => {
@@ -72,6 +72,7 @@ test('工作台：自定义字段保存重载，动态录入与真实任务历�
   for (const definition of definitions) expect(schema.definitions[`custom.user.${definition.name}`].export_status).toBe('internal_only');
   await page.goto('/');
   await waitForMetadata(page);
+  await enterReview(page);
   await page.locator('#metadata-title').fill(`扩展元数据 ${suffix}`);
   await page.locator('#metadata-number').fill('2.5 特别篇');
   await page.locator('.metadata-group').filter({ has: page.locator('summary', { hasText: '简介与分类' }) }).locator('summary').click();
@@ -95,10 +96,12 @@ with zipfile.ZipFile(buffer, 'w') as output:
     output.writestr('1.png', base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC'))
 sys.stdout.buffer.write(buffer.getvalue())
 `]);
+  await page.getByRole('button', { name: '上一步', exact: true }).click();
   await page.getByLabel('上传压缩包').check();
   await page.setInputFiles('#archive_file', { name: 'metadata-roundtrip.zip', mimeType: 'application/zip', buffer: archive });
+  await enterReview(page);
   const created = page.waitForResponse(response => response.url().includes('/api/tasks/upload/init') && response.request().method() === 'POST');
-  await page.getByRole('button', { name: '开始下载', exact: true }).click();
+  await page.getByRole('button', { name: '确认并开始', exact: true }).click();
   const response = await created;
   expect(response.status()).toBe(202);
   const { task_id: taskID } = await response.json();
@@ -131,6 +134,7 @@ sys.stdout.buffer.write(buffer.getvalue())
   expect(prompts).toBe(0);
   await page.goto('/');
   await waitForMetadata(page);
+  await enterReview(page);
   await page.locator('#metadata-history-collapsible > summary').click();
   await expect(page.locator('#metadata-history-list')).toContainText(`扩展元数据 ${suffix}`);
 });
@@ -146,6 +150,7 @@ test('工作台：历史提交和产物分别核对，清空与迟到候选不�
   await page.goto('/');
   await waitForMetadata(page);
   await page.locator('#url').fill('https://telegra.ph/preserve-source');
+  await enterReview(page);
   await page.locator('#metadata-history-collapsible > summary').click();
   await page.locator('.metadata-history-item').click();
   await page.locator('[data-history-view="submitted"]').click();
@@ -173,6 +178,7 @@ test('工作台：历史提交和产物分别核对，清空与迟到候选不�
 test('工作台：取消离开保留草稿，确认离开和后退不恢复敏感历史', async ({ page }) => {
   await page.goto('/');
   await waitForMetadata(page);
+  await enterReview(page);
   await page.locator('#metadata-title').fill('私密草稿测试标记');
   page.once('dialog', dialog => dialog.dismiss());
   await page.locator('.main-nav').getByRole('link', { name: '任务', exact: true }).click();
@@ -307,6 +313,7 @@ test('工作台：桌面与窄屏布局、字段键盘操作及导航焦点', as
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await waitForMetadata(page);
+  await enterReview(page);
   await page.locator('#metadata-title').fill('用于视觉核对的合成作品');
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: '明确清空标题', exact: true })).toBeFocused();

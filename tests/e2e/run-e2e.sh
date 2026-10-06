@@ -62,12 +62,27 @@ mkdir -p \
   "${temp_data_root}/downloaded_images" \
   "${temp_data_root}/temp_downloads" \
   "${temp_data_root}/komga" \
+  "${temp_data_root}/komga-config" \
   "${temp_data_root}/komga-edit-backups" \
   "${temp_data_root}/telegram-private" \
   "${temp_data_root}/source-retention"
 
 cat > "${temp_compose_override}" <<EOF
 services:
+  komga:
+    image: gotson/komga:1.28.1
+    user: "${APP_UID}:${APP_GID}"
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx512m
+    ports:
+      - "127.0.0.1::25600"
+    networks:
+      default:
+        aliases:
+          - host.docker.internal
+    volumes:
+      - ${temp_data_root}/komga:/books
+      - ${temp_data_root}/komga-config:/config
   postgres:
     volumes:
       - e2e_postgres:/var/lib/postgresql/data
@@ -159,6 +174,18 @@ if [[ "${E2E_CONFIG_ONLY:-0}" == "1" ]]; then
 fi
 
 compose_started=1
+compose up -d komga
+komga_endpoint="$(compose port komga 25600)"
+if [[ ! "${komga_endpoint}" =~ ^127\.0\.0\.1:[0-9]+$ ]]; then
+  echo "Isolated Komga did not bind one loopback port." >&2
+  exit 1
+fi
+export E2E_KOMGA_CONNECTION_FILE="${temp_data_root}/secrets/komga-connection.json"
+python3 tests/e2e/bootstrap_komga.py bootstrap \
+  --server "http://${komga_endpoint}" --connection-file "${E2E_KOMGA_CONNECTION_FILE}"
+export E2E_KOMGA_LIBRARY_ID="$(python3 -c 'import json,os; print(json.load(open(os.environ["E2E_KOMGA_CONNECTION_FILE"]))["library_id"])')"
+export E2E_KOMGA_LIBRARY_ROOT="${temp_data_root}/komga"
+export KOMGA_LIBRARY_MAPPINGS="$(python3 -c 'import json,os; print(json.dumps([{"library_id":os.environ["E2E_KOMGA_LIBRARY_ID"],"komga_root":"/books","local_root":"/app/komga"}]))')"
 compose up -d --build
 compose ps > "${artifacts_dir}/compose-ps.after-up.txt" || true
 compose config > "${artifacts_dir}/compose.config.yaml" || true
@@ -173,6 +200,13 @@ for i in $(seq 1 120); do
   fi
   sleep 1
 done
+
+python3 tests/e2e/bootstrap_komga.py configure-app \
+  --server "${E2E_BASE_URL}" --connection-file "${E2E_KOMGA_CONNECTION_FILE}"
+# Playwright sees only the synthetic library identity and filesystem. Keeping
+# the API key out of its process prevents it from entering a retained trace.
+rm -f "${E2E_KOMGA_CONNECTION_FILE}"
+unset E2E_KOMGA_CONNECTION_FILE
 
 playwright_exit=0
 npx playwright test --config tests/e2e/playwright.config.ts --project="${PLAYWRIGHT_PROJECT}" "$@" || playwright_exit=$?

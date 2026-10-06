@@ -281,6 +281,14 @@ func (c *Client) AnalyzeBook(ctx context.Context, id string) error {
 	return c.request(ctx, http.MethodPost, "/api/v1/books/"+id+"/analyze", nil, http.StatusAccepted, nil)
 }
 
+// ScanLibrary queues discovery. Accepted is not proof that a book is visible.
+func (c *Client) ScanLibrary(ctx context.Context, id string) error {
+	if !validID(id) {
+		return fail("invalid_input")
+	}
+	return c.request(ctx, http.MethodPost, "/api/v1/libraries/"+id+"/scan", nil, http.StatusAccepted, nil)
+}
+
 // ClearBookMetadata sends only supported book-level clear fields, omitting all
 // lock fields. Callers must first commit ComicInfo, check library settings and
 // lock state, and reread Komga after this non-transactional projection update.

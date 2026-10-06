@@ -258,7 +258,16 @@ export async function runTasks(action, options, { stdin = process.stdin, sleep =
             cookie: context.session.cookie, csrf: context.session.csrf,
         });
         if (response.data?.ok !== true || response.data?.task_id !== id) throw new CliError('invalid_response', '复制结果响应无效。', EXIT.transport);
-        return { task: await getTask(context, id), copy_completed: true, komga_indexed: 'unverified' };
+        const indexed = response.data.komga_indexed;
+        if (indexed !== undefined && !['verified', 'pending'].includes(indexed)) throw new CliError('invalid_response', '收录状态响应无效。', EXIT.transport);
+        const result = { task: await getTask(context, id), copy_completed: true, komga_indexed: indexed || 'unverified' };
+        if (indexed === 'verified') {
+            for (const key of ['book_id', 'library_id']) {
+                if (typeof response.data[key] !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(response.data[key])) throw new CliError('invalid_response', '收录结果缺少有效标识。', EXIT.transport);
+                result[key] = response.data[key];
+            }
+        }
+        return result;
     }
     throw new CliError('invalid_command', '未知的任务命令。');
 }

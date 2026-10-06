@@ -29,7 +29,7 @@ export function createWorkspaceShell({ root, adapters = {}, document: initialDoc
             draft = createMetadataDraft({ document: initialDocument, definitions: schema.definitions, definitionsVersion: schema.definitions_version, limits: schema.limits });
             editor = createMetadataEditor({ root: host, draft, schema, doc });
             editor.mount();
-            showStatus('可直接填写，也可逐项采用识别或书目候选。', 'ready');
+            showStatus('核对作品信息，可直接修改；识别分歧会集中显示。', 'ready');
             adapters.onReady?.({ draft, editor, schema });
         } catch (error) {
             if (!mounted || run !== generation || controller?.signal.aborted) return;
@@ -69,9 +69,16 @@ export function createWorkspaceShell({ root, adapters = {}, document: initialDoc
         getDocument() {
             if (!draft || root.dataset.metadataState !== 'ready') throw new Error('元数据字段尚未就绪。');
             if (editor?.hasErrors()) throw new Error('请先修正元数据字段中的错误。');
+            if (editor?.hasUnresolvedCandidates()) throw new Error('请先处理需要核对的信息，或明确保留当前内容。');
             return draft.getSnapshot();
         },
         showCandidate(candidate, options) { editor?.showCandidate(candidate, options); },
+        async prepareCandidates(entries, options) {
+            if (!editor) throw new Error('工作区尚未就绪。');
+            return editor.prepareCandidates(entries, options);
+        },
+        hasUnresolvedCandidates: () => Boolean(editor?.hasUnresolvedCandidates()),
+        preflightPreparedCandidates: options => editor?.preflightPreparedCandidates(options),
         canLeave(confirmDiscard) { return (!draft?.isDirty() && !editor?.hasPendingEdits()) || Boolean(confirmDiscard?.()); },
     };
 }
