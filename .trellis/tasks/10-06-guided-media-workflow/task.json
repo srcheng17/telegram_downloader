@@ -15,8 +15,8 @@
   "branch": "vigorous-mayfly",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
-  "pr_url": null,
+  "commit": "078bb8b",
+  "pr_url": "https://github.com/srcheng17/telegram_downloader/pull/7",
   "subtasks": [],
   "children": [],
   "parent": null,
@@ -30,7 +30,7 @@
     "internal/app/metadataextract/service.go",
     "internal/app/tasks/komga_copy.go"
   ],
-  "notes": "Implementation and isolated end-to-end validation complete on 2026-10-07. Changes are prepared for review alongside the preceding Telegram and CPA fixes. No main merge or production deployment in this phase. See research/implementation-validation.md.",
+  "notes": "Implementation and isolated end-to-end validation complete on 2026-10-07. Changes are prepared for review alongside the preceding Telegram and CPA fixes. No main merge or production deployment in this phase. See research/implementation-validation.md. Review PR #7 is open; no merge authorized.",
   "meta": {
     "automation_decision": {
       "date": "2026-10-07",

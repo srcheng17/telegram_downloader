@@ -15,12 +15,12 @@
   "branch": "vigorous-mayfly",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
-  "pr_url": null,
+  "commit": "0ccee44",
+  "pr_url": "https://github.com/srcheng17/telegram_downloader/pull/7",
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Operational deployment and CPA to MiniCPM end-to-end acceptance complete. Source changes, previously retained locally during operations, are prepared for review with the guided workflow; no additional production changes or main merge.",
+  "notes": "Operational deployment and CPA to MiniCPM end-to-end acceptance complete. Source changes, previously retained locally during operations, are prepared for review with the guided workflow; no additional production changes or main merge. Review PR #7 is open; no merge authorized.",
   "meta": {}
 }

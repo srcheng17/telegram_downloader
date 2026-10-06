@@ -15,12 +15,12 @@
   "branch": "vigorous-mayfly",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
-  "pr_url": null,
+  "commit": "9cce4a7",
+  "pr_url": "https://github.com/srcheng17/telegram_downloader/pull/7",
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Implementation and real-account acceptance passed. Source changes are prepared for review on vigorous-mayfly; no additional production changes or main merge.",
+  "notes": "Implementation and real-account acceptance passed. Source changes are prepared for review on vigorous-mayfly; no additional production changes or main merge. Review PR #7 is open; no merge authorized.",
   "meta": {}
 }
