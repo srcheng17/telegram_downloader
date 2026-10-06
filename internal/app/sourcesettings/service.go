@@ -209,7 +209,7 @@ func (s *Service) TestSource(ctx context.Context, id string, version int64) (Sou
 	return SourceTestResult{ProviderID: id, ConfigVersion: version, CheckedAt: time.Now().UTC(), ProbeResult: probe}, nil
 }
 func aiPublic(r Record) AIConfig {
-	var p AIConfig
+	p := AIConfig{Protocol: modelapi.ProtocolLlamaCPPNative}
 	_ = json.Unmarshal(r.Config, &p)
 	p.Enabled = r.Enabled
 	p.ConfigVersion = r.ConfigVersion
@@ -243,6 +243,13 @@ func (s *Service) SaveAI(ctx context.Context, input AIUpdate) (AIConfig, error) 
 		return AIConfig{}, ErrConflict
 	}
 	old := aiPublic(r)
+	protocol := old.Protocol
+	if input.Protocol != nil {
+		protocol = *input.Protocol
+	}
+	if protocol != modelapi.ProtocolLlamaCPPNative && protocol != modelapi.ProtocolLlamaCPPChat {
+		return AIConfig{}, ErrInvalid
+	}
 	if base != old.BaseURL && len(r.Envelope.Ciphertext) > 0 && input.Credential.Action == "keep" {
 		return AIConfig{}, ErrInvalid
 	}
@@ -250,7 +257,7 @@ func (s *Service) SaveAI(ctx context.Context, input AIUpdate) (AIConfig, error) 
 		return AIConfig{}, err
 	}
 	r.Enabled = *input.Enabled
-	r.Config, _ = json.Marshal(map[string]string{"base_url": base, "model_id": *input.ModelID})
+	r.Config, _ = json.Marshal(map[string]string{"protocol": protocol, "base_url": base, "model_id": *input.ModelID})
 	r, err = s.repo.Save(ctx, r, *input.ExpectedVersion)
 	return aiPublic(r), err
 }
@@ -263,7 +270,7 @@ func (s *Service) aiSnapshot(ctx context.Context, version int64) (Record, AIConf
 	if r.ConfigVersion != version {
 		return r, p, credentials.Secret{}, ErrConflict
 	}
-	if p.BaseURL == "" || s.models == nil {
+	if p.BaseURL == "" || s.models == nil || (p.Protocol != modelapi.ProtocolLlamaCPPNative && p.Protocol != modelapi.ProtocolLlamaCPPChat) {
 		return r, p, credentials.Secret{}, ErrInvalid
 	}
 	secret, err := s.decrypt(r)

@@ -28,6 +28,8 @@
 
 七类设置与连接入口分别是 `settings download/sources/ai/fields/rules`、`connections telegram`、`connections komga` 和 `auth password-change`。`settings sources review --provider ID`、`settings ai review`、`settings fields review`、`settings rules review` 只在用户独立终端展示完整的非秘密配置；AI 和普通 JSON 应使用 `list/get` 的安全摘要。设置更新使用当前版本做 CAS；冲突时原输入仍在本地，重新读取后再决定是否修改。来源、AI、Komga 凭据替换使用 `--credential replace`，只在独立终端隐藏输入。Telegram 扫码登录也只在该终端运行，完成后用 `connections telegram verify` 回读。
 
+AI 设置 JSON 包含 `expected_version`、`enabled`、`base_url` 和 `model_id`，并可指定 `protocol`：`llama_cpp_native` 为直连 llama.cpp，`llama_cpp_chat` 为通过 CPA 的 llama.cpp Chat 接口。旧设置未保存协议时使用直连模式；更新时省略 `protocol` 会保留已保存的模式，显式 `null`、空值或未知协议会被拒绝。`settings ai get/review/set` 都返回连接方式；网页 AI 设置中的“连接方式”使用同一字段。Chat 模式仍验证受支持的 llama.cpp 构建和完整输出，仅适用于提供所需验证信息的 CPA 上游，不是任意 OpenAI 服务的通用兼容模式。更换 Base URL 时仍需显式替换或清除凭据，不能把旧凭据随 `keep` 转发到新地址。
+
 ## Komga 作品与 CBZ 写回
 
 先读 `connections komga status`，如需看已保存地址，在独立终端使用 `connections komga review`；`connections komga test --config-version N` 测试已保存版本。配置连接的普通 JSON 仅含 `expected_version` 和 `base_url`，凭据用 `--credential replace` 隐藏输入。允许书库及共享挂载映射仍由服务端部署配置限制，CLI 不接受任意文件路径。

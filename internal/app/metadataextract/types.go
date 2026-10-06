@@ -21,13 +21,19 @@ type ModelSnapshot struct {
 	ModelID        string
 	Destination    string
 	ContextTokens  int
-	BudgetVerified bool
-	Handle         any `json:"-"`
+	// BudgetVerified means the selected adapter's declared guarantee was probed;
+	// only exact_tokens measures a context limit and budgets before inference.
+	BudgetVerified        bool
+	Protocol              string
+	BudgetMode            string
+	CapabilityFingerprint string
+	Handle                any `json:"-"`
 }
 type AIClient interface {
 	Snapshot(context.Context, uint64) (ModelSnapshot, error)
 	// ExtractJSON must account for the complete rendered prompt + schema + output
-	// reserve, or use a verified server path that rejects overflow without truncation.
+	// reserve, or verify a pinned server response and reject every truncated,
+	// incomplete or over-budget result before returning output to this service.
 	ExtractJSON(context.Context, ModelSnapshot, string, json.RawMessage, int) (json.RawMessage, error)
 }
 type Error struct{ Code string }

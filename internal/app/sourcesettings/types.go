@@ -1,11 +1,14 @@
 package sourcesettings
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"github.com/ryancheng/telegram-downloader/internal/credentials"
+	domain "github.com/ryancheng/telegram-downloader/internal/domain/metadata"
 	"github.com/ryancheng/telegram-downloader/internal/modelapi"
+	"strings"
 	"time"
 )
 
@@ -41,6 +44,7 @@ type SourceUpdate struct {
 }
 type AIConfig struct {
 	Enabled              bool   `json:"enabled"`
+	Protocol             string `json:"protocol"`
 	BaseURL              string `json:"base_url"`
 	ModelID              string `json:"model_id"`
 	CredentialConfigured bool   `json:"credential_configured"`
@@ -49,10 +53,31 @@ type AIConfig struct {
 type AIUpdate struct {
 	ExpectedVersion *int64           `json:"expected_version"`
 	Enabled         *bool            `json:"enabled"`
+	Protocol        *string          `json:"protocol,omitempty"`
 	BaseURL         *string          `json:"base_url"`
 	ModelID         *string          `json:"model_id"`
 	Credential      CredentialChange `json:"credential"`
 }
+
+func (u *AIUpdate) UnmarshalJSON(data []byte) error {
+	type plain AIUpdate
+	var value plain
+	if domain.DecodeJSON(data, &value) != nil {
+		return ErrInvalid
+	}
+	var members map[string]json.RawMessage
+	if json.Unmarshal(data, &members) != nil {
+		return ErrInvalid
+	}
+	for key, raw := range members {
+		if strings.EqualFold(key, "protocol") && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return ErrInvalid
+		}
+	}
+	*u = AIUpdate(value)
+	return nil
+}
+
 type Record struct {
 	ProviderID                       string
 	Enabled                          bool

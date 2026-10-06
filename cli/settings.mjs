@@ -10,7 +10,8 @@ import { extractRules, validateRuleSet } from '../frontend/src/ocr/rules.js';
 const fields = new Set(['expected_definitions_version', 'definitions']);
 const ruleFields = new Set(['expected_version', 'definitions_version', 'rules']);
 const sourceFields = new Set(['expected_version', 'enabled', 'priority', 'filters', 'field_preferences']);
-const aiFields = new Set(['expected_version', 'enabled', 'base_url', 'model_id']);
+const aiFields = new Set(['expected_version', 'enabled', 'protocol', 'base_url', 'model_id']);
+const aiProtocols = ['llama_cpp_native', 'llama_cpp_chat'];
 const downloadFields = new Set(['expected_version', 'timeout', 'retries', 'image_concurrency', 'download_action_mode']);
 const operations = {
     download: ['get', 'set'], sources: ['list', 'review', 'set', 'test'], ai: ['get', 'review', 'set', 'models', 'test'],
@@ -34,8 +35,8 @@ function checkArgs(section, action, options) {
     }
 }
 
-function exactFields(input, allowed) {
-    if (!input || Object.keys(input).some((key) => !allowed.has(key)) || [...allowed].some((key) => !Object.hasOwn(input, key))) {
+function exactFields(input, allowed, optional = []) {
+    if (!input || Object.keys(input).some((key) => !allowed.has(key)) || [...allowed].some((key) => !optional.includes(key) && !Object.hasOwn(input, key))) {
         throw new CliError('invalid_input', '设置 JSON 字段不完整或包含未知字段。');
     }
 }
@@ -78,8 +79,11 @@ function safeSource(data) {
 
 function safeAI(data) {
     if (!data || !Number.isSafeInteger(data.config_version)) throw new CliError('invalid_response', 'AI 设置响应无效。', EXIT.transport);
+    const protocol = Object.hasOwn(data, 'protocol') ? data.protocol : 'llama_cpp_native';
+    if (!aiProtocols.includes(protocol)) throw new CliError('invalid_response', 'AI 连接方式无效。', EXIT.transport);
     return {
         enabled: data.enabled === true,
+        protocol,
         target_configured: typeof data.base_url === 'string' && data.base_url.length > 0,
         model_id: typeof data.model_id === 'string' ? data.model_id : '',
         credential_configured: data.credential_configured === true,
@@ -170,7 +174,7 @@ export async function runSettings(section, action, options, {
             const data = await get('/api/settings/ai');
             const summary = safeAI(data);
             if (action === 'review') {
-                await reviewer({ enabled: summary.enabled, base_url: data.base_url, model_id: summary.model_id,
+                await reviewer({ enabled: summary.enabled, protocol: summary.protocol, base_url: data.base_url, model_id: summary.model_id,
                     credential_configured: summary.credential_configured, config_version: summary.config_version });
                 return { ...summary, reviewed: true };
             }
@@ -189,7 +193,8 @@ export async function runSettings(section, action, options, {
                 fixture_version: data.fixture_version };
         }
         const input = await requiredInput(options, stdin);
-        exactFields(input.data, aiFields);
+        exactFields(input.data, aiFields, ['protocol']);
+        if (Object.hasOwn(input.data, 'protocol') && !aiProtocols.includes(input.data.protocol)) throw new CliError('invalid_input', 'AI 连接方式只能是 llama_cpp_native 或 llama_cpp_chat。');
         const value = credential === 'replace' ? await secretReader('AI API 凭据') : undefined;
         if (credential === 'replace' && !value) throw new CliError('invalid_input', '凭据不能为空。');
         return safeAI(await write('PUT', '/api/settings/ai', { body: { ...input.data, credential: { action: credential, ...(value ? { value } : {}) } } }));

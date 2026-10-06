@@ -13,6 +13,48 @@ import (
 	"github.com/ryancheng/telegram-downloader/internal/store/postgres/metadatadoc"
 )
 
+type modelFixtureRepository struct{ appmetadata.Repository }
+
+func (modelFixtureRepository) Current(context.Context) (metadata.Registry, error) {
+	return metadata.StandardRegistry(), nil
+}
+
+func TestModelContractV2GuidancePreservesStrictValues(t *testing.T) {
+	ctx := context.Background()
+	contract := modelTestContract{metadata: appmetadata.NewService(modelFixtureRepository{})}
+	fixture, err := contract.Fixture(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const guidance = "字段说明：aliases 仅对应别名；number 对应本册编号；count 对应同系列总册数。"
+	if fixture.FixtureVersion != "bibliography-test-v2" || !strings.HasPrefix(fixture.Text, guidance) {
+		t.Fatal("fixture must version its field guidance")
+	}
+	const valid = `{"title":"雨后书店","creators.writer":["林青"],"publisher":"示例出版社","language":"zh","publication_date":{"year":2024},"aliases":["雨后的小书店"],"tags":["日常"],"number":"1","count":2}`
+	if err := contract.Validate(ctx, fixture, json.RawMessage(valid)); err != nil {
+		t.Fatal("original nine fixture values rejected", err)
+	}
+	for _, tc := range []struct{ name, old, replacement string }{
+		{"aliases value", `"aliases":["雨后的小书店"]`, `"aliases":["雨后书店"]`},
+		{"aliases type", `"aliases":["雨后的小书店"]`, `"aliases":"雨后的小书店"`},
+		{"number value", `"number":"1"`, `"number":"2"`},
+		{"number type", `"number":"1"`, `"number":1`},
+		{"count value", `"count":2`, `"count":1`},
+		{"count type", `"count":2`, `"count":"2"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output := strings.Replace(valid, tc.old, tc.replacement, 1)
+			if err := contract.Validate(ctx, fixture, json.RawMessage(output)); !errors.Is(err, metadata.ErrInvalidInput) {
+				t.Fatalf("changed value or type accepted: %v", err)
+			}
+		})
+	}
+	fixture.FixtureVersion = "bibliography-test-v1"
+	if err := contract.Validate(ctx, fixture, json.RawMessage(valid)); !errors.Is(err, metadata.ErrConflict) {
+		t.Fatalf("previous fixture version accepted: %v", err)
+	}
+}
+
 func TestModelContractExtendedFixtureAndStrictOutput(t *testing.T) {
 	pool := workspaceTestPool(t)
 	ctx := context.Background()

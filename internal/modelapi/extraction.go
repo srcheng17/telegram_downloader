@@ -22,6 +22,8 @@ var llamaBuild = regexp.MustCompile(`^b[0-9]+-([a-f0-9]{7,40})$`)
 type ExtractionCapability struct {
 	ContextTokens int
 	Fingerprint   string
+	Protocol      string
+	BudgetMode    string
 }
 
 func nativeBase(base string) string { return strings.TrimSuffix(base, "/v1") }
@@ -55,7 +57,7 @@ func (c *Client) ExtractionCapability(ctx context.Context, base string, key cred
 	}
 	canonical, _ := json.Marshal(p)
 	sum := sha256.Sum256(canonical)
-	return ExtractionCapability{ContextTokens: p.Default.Context, Fingerprint: hex.EncodeToString(sum[:])}, nil
+	return ExtractionCapability{ContextTokens: p.Default.Context, Fingerprint: hex.EncodeToString(sum[:]), Protocol: ProtocolLlamaCPPNative, BudgetMode: BudgetModeExactTokens}, nil
 }
 
 // Extract uses the very token array that was budgeted. The schema is included in

@@ -15,19 +15,21 @@ import (
 )
 
 func TestNativeErrorsRemainCategorizedAndRedacted(t *testing.T) {
-	for _, item := range []struct{ kind, code string }{{"exceed_context_size_error", "context_exceeded"}, {"invalid_request_error", "schema_unsupported"}, {"secret-private-type", "unavailable"}} {
-		t.Run(item.kind, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(400)
-				json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": item.kind, "message": "synthetic-private-text-and-key"}})
-			}))
-			defer srv.Close()
-			_, err := NewClient().request(context.Background(), srv.URL, "/completion", credentials.NewSecret(""), []byte(`{}`), time.Second)
-			assertCode(t, err, item.code)
-			if strings.Contains(err.Error(), "synthetic-private") {
-				t.Fatal("private upstream body leaked")
-			}
-		})
+	for _, path := range []string{"/completion", "/chat/completions"} {
+		for _, item := range []struct{ kind, code string }{{"exceed_context_size_error", "context_exceeded"}, {"invalid_request_error", "schema_unsupported"}, {"secret-private-type", "unavailable"}} {
+			t.Run(path+"/"+item.kind, func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(400)
+					json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": item.kind, "message": "synthetic-private-text-and-key"}})
+				}))
+				defer srv.Close()
+				_, err := NewClient().request(context.Background(), srv.URL, path, credentials.NewSecret(""), []byte(`{}`), time.Second)
+				assertCode(t, err, item.code)
+				if strings.Contains(err.Error(), "synthetic-private") {
+					t.Fatal("private upstream body leaked")
+				}
+			})
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -120,5 +122,44 @@ func TestInferUsesExactModelAndRejectsTruncatedOutput(t *testing.T) {
 				assertCode(t, err, "invalid_response")
 			}
 		})
+	}
+}
+
+func TestInferSuppliesSchemaToPromptAndResponseFormat(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"title":{"type":"string"}},"required":["title"],"additionalProperties":false}`)
+	const text = "标题：固定示例"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+			ResponseFormat struct {
+				Type       string `json:"type"`
+				JSONSchema struct {
+					Name   string          `json:"name"`
+					Strict bool            `json:"strict"`
+					Schema json.RawMessage `json:"schema"`
+				} `json:"json_schema"`
+			} `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		wantSystem := "Extract only explicitly provided metadata into the requested JSON schema. Do not invent missing values. Return JSON only.\nJSON schema:\n" + string(schema)
+		if len(req.Messages) != 2 || req.Messages[0].Role != "system" || req.Messages[0].Content != wantSystem || req.Messages[1].Role != "user" || req.Messages[1].Content != text {
+			t.Error("schema instructions and original text must be separate messages")
+		}
+		format := req.ResponseFormat
+		if format.Type != "json_schema" || format.JSONSchema.Name != "metadata" || !format.JSONSchema.Strict || string(format.JSONSchema.Schema) != string(schema) {
+			t.Error("strict response format must receive the same schema")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": `{"title":"固定示例"}`}}}})
+	}))
+	defer server.Close()
+	if _, err := NewClient().Infer(context.Background(), server.URL, credentials.NewSecret(""), "exact-model-id", text, schema); err != nil {
+		t.Fatal(err)
 	}
 }

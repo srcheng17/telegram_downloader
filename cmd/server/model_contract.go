@@ -12,7 +12,7 @@ import (
 
 type modelTestContract struct{ metadata *appmetadata.Service }
 
-const modelFixtureVersion = "bibliography-test-v1"
+const modelFixtureVersion = "bibliography-test-v2"
 
 func modelFixtureKeys() []string {
 	return []string{"title", "creators.writer", "publisher", "language", "publication_date", "aliases", "tags", "number", "count"}
@@ -53,7 +53,7 @@ func (c modelTestContract) Fixture(ctx context.Context) (sourcesettings.Inferenc
 	if err != nil {
 		return sourcesettings.InferenceFixture{}, err
 	}
-	return sourcesettings.InferenceFixture{SchemaVersion: registry.SchemaVersion, DefinitionsVersion: registry.DefinitionsVersion, FieldKeys: keys, FixtureVersion: modelFixtureVersion, Schema: schema, Text: "提取以下虚构书目信息，字段保持原文：标题：雨后书店；作者：林青；出版社：示例出版社；语言代码：zh；出版年份：2024；别名：雨后的小书店；标签：日常；本册编号：1；同系列总册数：2。"}, nil
+	return sourcesettings.InferenceFixture{SchemaVersion: registry.SchemaVersion, DefinitionsVersion: registry.DefinitionsVersion, FieldKeys: keys, FixtureVersion: modelFixtureVersion, Schema: schema, Text: "字段说明：aliases 仅对应别名；number 对应本册编号；count 对应同系列总册数。提取以下虚构书目信息，字段保持原文：标题：雨后书店；作者：林青；出版社：示例出版社；语言代码：zh；出版年份：2024；别名：雨后的小书店；标签：日常；本册编号：1；同系列总册数：2。"}, nil
 }
 
 func (c modelTestContract) Validate(ctx context.Context, fixture sourcesettings.InferenceFixture, output json.RawMessage) error {

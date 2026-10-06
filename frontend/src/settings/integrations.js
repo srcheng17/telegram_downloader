@@ -1,6 +1,10 @@
 import { getAdminSession } from '../shared/admin_session.js';
 import { createIntegrationsApi, createRequestScope, integrationError } from './integrations_api.js';
 
+const aiProtocols = [['llama_cpp_native', '直连 llama.cpp'], ['llama_cpp_chat', '通过 CPA 使用 llama.cpp']];
+function aiProtocol(config) { return Object.hasOwn(config, 'protocol') ? config.protocol : 'llama_cpp_native'; }
+function validAIConfig(config) { return config && Number.isSafeInteger(config.config_version) && aiProtocols.some(([value]) => value === aiProtocol(config)); }
+
 export function createIntegrationsModule(win = window, doc = document, suppliedApi = null, { sections = ['sources', 'ai', 'security'] } = {}) {
     const api = suppliedApi || createIntegrationsApi(win, doc);
     let mounted = false;
@@ -124,7 +128,7 @@ export function createIntegrationsModule(win = window, doc = document, suppliedA
         card.append(form); root.append(card);
     }
     function aiForm(root, original) {
-        if (!original || !Number.isSafeInteger(original.config_version)) { root.textContent = 'AI 设置响应无效。'; return; }
+        if (!validAIConfig(original)) { root.textContent = 'AI 设置响应无效。'; return; }
         let saved = original;
         let dirty = false;
         let editVersion = 0;
@@ -133,6 +137,7 @@ export function createIntegrationsModule(win = window, doc = document, suppliedA
         const scope = createRequestScope(); scopes.push(scope);
         const form = element('form', '', { class: 'integration-card', 'hx-history': 'false' });
         const enabled = input(form, '启用 AI 辅助提取', 'checkbox', saved.enabled);
+        const protocol = select(form, '连接方式', aiProtocols, aiProtocol(saved));
         const base = input(form, 'API Base URL', 'url', saved.base_url); base.placeholder = 'http://本地服务:端口/v1';
         const model = input(form, '模型 ID（可手动填写）', 'text', saved.model_id); model.maxLength = 256;
         model.placeholder = '例如 minicpm5-2b-q4';
@@ -179,14 +184,14 @@ export function createIntegrationsModule(win = window, doc = document, suppliedA
             scope.invalidate();
             const submittedVersion = editVersion;
             const request = saveScope.start('save');
-            const payload = { expected_version: saved.config_version, enabled: enabled.checked, base_url: base.value.trim(), model_id: model.value.trim(), credential: credential.payload() };
+            const payload = { expected_version: saved.config_version, enabled: enabled.checked, protocol: protocol.value, base_url: base.value.trim(), model_id: model.value.trim(), credential: credential.payload() };
             saving = true; save.disabled = true; feedback.textContent = '正在保存…';
             try {
                 const { response, payload: result } = await api.saveAI(payload, { signal: request.signal });
                 if (!request.current()) return;
-                if (!response.ok || !result || !Number.isSafeInteger(result.config_version)) { feedback.textContent = integrationError(result); return; }
+                if (!response.ok || !validAIConfig(result)) { feedback.textContent = integrationError(result); return; }
                 saved = result; dirty = editVersion !== submittedVersion;
-                if (!dirty) { base.value = result.base_url; model.value = result.model_id; credential.clear(result.credential_configured); }
+                if (!dirty) { protocol.value = aiProtocol(result); base.value = result.base_url; model.value = result.model_id; credential.clear(result.credential_configured); }
                 feedback.textContent = dirty ? '已保存提交时的设置，后续编辑尚未保存。' : 'AI 设置已保存。'; testFeedback.textContent = '';
             } catch (error) { if (request.current() && error.name !== 'AbortError') feedback.textContent = '保存失败，请稍后重试。'; }
             finally { saving = false; if (mounted && request.current()) save.disabled = false; }
@@ -250,7 +255,7 @@ export function createIntegrationsModule(win = window, doc = document, suppliedA
                 root.replaceChildren();
                 for (const source of payload.sources) sourceCard(root, source);
             } else {
-                if (!Number.isSafeInteger(payload.config_version)) { root.textContent = 'AI 设置响应无效，返回此分类时将重试。'; return; }
+                if (!validAIConfig(payload)) { root.textContent = 'AI 设置响应无效，返回此分类时将重试。'; return; }
                 root.replaceChildren();
                 aiForm(root, payload);
             }

@@ -44,6 +44,14 @@ AI extraction, or reveal operations.
 
 ## 3. Contracts
 
+- AI settings expose `protocol`: `llama_cpp_native` (legacy default) or
+  `llama_cpp_chat` (verified llama.cpp Chat through CPA). `settings ai set`
+  accepts it as an optional ordinary JSON field; omission preserves the saved
+  protocol, while explicit null, empty or unknown values are invalid. Safe AI
+  summaries and terminal reviews include it; responses from older APIs without
+  the field read as native. The Chinese settings selector uses the same values
+  and invalidates stale discovery/test results when edited. Neither client
+  silently maps an unsupported protocol to native or a generic OpenAI fallback.
 - The client accepts an HTTPS Origin only; HTTP requires the explicit
   `--allow-insecure-loopback` flag and a loopback target. It rejects redirects
   instead of forwarding cookies. The administrator session lives in the current

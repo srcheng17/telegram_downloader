@@ -120,6 +120,82 @@ func TestAITargetCannotKeepOldCredential(t *testing.T) {
 	}
 }
 
+func TestAIProtocolDefaultsAndPreservesVersionedSettings(t *testing.T) {
+	s, repo := newTestService()
+	ctx := context.Background()
+	p, err := s.AI(ctx)
+	if err != nil || p.Protocol != modelapi.ProtocolLlamaCPPNative {
+		t.Fatalf("empty settings protocol = %q, error = %v", p.Protocol, err)
+	}
+	// Previously saved records do not contain a protocol field.
+	repo.records[AIProviderID] = Record{ProviderID: AIProviderID, ConfigVersion: 4, Config: json.RawMessage(`{"base_url":"http://localhost:8000/v1","model_id":"manual-model"}`)}
+	p, err = s.AI(ctx)
+	if err != nil || p.Protocol != modelapi.ProtocolLlamaCPPNative {
+		t.Fatalf("legacy settings protocol = %q, error = %v", p.Protocol, err)
+	}
+	update := AIUpdate{ExpectedVersion: pointer(int64(4)), Enabled: pointer(true), BaseURL: pointer(p.BaseURL), ModelID: pointer(p.ModelID), Protocol: pointer(modelapi.ProtocolLlamaCPPChat), Credential: CredentialChange{Action: "replace", Value: "synthetic-secret"}}
+	p, err = s.SaveAI(ctx, update)
+	if err != nil || p.Protocol != modelapi.ProtocolLlamaCPPChat || p.ConfigVersion != 5 {
+		t.Fatalf("chat settings = %+v, error = %v", p, err)
+	}
+	before := repo.records[AIProviderID]
+	update.Protocol = nil
+	update.Credential = CredentialChange{Action: "keep"}
+	if _, err = s.SaveAI(ctx, update); !errors.Is(err, ErrConflict) {
+		t.Fatal("stale protocol update accepted")
+	}
+	update.ExpectedVersion = pointer(p.ConfigVersion)
+	update.Enabled = pointer(false)
+	p, err = s.SaveAI(ctx, update)
+	if err != nil || p.Protocol != modelapi.ProtocolLlamaCPPChat || p.Enabled || p.ConfigVersion != 6 {
+		t.Fatalf("legacy client changed protocol: %+v, error = %v", p, err)
+	}
+	after := repo.records[AIProviderID]
+	if after.CredentialVersion != before.CredentialVersion || !bytes.Equal(after.Envelope.Ciphertext, before.Envelope.Ciphertext) {
+		t.Fatal("protocol update changed saved credential")
+	}
+	readback, err := s.AI(ctx)
+	if err != nil || readback != p || !bytes.Contains(after.Config, []byte(`"protocol":"llama_cpp_chat"`)) {
+		t.Fatal("protocol did not survive saved settings readback")
+	}
+	update.ExpectedVersion = pointer(p.ConfigVersion)
+	update.Protocol = pointer(modelapi.ProtocolLlamaCPPNative)
+	p, err = s.SaveAI(ctx, update)
+	if err != nil || p.Protocol != modelapi.ProtocolLlamaCPPNative {
+		t.Fatal("explicit native switch failed")
+	}
+}
+
+func TestAIRejectsUnsupportedProtocolWithoutChangingSettings(t *testing.T) {
+	for _, protocol := range []string{"", "openai", "llama_cpp_chat ", "LLAMA_CPP_CHAT"} {
+		t.Run(protocol, func(t *testing.T) {
+			s, repo := newTestService()
+			_, err := s.SaveAI(context.Background(), AIUpdate{ExpectedVersion: pointer(int64(0)), Enabled: pointer(false), BaseURL: pointer("http://localhost:8000"), ModelID: pointer("manual"), Protocol: pointer(protocol), Credential: CredentialChange{Action: "replace", Value: "synthetic-secret"}})
+			if !errors.Is(err, ErrInvalid) || len(repo.records) != 0 {
+				t.Fatal("invalid protocol changed settings")
+			}
+		})
+	}
+}
+
+func TestAIUpdateProtocolStrictJSON(t *testing.T) {
+	for _, raw := range []string{`{"protocol":null}`, `{"Protocol":null}`, `{"protocol":42}`, `{"protocol":"llama_cpp_chat","protocol":"llama_cpp_native"}`, `{"protocol":"llama_cpp_chat","unknown":true}`, `{"credential":{"action":"keep","unknown":true}}`} {
+		var update AIUpdate
+		if json.Unmarshal([]byte(raw), &update) == nil {
+			t.Fatalf("accepted invalid update %s", raw)
+		}
+	}
+	for _, raw := range []string{`{}`, `{"protocol":"llama_cpp_chat"}`} {
+		var update AIUpdate
+		if err := json.Unmarshal([]byte(raw), &update); err != nil {
+			t.Fatalf("valid protocol update rejected: %v", err)
+		}
+		if (update.Protocol == nil) != (raw == `{}`) {
+			t.Fatal("omitted protocol did not remain optional")
+		}
+	}
+}
+
 type lateModelClient struct{ repo *memoryRepo }
 
 func (c lateModelClient) Models(context.Context, string, credentials.Secret) (modelapi.ModelsResult, error) {

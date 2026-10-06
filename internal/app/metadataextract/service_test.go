@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -96,6 +97,39 @@ func sampleInput() Input {
 func model(output string) *aiStub {
 	return &aiStub{output: json.RawMessage(output), snapshot: ModelSnapshot{ConfigRevision: 1, ModelID: "test-model", BudgetVerified: true, ContextTokens: 4096}}
 }
+func TestVerifiedChatResponseRetainsEvidenceAndSnapshotChecks(t *testing.T) {
+	for _, change := range []struct {
+		name     string
+		mutate   func(*aiStub)
+		wantCode string
+	}{
+		{"grounded", func(*aiStub) {}, ""},
+		{"ungrounded", func(a *aiStub) {
+			a.output = json.RawMessage(`{"fields":{"title":{"value":"invented","evidence_quote":"星海图书"}}}`)
+		}, "invalid_response"},
+		{"protocol drift", func(a *aiStub) { a.after = func() { a.snapshot.Protocol = "llama_cpp_native" } }, "config_changed"},
+		{"budget mode drift", func(a *aiStub) { a.after = func() { a.snapshot.BudgetMode = "exact_tokens" } }, "config_changed"},
+		{"identity drift", func(a *aiStub) { a.after = func() { a.snapshot.CapabilityFingerprint = "changed" } }, "config_changed"},
+		{"destination drift", func(a *aiStub) { a.after = func() { a.snapshot.Destination = "http://changed/v1" } }, "config_changed"},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			a := model(`{"fields":{"title":{"value":"星海图书","evidence_quote":"星海图书"}}}`)
+			a.snapshot.Protocol, a.snapshot.BudgetMode, a.snapshot.CapabilityFingerprint, a.snapshot.ContextTokens = "llama_cpp_chat", "verified_untruncated_response", "synthetic-chat", 0
+			change.mutate(a)
+			got, err := NewService(schemaStub{domain.StandardRegistry()}, a).Extract(context.Background(), sampleInput())
+			if change.wantCode == "" {
+				if err != nil || len(got.Candidates) != 1 {
+					t.Fatalf("verified chat response rejected: %v", err)
+				}
+				return
+			}
+			var typed *Error
+			if !errors.As(err, &typed) || typed.Code != change.wantCode || len(got.Candidates) != 0 {
+				t.Fatalf("unsafe chat result accepted: %v", err)
+			}
+		})
+	}
+}
 func TestExtractGroundedCandidate(t *testing.T) {
 	a := model(`{"fields":{"title":{"value":"星海图书","evidence_quote":"星海图书"}}}`)
 	in := sampleInput()
@@ -120,6 +154,83 @@ func TestExtractGroundedCandidate(t *testing.T) {
 	}
 	if !strings.Contains(a.prompt, "星海图书") || !strings.Contains(string(a.schema), "evidence_quote") {
 		t.Fatal("missing prompt/schema")
+	}
+	instructions, encodedInput, found := strings.Cut(a.prompt, "\nINPUT_DATA_JSON:\n")
+	if !found || !strings.Contains(instructions, "用于标识字段的“标题：”等标签及其分隔符") || !strings.Contains(instructions, "保留字段值本身的标点") {
+		t.Fatal("fixed instructions must distinguish structural labels from value punctuation")
+	}
+	var sent struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(encodedInput), &sent); err != nil || sent.Text != in.Text {
+		t.Fatal("label guidance must not alter the input or its evidence offsets")
+	}
+}
+func TestSchemaGeneratesValuesBeforeQuotesWithoutChangingConstraints(t *testing.T) {
+	schema, err := buildSchema(map[string]domain.FieldDefinition{
+		"title":       {Label: "标题", Type: "string", MaxBytes: 12, Enum: []string{"星海图书"}},
+		"identifiers": {Label: "标识符", Type: "identifiers", MaxItems: 2, ItemMaxBytes: 32},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Properties struct {
+			Fields struct {
+				Properties map[string]struct {
+					Properties json.RawMessage `json:"properties"`
+				} `json:"properties"`
+			} `json:"fields"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(schema, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for key, field := range wire.Properties.Fields.Properties {
+		if !strings.HasPrefix(string(field.Properties), `{"value":`) || strings.Index(string(field.Properties), `"evidence_quote":`) < 0 {
+			t.Fatalf("%s grammar must generate value before evidence_quote", key)
+		}
+	}
+	// JSON Schema meaning is independent of property order. Assert the complete
+	// decoded contract so the generation-order fix cannot relax nested bounds,
+	// selected fields, required members or additionalProperties restrictions.
+	const expected = `{
+		"type":"object","required":["fields"],"additionalProperties":false,
+		"properties":{"fields":{
+			"type":"object","required":[],"additionalProperties":false,
+			"properties":{
+				"title":{
+					"type":"object","required":["value","evidence_quote"],"additionalProperties":false,
+					"properties":{
+						"value":{"type":"string","minLength":1,"maxLength":12,"enum":["星海图书"],"description":"标题"},
+						"evidence_quote":{"type":"string","minLength":1,"maxLength":16384}
+					}
+				},
+				"identifiers":{
+					"type":"object","required":["value","evidence_quote"],"additionalProperties":false,
+					"properties":{
+						"value":{"type":"array","minItems":1,"maxItems":2,"description":"标识符","items":{
+							"type":"object","required":["scheme","value"],"additionalProperties":false,
+							"properties":{
+								"scheme":{"type":"string","pattern":"^[a-z][a-z0-9_.-]{0,63}$"},
+								"value":{"type":"string","minLength":1,"maxLength":32}
+							}
+						}},
+						"evidence_quote":{"type":"string","minLength":1,"maxLength":16384}
+					}
+				}
+			}
+		}}
+	}`
+	var got, want any
+	if err := json.Unmarshal(schema, &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(expected), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal("generation order changed the schema's validation contract")
 	}
 }
 func TestRejectUngroundedWrongTypedExtraAndTruncatedOutput(t *testing.T) {

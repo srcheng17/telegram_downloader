@@ -155,6 +155,7 @@ test('source settings and model probes return bounded summaries without credenti
     assert.equal(result.config_version, 3);
     assert.equal(tested.scope, 'public_catalog_only');
     assert.equal(ai.target_configured, true);
+    assert.equal(ai.protocol, 'llama_cpp_native');
     assert.equal(models.models[0].id, 'minicpm');
     assert.equal(aiTest.field_key_count, 1);
     assert.doesNotMatch(JSON.stringify({ sources, result, tested, ai, models, aiTest }), new RegExp(privateText));
@@ -204,7 +205,48 @@ test('AI, field and rule updates use server CAS and expose only safe configurati
     const rulesInput = input(rules);
     const ruleSet = await runSettings('rules', 'set', options(server, { inputJson: rulesInput.inputJson }), { stdin: rulesInput.stdin });
     assert.equal(ai.config_version, 5);
+    assert.equal(ai.protocol, 'llama_cpp_native');
     assert.equal(definitions.definitions[0].key, 'custom.user.note');
     assert.equal(ruleSet.rules[0].label_count, 1);
     assert.doesNotMatch(JSON.stringify({ ai, definitions, ruleSet }), new RegExp(privateText));
+});
+
+test('AI protocol is sent explicitly and returned in safe summaries and terminal reviews', async (t) => {
+    const target = 'https://cpa.example/v1';
+    const server = await fixture((req, res, body) => {
+        if (req.url !== '/api/settings/ai') return respond(res, {}, 404);
+        if (req.method === 'PUT') assert.deepEqual(JSON.parse(body), { expected_version: 4, enabled: true, protocol: 'llama_cpp_chat', base_url: target, model_id: 'minicpm', credential: { action: 'keep' } });
+        return respond(res, { config_version: 5, enabled: true, protocol: 'llama_cpp_chat', base_url: target, model_id: 'minicpm', credential_configured: true, api_key: privateText });
+    });
+    t.after(() => server.app.close());
+    const update = input({ expected_version: 4, enabled: true, protocol: 'llama_cpp_chat', base_url: target, model_id: 'minicpm' });
+    const result = await runSettings('ai', 'set', options(server, { inputJson: update.inputJson }), { stdin: update.stdin });
+    const readback = await runSettings('ai', 'get', options(server));
+    let review;
+    await runSettings('ai', 'review', options(server), { interactive: true, reviewer: async value => { review = value; } });
+    assert.equal(result.protocol, 'llama_cpp_chat');
+    assert.equal(readback.protocol, 'llama_cpp_chat');
+    assert.equal(review.protocol, 'llama_cpp_chat');
+    assert.equal(review.base_url, target);
+    assert.doesNotMatch(JSON.stringify({ result, readback }), new RegExp(`${target}|${privateText}`));
+    assert.doesNotMatch(JSON.stringify(review), new RegExp(privateText));
+});
+
+test('AI rejects invalid explicit protocols before writes or credential prompts', async (t) => {
+    const server = await fixture((_req, res) => respond(res, {}, 500));
+    t.after(() => server.app.close());
+    for (const protocol of [null, '', 'openai', 42]) {
+        const update = input({ expected_version: 4, enabled: true, protocol, base_url: 'https://cpa.example/v1', model_id: 'minicpm' });
+        await assert.rejects(runSettings('ai', 'set', options(server, { inputJson: update.inputJson, credential: 'replace' }), {
+            stdin: update.stdin, interactive: true, secretReader: async () => { throw new Error('must not prompt for invalid configuration'); },
+        }), { code: 'invalid_input' });
+    }
+    assert.equal(server.calls.some(call => call.method === 'PUT'), false);
+});
+
+test('AI summaries reject an unknown or null saved protocol', async (t) => {
+    let protocol;
+    const server = await fixture((_req, res) => respond(res, { config_version: 1, protocol }));
+    t.after(() => server.app.close());
+    for (protocol of [null, '', 'openai']) await assert.rejects(runSettings('ai', 'get', options(server)), { code: 'invalid_response' });
 });

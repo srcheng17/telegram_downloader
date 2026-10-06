@@ -104,7 +104,7 @@ func (c *Client) request(ctx context.Context, base, path string, key credentials
 		return nil, failure("unsupported")
 	case response.StatusCode == 429:
 		return nil, failure("rate_limited")
-	case response.StatusCode == http.StatusBadRequest && (path == "/completion" || path == "/apply-template" || path == "/tokenize"):
+	case response.StatusCode == http.StatusBadRequest && (path == "/completion" || path == "/apply-template" || path == "/tokenize" || path == "/chat/completions"):
 		// Pinned llama.cpp returns {error:{type,message,...}}. Read only a
 		// bounded machine-code envelope; never return/log the message or body.
 		data, readErr := io.ReadAll(io.LimitReader(response.Body, 8193))
@@ -190,7 +190,7 @@ func (c *Client) Infer(ctx context.Context, base string, key credentials.Secret,
 	if !ValidModelID(model) || len(text) > 16000 || !json.Valid(schema) {
 		return nil, failure("invalid_request")
 	}
-	body, err := json.Marshal(map[string]any{"model": model, "messages": []map[string]string{{"role": "system", "content": "Extract only explicitly provided metadata into the requested JSON schema. Do not invent missing values. Return JSON only."}, {"role": "user", "content": text}}, "temperature": 0, "max_tokens": 1024, "response_format": map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "metadata", "strict": true, "schema": schema}}})
+	body, err := json.Marshal(map[string]any{"model": model, "messages": []map[string]string{{"role": "system", "content": "Extract only explicitly provided metadata into the requested JSON schema. Do not invent missing values. Return JSON only.\nJSON schema:\n" + string(schema)}, {"role": "user", "content": text}}, "temperature": 0, "max_tokens": 1024, "response_format": map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "metadata", "strict": true, "schema": schema}}})
 	if err != nil {
 		return nil, failure("invalid_request")
 	}
