@@ -61,9 +61,9 @@ func (row effectiveDocumentReadRow) Scan(dest ...any) error {
 	*dest[2].(*string) = "SUCCEEDED"
 	*dest[10].(*string) = "synthetic-task"
 	*dest[18].(*sql.NullString) = sql.NullString{String: string(row.submitted), Valid: true}
-	*dest[25].(*sql.NullString) = sql.NullString{String: "synthetic-task", Valid: true}
-	*dest[26].(*sql.NullString) = sql.NullString{String: "/synthetic.cbz", Valid: true}
-	*dest[31].(*sql.NullString) = sql.NullString{String: string(row.effective), Valid: true}
+	*dest[26].(*sql.NullString) = sql.NullString{String: "synthetic-task", Valid: true}
+	*dest[27].(*sql.NullString) = sql.NullString{String: "/synthetic.cbz", Valid: true}
+	*dest[32].(*sql.NullString) = sql.NullString{String: string(row.effective), Valid: true}
 	return nil
 }
 

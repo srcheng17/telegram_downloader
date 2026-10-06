@@ -45,7 +45,7 @@ test('selected source and explicit custom mapping resolve into shared preview wi
     assert.equal(f.byId('provider-select-mangaupdates').disabled, true);
     f.edit('provider-keyword', 'Confirmed keyword'); f.edit('provider-select-mangabaka', true, 'change'); f.edit('provider-mapping-custom.user.category', 'mangabaka:source.type', 'change');
     f.byId('provider-search-submit').emit('click'); assert.equal(f.requests.length, 1);
-    assert.deepEqual(f.requests[0].input.provider_ids, ['mangabaka']); assert.equal(f.requests[0].input.keyword, 'Confirmed keyword'); assert.deepEqual(Object.keys(f.requests[0].input).sort(), ['keyword', 'provider_ids', 'query_revision']);
+    assert.deepEqual(f.requests[0].input.provider_ids, ['mangabaka', 'bangumi']); assert.equal(f.requests[0].input.keyword, 'Confirmed keyword'); assert.deepEqual(Object.keys(f.requests[0].input).sort(), ['keyword', 'provider_ids', 'query_revision']);
     resolveSearch(f.requests[0]); await tick();
     assert.ok(walk(f.root).some(node => node.textContent.includes('请求过于频繁')));
     const button = walk(f.root).find(node => node.textContent === '选择并核对字段'); assert.ok(button); assert.equal(f.displayed.length, 0);
@@ -131,4 +131,66 @@ test('late provider authority checks cannot revive an invalidated or unmounted c
         await Promise.all(completions.map(complete => complete())); await rejected;
         assert.equal(f.draft.getSnapshot().revision, 0); f.module.unmount();
     }
+});
+
+test('automatic search defaults enabled sources and only recommends unique title+author volume identity',async()=>{
+    const f=fixture();await f.module.mount();
+    assert.equal(f.byId('provider-select-mangabaka').checked,true);assert.equal(f.byId('provider-select-bangumi').checked,true);
+    const preparing=f.module.prepare({title:'Star Journey',aliases:[],writers:['River Ink']});await tick();
+    assert.deepEqual(f.requests[0].input.provider_ids,['mangabaka','bangumi']);assert.equal(f.requests[0].input.keyword,'Star Journey');
+    f.requests[0].resolve(ok({query_revision:f.requests[0].input.query_revision,sources:[{...sources[0],candidates:[{record_id:'123',title:'Star Journey',creators:{writer:['River Ink']},relationship:'volume'}]},{...sources[1],candidates:[]}]}));await tick();
+    assert.equal(f.requests[1].url,'/api/metadata/candidates/resolve');resolveCandidate(f.requests[1]);
+    const result=await preparing;assert.equal(result.entries.length,1);assert.equal(f.displayed.length,0);assert.equal(f.draft.getSnapshot().revision,0);
+    await f.module.prepare({title:'Star Journey',aliases:[],writers:['River Ink']});assert.equal(f.requests.length,2);f.module.unmount();
+});
+test('automatic search never picks first fuzzy or ambiguous match and allows empty result',async()=>{
+    for(const kind of ['fuzzy','ambiguous','no_results','series','no_writer']) {
+        const f=fixture();await f.module.mount();const preparing=f.module.prepare({title:'Star Journey',writers:kind==='no_writer'?[]:['River Ink']});await tick();
+        const record={record_id:'123',title:kind==='fuzzy'?'Star Journeys':'Star Journey',creators:{writer:['River Ink']},relationship:kind==='series'?'series':'volume'};
+        f.requests[0].resolve(ok({query_revision:f.requests[0].input.query_revision,sources:[{...sources[0],candidates:kind==='no_results'?[]:[record,...(kind==='ambiguous'?[{...record,record_id:'456'}]:[])]},{...sources[1],candidates:[]}]}));
+        const result=await preparing;assert.equal(result.entries.length,0,kind);assert.equal(f.requests.length,1,kind);assert.ok(result.warnings.length);f.module.unmount();
+    }
+});
+test('automatic provider requests abort on return and stale results cannot create entries',async()=>{
+    const f=fixture();await f.module.mount();const signal=new AbortController();const pending=f.module.prepare({title:'Star Journey',writers:['River Ink'],signal:signal.signal});await tick();signal.abort();resolveSearch(f.requests[0]);
+    await assert.rejects(pending,{name:'AbortError'});assert.equal(f.requests.length,1);f.module.unmount();
+});
+
+test('explicit search retry reloads current sources and bypasses successful cache without losing choices or draft', async () => {
+    const f = fixture(); await f.module.mount();
+    f.edit('provider-select-bangumi', false, 'change');
+    f.edit('provider-mapping-custom.user.category', 'mangabaka:source.type', 'change');
+    const input = { title: 'Star Journey', writers: ['River Ink'] };
+    const first = f.module.prepare(input); await tick();
+    f.requests[0].resolve(ok({ query_revision: f.requests[0].input.query_revision, sources: [{ ...sources[0], candidates: [] }] }));
+    await first; await f.module.prepare(input); assert.equal(f.requests.length, 1);
+    f.draft.setField('title', '手工保留');
+    const originalGet = f.api.getJson;
+    f.api.getJson = async (...args) => {
+        const result = structuredClone(await originalGet(...args));
+        if (args[0].endsWith('/providers')) result.payload.sources[0].config_version = 10;
+        return result;
+    };
+    const second = f.module.prepare({ ...input, retry: true }); await tick();
+    assert.equal(f.requests.length, 2);
+    assert.deepEqual(f.requests[1].input.provider_ids, ['mangabaka']);
+    assert.equal(f.byId('provider-mapping-custom.user.category').value, 'mangabaka:source.type');
+    f.requests[1].resolve(ok({ query_revision: f.requests[1].input.query_revision, sources: [{ ...sources[0], config_version: 10, candidates: [] }] }));
+    await second;
+    assert.equal(f.draft.getSnapshot().fields.title.value, '手工保留');
+    assert.equal(f.reads.filter(read => read.url.endsWith('/providers')).length, 2);
+    assert.equal(f.reads.at(-1).options.cache, 'no-store');
+    await f.module.prepare(input); assert.equal(f.requests.length, 2);
+    f.module.unmount();
+});
+
+test('explicit search retry recovers failed initial source hydration', async () => {
+    const f = fixture(); const originalGet = f.api.getJson;
+    f.api.getJson = async () => ({ response: { ok: false }, payload: {} });
+    await f.module.mount();
+    f.api.getJson = originalGet;
+    const pending = f.module.prepare({ title: 'Recovered', retry: true }); await tick();
+    assert.equal(f.requests.length, 1);
+    resolveSearch(f.requests[0]); await pending;
+    f.module.unmount();
 });

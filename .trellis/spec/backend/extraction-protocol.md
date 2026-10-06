@@ -17,7 +17,9 @@ Browser OCR and adoption are in [candidate adoption](../frontend/candidate-adopt
 - `metadataextract.AIClient`: `Snapshot(ctx,expectedConfigVersion)` and
   `ExtractJSON(ctx,ModelSnapshot,prompt,jsonSchema,outputBudget)`.
 - `modelapi.Client.ExtractionCapability(ctx,base,key,model)` returns
-  `{ContextTokens,Fingerprint}`; `Extract(...,outputBudget,capability)` uses that identity.
+  `{ContextTokens,Fingerprint,Protocol,BudgetMode}`; `Extract(...,outputBudget,capability)` uses that identity.
+- Explicit `llama_cpp_chat` uses `LlamaCPPChatCapability` / `ExtractLlamaCPPChat`
+  with the same arguments and a separate, response-verified budget contract.
 - Migration 016 owns the non-secret singleton `extraction_rules`
   (`rules_version`, `definitions_version`, `rules`, `updated_at`). Do not rewrite it
   after deployment; schema changes require a forward migration.
@@ -67,7 +69,11 @@ whole document. Saved settings supply the exact destination/model/key.
 
 A saved disabled configuration returns `disabled` **before decryption or network**;
 missing config/model returns `not_configured`. Config version must match before
-and after inference. `ModelSnapshot.Handle` is internal and `json:"-"`; its opaque
+and after inference. Saved `protocol` defaults to `llama_cpp_native`; only explicit
+`llama_cpp_chat` selects the gateway adapter. Unknown modes reject before decryption,
+with no fallback. Snapshot identity includes destination, protocol, budget mode and
+capability fingerprint; recheck all of them after inference.
+`ModelSnapshot.Handle` is internal and `json:"-"`; its opaque
 containing type must redact String/GoString and refuse JSON encoding. A secret's
 String method alone does not protect reflection through unexported containing fields.
 
@@ -83,12 +89,45 @@ Reject unknown keys, invalid types/bounds, invented/ungrounded values, clears/nu
 truncated/incomplete results and incompatible definitions/config after inference.
 An empty fields object yields no candidate. Quotes locate evidence; provenance
 stores UTF-16 start/end offsets and non-secret references, never the quote/OCR body.
-Repeated quotes get ambiguity warnings. Persist only explicitly adopted metadata;
+Repeated quotes get ambiguity warnings. Persist only metadata from the finally confirmed draft; guided evidence-backed empty-field
+prefill and explicit conflict decisions both use shared draft adoption. Keep
 no OCR/request/model body in DB, logs, errors, traces or CBZ.
+
+Fixed extraction instructions distinguish structural field labels and their
+separators from values while preserving punctuation inside the values. Keep this
+guidance outside `INPUT_DATA_JSON`; never trim or rewrite the source text or model
+output as a substitute for correct inference and exact evidence validation.
+For `summary`, require the model to generate identical value/evidence_quote containing
+only the paragraph, without its label. A labeled quote with an unlabeled summary
+still fails; do not trim it in the validator. Common six field descriptions distinguish
+primary title/alternate name, author/translator/characters, and UI noise. Controlled
+CPA six-field sampling showed complete 110-token output and exact evidence for all
+five returned fields; missing title remains omitted rather than invented. The local
+caption candidate can independently provide it.
+
+Serialize each selected field's schema `properties` in the order `value`, then
+`evidence_quote`. The pinned llama.cpp grammar follows this order; generating a
+full source quote first can steer MiniCPM to copy its structural label into the
+value. Controlled CPA probes with identical schema semantics and prompts confirmed
+the value-first order for both a plain title and a title with internal punctuation.
+Use the same ordered schema in system instructions and the generation grammar;
+all types, bounds, required members and `additionalProperties:false` remain intact.
+Evidence may quote the whole labeled line when it exactly occurs in the input;
+the field value must still omit the structural label. This is a generation-order
+contract, not permission to trim model output or weaken evidence/type validation.
 
 ### Exact native llama.cpp budget capability
 
-Current extraction supports the native protocol pinned to commit
+The settings connection test uses `Infer` with its fixed neutral bibliography
+fixture `bibliography-test-v2`. Send the same JSON schema in the system message
+and `response_format`: the pinned llama.cpp applies the latter as output grammar
+without adding it to the prompt. The fixture explicitly maps aliases to alternate
+names, number to this volume's number, and count to the series' total volumes;
+all nine expected values and strict type/equality validation remain unchanged.
+The fixture text stays in a separate user message. This test does not prove native
+extraction capability or user-confirmed extraction quality.
+
+The default `llama_cpp_native` protocol, with budget mode `exact_tokens`, is pinned to commit
 `11fe02151f79c41d0d4af7da708755d73b9c0da6`. OpenAI-compatible `/models` or a successful
 settings test alone is insufficient. Require a unique selectable exact model;
 `/props` must supply matching model alias, nonempty path/template, valid slot n_ctx,
@@ -114,6 +153,48 @@ switch or context enlargement. Changing supported server versions requires sourc
 and live-protocol verification. Reported build/model identity is not binary or
 weights attestation. Empty fields cannot distinguish no evidence from semantic refusal.
 
+### Explicit llama.cpp chat gateway capability
+
+`llama_cpp_chat` is a narrow adapter for the same pinned llama.cpp behind
+CLIProxyAPI (verified source tag `v8.0.13`), not a generic OpenAI fallback.
+Its budget mode is `verified_untruncated_response`. It does **not** measure slot
+context, render/tokenize the prompt in advance or attest the chat template;
+`ContextTokens=0` records that limit. Oversized input is rejected by the upstream;
+context/output exhaustion may consume inference before rejection, but cannot
+produce a candidate. Never describe this mode as exact preflight token budgeting.
+
+1. `/models` may contain multiple providers; the saved exact model must be selectable.
+2. A fixed neutral empty-object probe through `/chat/completions` must return `{}`
+   with the pinned fingerprint and complete telemetry below. No user text is probed.
+3. Send the saved model, original prompt, complete schema in system instructions
+   and strict `response_format`, `max_tokens=outputBudget`, `temperature=0`,
+   `stream=false`, `cache_prompt=false`, `n_keep=0` and `enable_thinking=false`.
+4. Request `verbose=true` and only these `response_fields`: `model`, `stop`,
+   `truncated`, `stop_type`, `tokens_evaluated`, `tokens_predicted`,
+   `generation_settings`. Do not request native prompt/content debug fields.
+5. Require `object=chat.completion`, exact model, pinned `system_fingerprint`, one
+   assistant choice at index 0, `finish_reason=stop`, valid JSON, no refusal/tools.
+   Usage must contain positive prompt/output counts, output ≤ budget and exact total.
+6. Require `__verbose` with exact model, `stop=true`, `truncated=false`,
+   `stop_type=eos`, counts equal to chat usage, `n_predict=budget`, `stream=false`.
+   Fingerprint binds protocol/model/build and must remain unchanged around inference.
+   Missing pinned build/native envelope is `schema_unsupported`; incomplete,
+   shifted, clamped or inconsistent responses are `invalid_response`.
+
+The deployed model must disable context shift. Verified boundary behavior:
+input ≥ slot context returns HTTP400 `exceed_context_size_error`; context exhaustion
+while generating returns `finish_reason=length` / `truncated=true` and is rejected.
+The adapter cannot remotely attest a process flag or weights; source/deployment
+and actual gateway boundary probes remain necessary release evidence.
+
+Source contracts: pinned llama.cpp
+[chat/native envelope](https://github.com/ggml-org/llama.cpp/blob/11fe02151f79c41d0d4af7da708755d73b9c0da6/tools/server/server-task.cpp#L414),
+[verbose field filtering](https://github.com/ggml-org/llama.cpp/blob/11fe02151f79c41d0d4af7da708755d73b9c0da6/tools/server/server-schema.cpp#L78);
+CPA v8.0.13 [OpenAI request forwarding](https://github.com/router-for-me/CLIProxyAPI/blob/v8.0.13/internal/translator/openai/openai/chat-completions/openai_openai_request.go#L20)
+and [non-stream response preservation](https://github.com/router-for-me/CLIProxyAPI/blob/v8.0.13/internal/translator/openai/openai/chat-completions/openai_openai_response.go#L51).
+CPA provider configuration must retain the intended one-model route and avoid
+payload rules/retries that silently change budget, model or generation behavior.
+
 ## 4. Validation & Error Matrix
 
 | Condition | Result |
@@ -121,14 +202,14 @@ weights attestation. Empty fields cannot distinguish no evidence from semantic r
 | Invalid/oversized rules or explicit null options | 400 `invalid_rules`; no write |
 | Rules CAS/definition mismatch | 409 `rules_conflict`; keep current values |
 | Invalid extraction body/keys/revisions/text | 400 `invalid_request` or `input_too_large` |
-| Unsupported native capability/definition/schema | 400 `schema_unsupported`; no speculative inference |
+| Unsupported native/chat capability/definition/schema | 400 `schema_unsupported`; no user-text inference |
 | Exact prompt plus reserve exceeds context | 400 `context_exceeded`; no completion request |
 | AI config changed | 409 `config_changed`; no candidate |
 | Disabled/missing saved AI config | 503 `disabled`/`not_configured` |
 | Rate limit / deadline / user cancellation | 429 `rate_limited` / 504 `timeout` / 499 `cancelled` |
 | Upstream refusal/auth/permission/invalid body/unreachable | 502 with finite code; no upstream message |
 
-Native HTTP400 classification reads only a bounded machine-code envelope:
+Native and chat HTTP400 classification reads only a bounded machine-code envelope:
 `exceed_context_size_error` → context_exceeded; `invalid_request_error` →
 schema_unsupported. Unknown errors stay generic. Extraction responses are no-store;
 root admin/CSRF middleware still applies (workspace auth 401/403 is distinct from upstream auth).
@@ -147,9 +228,13 @@ root admin/CSRF middleware still applies (workspace auth 401/403 is distinct fro
   tokens and special-token options, overflow before completion, identity/version drift,
   missing/null counts, output bounds, refusal and final native response without n_ctx.
 - [modelapi transport tests](../../../internal/modelapi/client_test.go): bounded/redacted
-  native errors, cancellation, credentials not forwarded on redirects.
+  native/chat errors, cancellation, credentials not forwarded on redirects.
+- [chat adapter tests](../../../internal/modelapi/extraction_chat_test.go): selected
+  route and fixed probe, preserved prompt/schema, filtered telemetry, incomplete or
+  inconsistent usage/stop/build rejection, capability drift and no native fallback.
 - [saved snapshot tests](../../../internal/app/sourcesettings/extraction_test.go):
-  disabled/no-network, config changes, finite errors, JSON and `%+v` omit synthetic secret.
+  disabled/no-network, protocol dispatch and CAS/mode drift, finite errors, JSON and
+  `%+v` omit synthetic secret.
 - [extraction service tests](../../../internal/app/metadataextract/service_test.go):
   one deadline, typed/custom fields, UTF-16 evidence, ungrounded/partial output rejection.
 - [HTTP tests](../../../internal/httpapi/metadata_extract_test.go): strict input/no-store,
@@ -170,4 +255,6 @@ log an opaque model handle, or send client-supplied model/destination.
 
 Correct: read slot context from `/props`, tokenize the complete rendered prompt with
 special tokens, send that array unchanged, redact the containing handle and resolve
-only the saved configuration. Refuse when the protocol cannot prove these invariants.
+only the saved configuration for native mode. Explicit chat mode instead requires
+the pinned complete/untruncated response evidence above and states its weaker
+preflight guarantee. Never silently substitute chat for failed native capability.

@@ -55,7 +55,7 @@ function parseValue(raw, rule, definition) {
     return validateFieldValue(definition, value);
 }
 
-export function extractRules({ text, ruleSet, schema, document, inputRevision, configRevision, requestID = `rules-${crypto.randomUUID()}`, segments = [] }) {
+export function extractRules({ text, ruleSet, schema, document, inputRevision, configRevision, requestID = `rules-${crypto.randomUUID()}`, segments = [], boundaryOffsets = new Set() }) {
     validateRuleSet(ruleSet, schema);
     if (typeof text !== 'string' || byteLength(text) > 65536) throw new Error('规则预览文字不能超过 64 KiB。');
     const lines = []; let offset = 0;
@@ -74,7 +74,8 @@ export function extractRules({ text, ruleSet, schema, document, inputRevision, c
             for (let cursor = index + 1; cursor < lines.length; cursor++) {
                 // Unknown label-shaped lines are boundaries too: never absorb an
                 // unconfigured role/value into a previous summary paragraph.
-                if (/^\s*[^:：\n]{1,128}[:：]/u.test(lines[cursor].text)) break;
+                const boundaryText = lines[cursor].text.replace(/\b\d{1,2}:\d{2}\b/gu, '');
+                if (boundaryOffsets.has(lines[cursor].start) || /^\s*[^:：\n]{1,128}[:：]/u.test(boundaryText)) break;
                 raw += '\n' + lines[cursor].text; end = lines[cursor].end;
             }
         }

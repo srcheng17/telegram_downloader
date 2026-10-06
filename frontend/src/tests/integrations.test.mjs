@@ -87,7 +87,7 @@ test('AI form preserves manual model edits and ignores discovery after editing/u
     resolveModels(ok({ config_version: 1, models: [{ id: 'old-response-model', selectable: true, capability: 'text' }] }));
     await flush();
     assert.equal(model.value, 'manual-new-model');
-    const modelList = form.querySelectorAll('select')[0];
+    const modelList = form.children.find(child => child.textContent === '已发现的模型').children[0];
     assert.equal(modelList.children.length, 1);
     assert.equal(form.children.some((child) => child.textContent.includes('配置已编辑')), true);
     const secret = form.querySelectorAll('input[type="password"]')[0];
@@ -104,6 +104,70 @@ test('unmounted settings hydration never creates controls', async () => {
     resolve(ok({ enabled: false, base_url: '', model_id: '', config_version: 0 }));
     await flush();
     assert.equal(f.root.children.length, 0);
+});
+
+test('AI connection mode defaults for legacy settings and roundtrips an explicit CPA mode', async () => {
+    let savedInput;
+    let discoveries = 0;
+    const f = moduleFixture({
+        ai: async () => ok({ enabled: false, base_url: 'https://cpa.example/v1', model_id: 'minicpm', config_version: 3 }),
+        models: async () => { discoveries++; return ok({ config_version: 3, models: [] }); },
+        saveAI: async input => { savedInput = input; return ok({ ...input, config_version: input.expected_version + 1 }); },
+    });
+    try {
+        await flush();
+        const form = f.root.children[0];
+        const mode = form.children.find(child => child.textContent === '连接方式').children[0];
+        assert.equal(mode.value, 'llama_cpp_native');
+        assert.deepEqual(mode.children.map(child => child.textContent), ['直连 llama.cpp', '通过 CPA 使用 llama.cpp']);
+        mode.value = 'llama_cpp_chat'; form.emit('change');
+        await form.children.find(child => child.textContent === '刷新模型列表').emit('click');
+        assert.equal(discoveries, 1);
+        await form.emit('submit');
+        assert.equal(savedInput.protocol, 'llama_cpp_chat');
+        assert.equal(savedInput.expected_version, 3);
+        assert.deepEqual(savedInput.credential, { action: 'keep' });
+        assert.equal(mode.value, 'llama_cpp_chat');
+        await form.emit('submit');
+        assert.equal(savedInput.expected_version, 4);
+        assert.equal(savedInput.protocol, 'llama_cpp_chat');
+    } finally { f.module.unmount(); }
+});
+
+test('AI connection mode preserves later edits when saving a previously configured CPA mode', async () => {
+    let finishSave;
+    let savedInput;
+    const f = moduleFixture({
+        ai: async () => ok({ enabled: false, protocol: 'llama_cpp_chat', base_url: '', model_id: 'minicpm', config_version: 2 }),
+        saveAI: input => { savedInput = input; return new Promise(resolve => { finishSave = resolve; }); },
+    });
+    try {
+        await flush();
+        const form = f.root.children[0];
+        const mode = form.children.find(child => child.textContent === '连接方式').children[0];
+        assert.equal(mode.value, 'llama_cpp_chat');
+        const pending = form.emit('submit');
+        mode.value = 'llama_cpp_native'; form.emit('change');
+        finishSave(ok({ ...savedInput, config_version: 3 })); await pending;
+        assert.equal(savedInput.protocol, 'llama_cpp_chat');
+        assert.equal(mode.value, 'llama_cpp_native');
+        assert.ok(form.children.some(child => child.textContent === '已保存提交时的设置，后续编辑尚未保存。'));
+        const retry = form.emit('submit');
+        assert.equal(savedInput.expected_version, 3);
+        assert.equal(savedInput.protocol, 'llama_cpp_native');
+        finishSave(ok({ ...savedInput, config_version: 4 })); await retry;
+    } finally { f.module.unmount(); }
+});
+
+test('AI settings reject unknown or null saved connection modes without silently switching', async () => {
+    for (const protocol of [null, '', 'openai']) {
+        const f = moduleFixture({ ai: async () => ok({ config_version: 1, protocol }) });
+        try {
+            await flush();
+            assert.equal(f.root.querySelectorAll('form').length, 0);
+            assert.match(f.root.textContent, /AI 设置响应无效/);
+        } finally { f.module.unmount(); }
+    }
 });
 
 test('password change clears inputs immediately and ends all local session state after success', async () => {
@@ -164,7 +228,7 @@ test('hiding AI aborts discovery and testing but preserves pending saves and lat
     finishSave(ok({ enabled: true, base_url: 'http://localhost:8000', model_id: 'submitted', config_version: 2 })); await pending;
     assert.equal(model.value, 'later-edit'); assert.equal(save.disabled, false); assert.equal(requests, 1);
     finishModels(ok({ config_version: 1, models: [{ id: 'late', selectable: true }] })); await flush();
-    assert.equal(form.querySelectorAll('select')[0].children.length, 1);
+    assert.equal(form.children.find(child => child.textContent === '已发现的模型').children[0].children.length, 1);
     f.module.resume(); const retry = form.emit('submit'); assert.equal(savedInput.expected_version, 2); assert.equal(savedInput.model_id, 'later-edit');
     finishSave(ok({ enabled: true, base_url: 'http://localhost:8000', model_id: 'later-edit', config_version: 3 })); await retry;
     f.module.unmount();

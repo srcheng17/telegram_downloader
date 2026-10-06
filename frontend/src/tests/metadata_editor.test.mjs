@@ -178,3 +178,50 @@ test('candidates without preflight retain explicit synchronous adoption', () => 
     selectCandidate(f).apply.emit('click');
     assert.equal(f.draft.getSnapshot().fields.title.value, '候选'); f.editor.unmount();
 });
+
+test('manual field changes keep an open historical candidate visible and reject its stale revision', () => {
+    const f = fixture(); f.editor.mount();
+    const { panel, checkbox, apply } = selectCandidate(f);
+    const clear = walk(f.root).find(node => node.getAttribute('aria-label') === '明确清空标题');
+    clear.emit('click');
+    assert.equal(panel.hidden, false);
+    assert.ok(walk(panel).includes(checkbox));
+    apply.emit('click');
+    assert.match(walk(f.root).find(node => node.className === 'inline-feedback').textContent, /过期/);
+    assert.equal(f.draft.getSnapshot().fields.title.state, 'cleared');
+    f.editor.unmount();
+});
+
+test('final confirmation rechecks advanced adopted authority until the field is manually changed', async () => {
+    const f = fixture(); f.editor.mount();
+    let current = true; let checks = 0;
+    const beforeApply = async () => { checks++; if (!current) throw new Error('retired source'); };
+    selectCandidate(f, { beforeApply }).apply.emit('click'); await nextTick();
+    assert.equal(f.draft.getSnapshot().fields.title.value, '候选');
+    assert.equal(checks, 1);
+    await f.editor.preflightPreparedCandidates(); assert.equal(checks, 2);
+    current = false;
+    await assert.rejects(f.editor.preflightPreparedCandidates(), /设置已变化/);
+    assert.equal(f.draft.getSnapshot().fields.title.value, '候选');
+    f.draft.setField('title', '人工核对');
+    await f.editor.preflightPreparedCandidates(); assert.equal(checks, 3);
+    f.editor.unmount();
+});
+
+test('guided review prefills safe fields and resolves only actual differences in the same editor', async () => {
+    const f = fixture(); f.editor.mount();
+    await f.editor.prepareCandidates([{ candidate: candidate(), beforeApply: async () => {} }]);
+    assert.equal(f.draft.getSnapshot().fields.title.value, '候选');
+    assert.equal(f.editor.hasUnresolvedCandidates(), false);
+    assert.ok(!walk(f.root).some(node => node.textContent === '采用所选字段'));
+    const changed = candidate(); changed.base_document_revision = f.draft.getSnapshot().revision;
+    changed.field_revisions.title = f.draft.getSnapshot().fields.title.revision;
+    changed.fields.title.value = '另一项';
+    await f.editor.prepareCandidates([{ candidate: changed, beforeApply: async () => {} }]);
+    assert.equal(f.editor.hasUnresolvedCandidates(), true);
+    walk(f.root).find(node => node.textContent === '保留当前内容').emit('click');
+    await nextTick();
+    assert.equal(f.editor.hasUnresolvedCandidates(), false);
+    assert.equal(f.draft.getSnapshot().fields.title.value, '候选');
+    f.editor.unmount();
+});

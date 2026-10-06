@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Regression and release gates"}
+{"file": ".trellis/spec/frontend/mediactl-client.md", "reason": "Protocol CLI privacy and saved settings compatibility"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Chinese UI and rebuilt bundle validation"}
+{"file": "docs/development/module-boundaries.md", "reason": "Protocol adapter and app validation ownership"}

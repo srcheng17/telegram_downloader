@@ -1,0 +1,56 @@
+{
+  "id": "guided-media-workflow",
+  "name": "guided-media-workflow",
+  "title": "作品处理向导与识别体验优化",
+  "description": "单工作区分步处理、自动识别和书目准备、集中核对、一次最终确认及幂等任务与Komga收录闭环，已实现并完成隔离验收。",
+  "status": "review",
+  "dev_type": "fullstack",
+  "scope": "media-workflow",
+  "package": null,
+  "priority": "P2",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-10-06",
+  "completedAt": null,
+  "branch": "vigorous-mayfly",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "078bb8b",
+  "pr_url": "https://github.com/srcheng17/telegram_downloader/pull/7",
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "web/templates/index.html",
+    "frontend/src/home/index.js",
+    "frontend/src/ocr/index.js",
+    "frontend/src/ocr/rules.js",
+    "frontend/src/shared/metadata/editor.js",
+    "frontend/src/metadata-search/index.js",
+    "internal/app/metadataextract/service.go",
+    "internal/app/tasks/komga_copy.go"
+  ],
+  "notes": "Implementation and isolated end-to-end validation complete on 2026-10-07. Changes are prepared for review alongside the preceding Telegram and CPA fixes. No main merge or production deployment in this phase. See research/implementation-validation.md. Review PR #7 is open; no merge authorized.",
+  "meta": {
+    "automation_decision": {
+      "date": "2026-10-07",
+      "mode": "automatic_preparation_final_confirmation",
+      "source": "User selected the first option: 前者",
+      "implementation_approved": true
+    },
+    "implementation_approval": {
+      "date": "2026-10-07",
+      "source": "确认实施"
+    },
+    "validation": {
+      "date": "2026-10-07",
+      "status": "passed",
+      "frontend_tests": 273,
+      "cli_tests": 73,
+      "browser_tests": 32,
+      "real_komga": true,
+      "real_ocr": true,
+      "production_deployed": false
+    }
+  }
+}

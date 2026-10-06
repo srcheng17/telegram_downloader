@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 )
 
 func TestMain(m *testing.M) {
@@ -177,6 +180,51 @@ func TestInputFramingDoesNotEchoSecrets(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatal("invalid private command accepted or echoed")
 		}
+	}
+}
+
+func TestPasswordInvalidErrorCode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"sentinel", auth.ErrPasswordInvalid},
+		{"wrapped_sentinel", fmt.Errorf("password: %w", auth.ErrPasswordInvalid)},
+		{"rpc_hash_invalid", tgerr.New(400, "PASSWORD_HASH_INVALID")},
+		{"wrapped_rpc_hash_invalid", fmt.Errorf("password: %w", tgerr.New(400, "PASSWORD_HASH_INVALID"))},
+		{"rpc_empty", tgerr.New(400, "PASSWORD_EMPTY")},
+		{"wrapped_rpc_empty", fmt.Errorf("password: %w", tgerr.New(400, "PASSWORD_EMPTY"))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := errorCode(tc.err); got != "password_invalid" {
+				t.Fatalf("error code %q want password_invalid", got)
+			}
+		})
+	}
+}
+
+func TestPasswordRetryRecognition(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"sentinel", auth.ErrPasswordInvalid, true},
+		{"wrapped_sentinel", fmt.Errorf("password: %w", auth.ErrPasswordInvalid), true},
+		{"rpc_hash_invalid", tgerr.New(400, "PASSWORD_HASH_INVALID"), true},
+		{"wrapped_rpc_hash_invalid", fmt.Errorf("password: %w", tgerr.New(400, "PASSWORD_HASH_INVALID")), true},
+		{"rpc_empty", tgerr.New(400, "PASSWORD_EMPTY"), false},
+		{"wrapped_rpc_empty", fmt.Errorf("password: %w", tgerr.New(400, "PASSWORD_EMPTY")), false},
+		{"successful", nil, false},
+		{"cancelled", context.Canceled, false},
+		{"network_error", errors.New("connection failed"), false},
+		{"sentinel_text_only", errors.New(auth.ErrPasswordInvalid.Error()), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isPasswordInvalid(tc.err); got != tc.want {
+				t.Fatalf("retry recognition %t want %t", got, tc.want)
+			}
+		})
 	}
 }
 

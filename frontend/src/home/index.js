@@ -4,11 +4,10 @@ import { createHomeApi } from './api.js';
 import { resetHomeActionButtons, showHomeActionButtons } from './action_buttons.js';
 import { applyInputMode, getSelectedMode } from './input_mode.js';
 import { renderMetadataHistory } from './metadata_history.js';
-import { readOptionalField, readForceValue } from './state.js';
 import { createWorkspaceShell } from '../ui_shell/index.js';
 import { candidateFromHistory, readHistoryDocument } from '../shared/metadata/candidates.js';
 import { resolveDownloadSubmission } from './submit_flow.js';
-import { submitArchive } from './upload_submission.js';
+import { cancelUnfinishedUpload, submitArchive } from './upload_submission.js';
 import { bindFieldHintToggles } from './field_hints.js';
 import { renderSummary, syncSummaryCollapseMode } from './summary_panel.js';
 import { createStartupRecoveryBannerController } from './startup_recovery_banner.js';
@@ -17,6 +16,7 @@ import { resolvePollDelay } from '../shared/polling.js';
 import { createMetadataSearchModule } from '../metadata-search/index.js';
 import { mountOCR } from '../ocr/index.js';
 import { createTabs } from '../shared/tabs.js';
+import { createGuidedWorkspace } from './guided_workspace.js';
 
 export async function retryMetadataWorkspace(state, showFeedback) {
     if (state.ocr?.isDirty() || state.shell?.hasUnsavedChanges()) {
@@ -108,10 +108,12 @@ export function createHomeModule(win, doc) {
             return;
         }
         button.disabled = Boolean(isSubmitting);
-        button.textContent = isSubmitting ? label : '开始下载';
+        button.textContent = isSubmitting ? label : '确认并开始';
     }
 
     function buildRequestErrorMessage(payload, statusCode) {
+        if (payload?.code === 'submission_source_conflict') return '已有同来源任务使用不同作品信息，请在任务页核对；本次内容尚未创建新任务。';
+        if (payload?.code === 'idempotency_conflict') return '这次提交的来源或作品信息与已创建任务不一致，请核对当前任务。';
         return extractPayloadMessage(payload) || `请求失败（${statusCode}）`;
     }
 
@@ -131,6 +133,7 @@ export function createHomeModule(win, doc) {
             downloadLabel: '下载已有文件',
             logsUrl: duplicateState.logsUrl,
         }, win);
+        if (duplicateState.taskId) state.guided?.submitted(duplicateState.taskId);
         clearPendingDuplicate();
     }
 
@@ -142,9 +145,11 @@ export function createHomeModule(win, doc) {
             return;
         }
 
+        duplicateState.forceKey ||= win.crypto.randomUUID();
         const retryPayload = {
             ...duplicateState.basePayload,
             force: 'true',
+            idempotency_key: duplicateState.forceKey,
         };
 
         setSubmitting(true);
@@ -178,7 +183,7 @@ export function createHomeModule(win, doc) {
 
     function handleDownloadSuccess(payload, basePayload) {
         const resolution = resolveDownloadSubmission(payload, basePayload);
-        state.pendingDuplicate = resolution.pendingDuplicate;
+        state.pendingDuplicate = resolution.pendingDuplicate ? { ...resolution.pendingDuplicate, taskId: payload.task_id || payload.task?.id } : null;
         showFeedback(resolution.feedback.message, resolution.feedback.kind);
 
         if (resolution.kind === 'duplicate_confirm') {
@@ -189,8 +194,9 @@ export function createHomeModule(win, doc) {
             return;
         }
 
-        if (resolution.kind === 'queued') {
+        if (['queued', 'duplicate_active', 'duplicate_existing'].includes(resolution.kind)) {
             markSubmitted(JSON.parse(basePayload.metadata_document));
+            state.guided?.submitted(payload.task_id || payload.task?.id);
             fetchSummary();
         }
 
@@ -296,16 +302,15 @@ export function createHomeModule(win, doc) {
         } finally { if (state.historyController === historyController) state.historyController = null; }
     }
 
-    async function submitUpload(metadataDocument) {
+    async function submitUpload(attempt) {
         const controller = state.pageController;
-        const archiveInput = doc.getElementById('archive_file');
-        const file = archiveInput && archiveInput.files && archiveInput.files[0] ? archiveInput.files[0] : null;
+        const { document: metadataDocument, file, target } = attempt.snapshot;
         if (!file) {
             showFeedback('请先选择压缩包文件。', 'error');
             return;
         }
 
-        const metadataPayload = { metadata_document: metadataDocument };
+        const metadataPayload = { metadata_document: metadataDocument, idempotency_key: attempt.key, file_sha256: attempt.fileSHA256, delivery_target: target };
         let initPayload = null;
         setSubmitting(true, '上传中...');
         showFeedback('正在创建上传任务...', 'info');
@@ -319,6 +324,7 @@ export function createHomeModule(win, doc) {
                 onInit(payload) {
                     initPayload = payload;
                     if (!isCurrentPage(controller)) return;
+                    state.pendingUploadId = payload.status === 'CREATED' ? payload.task_id : null;
                     showFeedback('上传任务已创建，正在上传压缩包...', 'info');
                     showHomeActionButtons(doc, { logsUrl: payload.logs_url || '/logs' }, win);
                 },
@@ -329,18 +335,18 @@ export function createHomeModule(win, doc) {
                 createXHR: typeof win.XMLHttpRequest === 'function' ? () => new win.XMLHttpRequest() : undefined,
             });
             if (!isCurrentPage(controller)) return;
+            state.pendingUploadId = null;
             markSubmitted(metadataDocument);
             showFeedback('任务已加入队列。', 'success');
+            state.guided?.submitted(initPayload?.task_id || result.uploadPayload?.task_id);
             fetchSummary();
             showHomeActionButtons(doc, { logsUrl: (initPayload && initPayload.logs_url) || (result.uploadPayload && result.uploadPayload.logs_url) || '/logs' }, win);
         } catch (error) {
-            if (initPayload && initPayload.task_id) {
-                api.postJson(`/api/tasks/${encodeURIComponent(initPayload.task_id)}/cancel`, {}).then(({ response }) => {
-                    if (!response.ok && response.status !== 409) throw new Error(`HTTP ${response.status}`);
-                }).catch((cancelError) => console.error('Failed to cancel interrupted upload:', cancelError));
+            if (controller.signal.aborted && initPayload && initPayload.task_id) {
+                cancelUnfinishedUpload(api, initPayload.task_id).catch(() => {});
             }
             if (!isCurrentPage(controller)) return;
-            console.error('Failed to submit upload task:', error);
+            state.guided?.failed();
             showFeedback(error && error.message ? error.message : '上传失败，请稍后重试。', 'error');
             if (initPayload) {
                 showHomeActionButtons(doc, { logsUrl: initPayload.logs_url || '/logs' }, win);
@@ -356,45 +362,33 @@ export function createHomeModule(win, doc) {
         event.preventDefault();
         const controller = state.pageController;
         if (state.submitting || !isCurrentPage(controller)) return;
-
-        const form = event.currentTarget;
+        // Enter in an input cannot bypass the review screen.
+        if (state.guided?.workflow.step !== 'review') return;
         resetHomeActionButtons(doc, win);
         clearPendingDuplicate();
-
-        let metadataDocument;
-        try { metadataDocument = state.shell?.getDocument();
-            if (!metadataDocument) throw new Error('元数据字段尚未就绪。');
-        } catch (error) { showFeedback(error.message, 'error'); return; }
-        const mode = getSelectedMode(doc);
-        if (mode === 'upload') {
-            await submitUpload(metadataDocument);
-            return;
-        }
-
-        const formPayload = { kind: mode, url: readOptionalField(form, 'url'), force: readForceValue(form), metadata_document: JSON.stringify(metadataDocument) };
-        const url = (formPayload.url || '').trim();
-        if (!url) {
-            showFeedback('请先输入 Telegraph 链接。', 'error');
-            return;
-        }
-
-        setSubmitting(true);
-        showFeedback('正在提交任务...', 'info');
-
+        setSubmitting(true, '正在核对提交内容…');
         try {
-            const { response, payload } = await postDownloadRequest(formPayload, controller);
+            const attempt = await state.guided.confirm(controller.signal);
             if (!isCurrentPage(controller)) return;
-            if (!response.ok || !payload || payload.ok !== true) {
-                showFeedback(buildRequestErrorMessage(payload, response.status), 'error');
-                return;
+            const { document, source, target } = attempt.snapshot;
+            if (source.mode === 'upload') { await submitUpload(attempt); return; }
+            const formPayload = { kind: source.mode, url: source.url, force: source.force, metadata_document: JSON.stringify(document), idempotency_key: attempt.key, delivery_target: target };
+            showFeedback('正在提交已确认的作品…', 'info');
+            let result;
+            try { result = await postDownloadRequest(formPayload, controller); }
+            catch (error) {
+                if (!isCurrentPage(controller)) return;
+                // A lost create response is uncertain: query the same key before retrying.
+                result = await api.getJson(`/api/tasks/submissions/${encodeURIComponent(attempt.key)}`, { signal: controller.signal });
+                if (!result.response.ok || !result.payload?.ok) throw error;
             }
-
-            handleDownloadSuccess(payload, formPayload);
+            if (!isCurrentPage(controller)) return;
+            if (!result.response.ok || !result.payload?.ok) throw new Error(buildRequestErrorMessage(result.payload, result.response.status));
+            handleDownloadSuccess(result.payload, formPayload);
         } catch (error) {
             if (!isCurrentPage(controller)) return;
-            console.error('Failed to submit download:', error);
-            showFeedback('网络异常，请稍后重试。', 'error');
-            resetHomeActionButtons(doc, win);
+            state.guided?.failed();
+            showFeedback(error.message || '提交暂未完成，请重试；相同内容会继续同一个任务。', 'error');
         } finally {
             if (isCurrentPage(controller)) setSubmitting(false);
         }
@@ -458,6 +452,8 @@ export function createHomeModule(win, doc) {
                     state.metadataSearch.mount();
                 },
             } });
+            state.guided = createGuidedWorkspace({ root: workspace, win, doc, api, getShell: () => state.shell, getOCR: () => state.ocr, getSearch: () => state.metadataSearch, showFeedback });
+            state.guided.loadDefaults(state.pageController.signal);
             state.shell.mount();
             state.retryNode = workspace?.querySelector('[data-metadata-retry]');
             state.retryHandler = () => retryMetadataWorkspace(state, showFeedback);
@@ -494,6 +490,11 @@ export function createHomeModule(win, doc) {
     }
 
     function unmount() {
+        const unfinishedUpload = state.pendingUploadId;
+        state.pendingUploadId = null;
+        if (unfinishedUpload) cancelUnfinishedUpload(api, unfinishedUpload).catch(() => {});
+        state.guided?.dispose();
+        state.guided = null;
         state.evidenceTabs?.unmount();
         state.evidenceTabs = null;
         state.ocr?.dispose();

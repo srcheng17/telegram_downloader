@@ -528,3 +528,30 @@ test('private broker submits its document through URL and upload APIs without ex
         await rm(root, { recursive: true, force: true });
     }
 });
+
+test('CLI shares finite caption extraction with browser and OCR authority only rereads schema', async () => {
+    const keys=['title','aliases','creators.writer','creators.translator'];
+    const localSchema={schema_version:1,definitions_version:'caption-v1',definitions:Object.fromEntries(keys.map(key=>[key,{key,label:key,type:key==='title'?'string':'string[]',enabled:true,editable:true,extractable:['ocr','rule','ai'],max_bytes:4096,item_max_bytes:1024,max_items:64}]))};
+    const reads=[];
+    const state=createWorkspaceState({schema:localSchema,recognizer:{close:async()=>{}},get:async path=>{reads.push(path);return path.endsWith('/schema')?localSchema:{rules_version:1,definitions_version:'caption-v1',rules:[]};},post:async()=>{throw new Error('No external request expected');}});
+    try {
+        const text='《星 海 旅 记》\n[River Ink]Star\nJourney(Aster_x_Beryl)[星 光 汉化]';
+        await state.apply('text-set',{text});const result=await state.apply('rules-preview');
+        assert.equal(result.candidate_count,4);assert.ok(!JSON.stringify(result).includes('River Ink'));
+        const review=await state.apply('review');assert.equal(review.merged.text,text);
+        const fields=Object.assign({},...review.candidates.map(candidate=>candidate.fields));assert.equal(fields.title.value,'星海旅记');assert.deepEqual(fields.aliases.value,['Star Journey']);assert.deepEqual(fields['creators.writer'].value,['River Ink']);assert.deepEqual(fields['creators.translator'].value,['星光汉化']);
+        const candidate=review.candidates.find(candidate=>candidate.fields.title);
+        await state.apply('candidate-adopt',{candidateId:candidate.candidate_id,keys:['title']});
+        assert.deepEqual(reads,['/api/settings/extraction-rules','/api/metadata/schema']);
+    } finally {await state.close();}
+});
+
+test('CLI derived AI preview retains original merged text and maps model evidence back to raw',async()=>{
+    const state=fixtureState({postOverride:async(_path,input)=>({request_id:input.request_id,candidates:[{candidate_id:'derived-ai',request_id:input.request_id,origin:'ai',schema_version:1,definitions_version:'test-v1',base_document_revision:input.base_document_revision,input_revision:input.input_revision,config_revision:input.config_revision,field_revisions:input.field_revisions,fields:{title:{state:'value',value:'星海',provenance:[{kind:'ai',source_id:'configured-ai',evidence:{start:7,end:9}}]}}}]})});
+    try {
+        const text='Title: 星 海';await state.apply('text-set',{text});await state.apply('ai-prepare',{keys:['title']});
+        const review=await state.apply('ai-review');assert.equal(review.text,'Title: 星海');
+        await state.apply('ai-extract',{ticket:review.ticket});const current=await state.apply('review');
+        assert.equal(current.merged.text,text);assert.deepEqual(current.candidates[0].fields.title.provenance[0].evidence,{start:7,end:10});
+    }finally{await state.close();}
+});

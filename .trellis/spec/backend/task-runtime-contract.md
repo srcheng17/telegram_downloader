@@ -34,6 +34,11 @@ SQL, files and HTTP boundaries. Use this contract with the existing database gui
 
 | Condition | Result |
 | --- | --- |
+| Same submission key with changed metadata/source/hash/target | 409 `idempotency_conflict`, no new task |
+| Canonical URL reuse with different keyed metadata | 409 `submission_source_conflict`, no discarded snapshot |
+| Keyed upload bytes mismatch declared SHA-256 | Reject attachment, keep task recoverable |
+| Komga target exists with different content | 409 `komga_target_conflict`, preserve destination |
+| Komga scan accepted but record/projection unavailable | `pending`, never `verified` |
 | Invalid extension/declared upload size | 400 before task creation |
 | Actual oversized upload | 413, partial file removed, no source attached |
 | Archive count/size/no-image violation or cancellation | execution fails/stops, no published CBZ |
@@ -54,6 +59,11 @@ SQL, files and HTTP boundaries. Use this contract with the existing database gui
 
 ## 6. Tests Required
 
+- Submission integration: same-key races, changed request conflicts, dropped create
+  response recovery, replay after schema change, and keyed upload actual hash check.
+- Real Komga opt-in: `bash scripts/check_komga_delivery.sh` checks exact path/IDs,
+  ComicInfo readback, same-file retry, non-overwrite conflicts, and stale READY
+  metadata remaining pending. Ordinary tests do not start a Komga container.
 - PostgreSQL store: concurrent create/retry and retry/retry behind a held advisory lock must leave one active task; cover force, NULL/empty canonical fallback, READY/RUNNING/CANCELING conflicts without mutations, snapshot roundtrip, same-owner retry ABA fencing, cancellation recovery and >10000 query/count.
 - Worker/archive/HTTP: Execute exit before cancel ack, settings application, same-name artifact isolation, source cleanup ordering, limits and partial upload cleanup. `timeout_test.go` covers header/body timeout recovery, fallback, exhausted requests retaining other images and parent cancellation. `natural_order_test.go` covers ZIP/external tar ordering with padding, nested paths, Unicode and unbounded digit runs. URL tests assert canonicalization is idempotent and the outbound request preserves encoded spaces/Unicode/separators; query tests assert valid UTF-8 and the byte cap.
 - Frontend/browser: HTML413 recovery/cancel, Komga failure, cached and cache-miss history restore without stale callbacks.
@@ -62,6 +72,10 @@ SQL, files and HTTP boundaries. Use this contract with the existing database gui
 
 ## 7. Wrong vs Correct
 
+Wrong: treat HTTP copy success as indexed, or create a fresh task after a lost upload-init reply.
+
+Correct: recover the same submission receipt; report copy and verified Komga readback separately.
+
 Wrong: reset attempt to zero, then fence only by worker ID/attempt; acknowledge cancel while Execute still writes.
 
 Correct: keep generation unchanged on retry, increment it on claim, check it on every execution write; cancel context, await Execute, remove its unpublished artifact, then acknowledge.
@@ -69,3 +83,36 @@ Correct: keep generation unchanged on retry, increment it on claim, check it on 
 Wrong: `errors.Is(err, context.DeadlineExceeded)` cancels all downloads; `URL{Path: escapedPath}` encodes `%` again; a lock-and-lookup CTE relies on a snapshot taken before waiting.
 
 Correct: `ctx.Err()` decides task cancellation; `URL{Path: decodedPath, RawPath: escapedPath}` preserves path semantics; acquire the advisory lock before issuing a fresh lookup statement.
+
+## Guided submission and Komga delivery
+
+- `/download` and `/api/tasks/upload/init` accept optional `idempotency_key`
+  (16–128 ASCII letters/digits/underscore/hyphen) and `delivery_target`
+  (`download` or `komga`). No key retains the legacy contract. Keyed upload init
+  requires `file_name`, positive `file_size`, and lowercase SHA-256
+  `file_sha256`; attachment verifies filename, size, and actual bytes.
+- Migration 025 creates a submission receipt in the same PostgreSQL transaction
+  as the task/input/event, or canonical URL reuse. Acquire the receipt advisory
+  lock before the existing URL identity lock. Same key and same reviewed input
+  recovers the original task after response loss/restart; different input yields
+  HTTP 409 `idempotency_conflict`. Creation-time server settings stay frozen;
+  replay is checked before current registry/settings normalization.
+- `GET /api/tasks/submissions/{key}` runs behind normal administrator middleware,
+  returns the standard task payload and `upload_url` only for `CREATED` uploads,
+  and uses `Cache-Control: no-store`. It creates nothing. New keyed URL requests
+  may reuse a canonical task only with the same metadata document; differing
+  documents return 409 `submission_source_conflict`, without bypassing an active
+  URL even with `force`. Different keys may select different delivery targets
+  for the same unchanged artifact. The target is part of key identity but does
+  not itself schedule a copy; the confirmed client performs that action.
+- Komga copy uses exact-content idempotency and no-replace atomic publication.
+  Same target with different bytes returns 409 `komga_target_conflict`; symlinks
+  are refused. The production delivery service resolves saved credentials and
+  allowlisted library mapping, queues library scan, then GETs an exact-path book.
+  `copy_completed`, `delivery_status` (`pending`/`indexed`), and `komga_indexed`
+  (`pending`/`verified`) are separate facts. `verified` requires real book/library
+  IDs, READY media, source hash, size/page count, and projected ComicInfo values.
+  Accepted scan/analyze is never proof. A pending copy can resume via the same
+  action without rewriting/recreating the work. Discovery and readback are
+  bounded; incomplete discovery remains pending. Legacy copier-only embeddings
+  explicitly report `pending`/`connection_unconfigured`.

@@ -97,6 +97,7 @@ type API struct {
 }
 
 type RouterOptions struct {
+	KomgaDelivery           KomgaDeliveryService
 	UpstreamBaseURL         string
 	HTTPClient              *http.Client
 	DownloadSubmitter       DownloadSubmitter
@@ -169,6 +170,7 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 			options.SettingsProvider,
 			&config.SettingsSnapshot{Timeout: api.downloadTimeout, Retries: api.downloadRetries, ImageConcurrency: api.imageConcurrency},
 		)
+		taskCore.komgaDelivery = options.KomgaDelivery
 		taskCore.registerRoutes(router)
 	}
 	return router

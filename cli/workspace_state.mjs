@@ -4,7 +4,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { createMetadataDraft } from '../frontend/src/shared/metadata/draft.js';
 import { candidateFromHistory } from '../frontend/src/shared/metadata/candidates.js';
 import { byteLength, decodeMetadataSchema, validateFieldValue } from '../frontend/src/shared/metadata/schema.js';
-import { extractRules, validateRuleSet } from '../frontend/src/ocr/rules.js';
+import { validateRuleSet } from '../frontend/src/ocr/rules.js';
+import { deriveOCRText, extractLocalText, mapCandidateEvidence } from '../frontend/src/ocr/text.js';
 import { IMAGE_LIMITS } from '../frontend/src/ocr/images.js';
 import { validateLanguages, readImageFile, readClipboardImage, createNodeRecognizer } from './ocr.mjs';
 import { CliError, EXIT } from './errors.mjs';
@@ -131,12 +132,12 @@ export function createWorkspaceState({ schema: schemaInput, get, post, submit, r
         const candidate = entry.candidate;
         const [currentRaw, settings] = await Promise.all([
             get('/api/metadata/schema'),
-            candidate.origin === 'legacy' ? Promise.resolve(null) :
+            ['legacy', 'ocr'].includes(candidate.origin) ? Promise.resolve(null) :
                 get(candidate.origin === 'rule' ? '/api/settings/extraction-rules' : candidate.origin === 'ai' ? '/api/settings/ai' : '/api/settings/sources'),
         ]);
         const current = decodeMetadataSchema(currentRaw);
         if (current.schema_version !== candidate.schema_version || current.definitions_version !== candidate.definitions_version) throw conflict('字段定义已变化，请重新获取候选。');
-        if (candidate.origin === 'legacy') return;
+        if (['legacy', 'ocr'].includes(candidate.origin)) return;
         if (candidate.origin === 'rule') {
             try { validateRuleSet(settings, current); } catch { throw conflict('规则已变化，请重新提取。'); }
             if (settings.rules_version !== entry.rulesVersion) throw conflict('规则已变化，请重新提取。');
@@ -263,7 +264,7 @@ export function createWorkspaceState({ schema: schemaInput, get, post, submit, r
         case 'rules-preview': {
             const ruleSet = await get('/api/settings/extraction-rules'); validateRuleSet(ruleSet, schema);
             const source = merged(args.acceptPartial === true);
-            const result = extractRules({ text: source.text, segments: source.segments, ruleSet, schema, document: draft.getSnapshot(), inputRevision, configRevision });
+            const result = extractLocalText({ text: source.text, segments: source.segments, ruleSet, schema, document: draft.getSnapshot(), inputRevision, configRevision });
             const remembered = remember(result.candidates, { rulesVersion: ruleSet.rules_version });
             return { ...remembered, warning_codes: result.warnings.map(safeWarning) };
         }
@@ -329,17 +330,19 @@ export function createWorkspaceState({ schema: schemaInput, get, post, submit, r
             const source = merged(args.acceptPartial === true);
             if (!source.text.trim()) throw inputError('没有可发送的文字。');
             configRevision = ai.config_version; draft.setContext({ inputRevision, configRevision });
-            sendSnapshot = { text: source.text, fieldKeys: [...new Set(keys)], modelId: ai.model_id, target: ai.base_url, configVersion: ai.config_version, rulesVersion: undefined, stale: false, inputRevision };
-            changed(); return { revision, text_bytes: byteLength(source.text), field_keys: sendSnapshot.fieldKeys, model_id: sendSnapshot.modelId, review_required: true };
+            const derived = deriveOCRText(source.text);
+            sendSnapshot = { text: derived.text, derived, segments: source.segments, fieldKeys: [...new Set(keys)], modelId: ai.model_id, target: ai.base_url, configVersion: ai.config_version, rulesVersion: undefined, stale: false, inputRevision };
+            changed(); return { revision, text_bytes: byteLength(sendSnapshot.text), field_keys: sendSnapshot.fieldKeys, model_id: sendSnapshot.modelId, review_required: true };
         }
         case 'ai-edit': {
             if (!sendSnapshot) throw conflict('请先生成 AI 发送预览。');
             if (typeof args.text !== 'string' || !args.text.trim() || byteLength(args.text) > 65536) throw inputError('AI 发送文字必须在 1–64 KiB 之间。');
-            sendSnapshot.text = args.text; sendSnapshot.stale = false; sendSnapshot.inputRevision = inputRevision; reviewTicket = null; changed();
+            sendSnapshot.text = args.text; sendSnapshot.derived = null; sendSnapshot.stale = false; sendSnapshot.inputRevision = inputRevision; reviewTicket = null; changed();
             return { revision, text_bytes: byteLength(args.text), review_required: true };
         }
         case 'ai-retain': {
             if (!sendSnapshot) throw conflict('请先生成 AI 发送预览。');
+            if (sendSnapshot.stale) sendSnapshot.derived = null;
             sendSnapshot.stale = false; sendSnapshot.inputRevision = inputRevision; reviewTicket = null; changed();
             return { revision, text_bytes: byteLength(sendSnapshot.text), review_required: true };
         }
@@ -358,7 +361,7 @@ export function createWorkspaceState({ schema: schemaInput, get, post, submit, r
                 input_revision: context.inputRevision, config_revision: ai.config_version };
             const result = await post('/api/metadata/extract', request, 130_000);
             if (request.input_revision !== inputRevision || document.revision !== draft.getSnapshot().revision || result.request_id !== requestId || !Array.isArray(result.candidates)) throw conflict('提取结果与当前草稿修订不一致。');
-            return { ...remember(result.candidates, { configVersion: ai.config_version }), warning_codes: (result.warnings || []).map(safeWarning) };
+            return { ...remember(sendSnapshot.derived ? mapCandidateEvidence(result.candidates, sendSnapshot.derived, sendSnapshot.segments) : result.candidates, { configVersion: ai.config_version }), warning_codes: (result.warnings || []).map(safeWarning) };
         }
         case 'validate': {
             const result = await post('/api/metadata/validate', { document: draft.getSnapshot() });

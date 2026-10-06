@@ -70,6 +70,14 @@ const test = base.test.extend({
 
 async function waitForMetadata(page) {
   await expect(page.locator('#home-page')).toHaveAttribute('data-metadata-state', 'ready');
+  await expect(page.locator('#metadata-title')).toBeAttached();
+}
+
+async function enterReview(page, { automatic = false } = {}) {
+  await waitForMetadata(page);
+  await page.locator('#automatic-preparation').setChecked(automatic);
+  await page.locator('[data-workflow-next]').click();
+  await expect(page.locator('#home-page')).toHaveAttribute('data-workflow-step', 'review');
   await expect(page.locator('#metadata-title')).toBeVisible();
 }
 
@@ -88,4 +96,4 @@ function metadataDocument(schema, values, { cleared = [], revision = 1 } = {}) {
   return { schema_version: schema.schema_version, definitions_version: schema.definitions_version, revision, fields, definition_snapshot };
 }
 
-module.exports = { test, expect, anonymousTest: base.test, adminPassword, loginWithAPI, waitForMetadata, metadataDocument };
+module.exports = { test, expect, anonymousTest: base.test, adminPassword, loginWithAPI, waitForMetadata, enterReview, metadataDocument };

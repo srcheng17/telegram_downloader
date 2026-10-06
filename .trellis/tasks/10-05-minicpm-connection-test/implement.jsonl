@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/extraction-protocol.md", "reason": "Fixed inference and native protocol distinction"}
+{"file": ".trellis/spec/backend/workspace-metadata-auth.md", "reason": "Saved credential and neutral fixture boundaries"}
+{"file": ".trellis/spec/frontend/mediactl-client.md", "reason": "Protocol CLI privacy and saved settings compatibility"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Chinese UI and rebuilt bundle validation"}
+{"file": "docs/development/module-boundaries.md", "reason": "Protocol adapter and app validation ownership"}

@@ -103,3 +103,71 @@ test('OCR comparison preflight rejects an input changed or disposed while author
         assert.equal(f.draft.getSnapshot().revision, 0); f.module.dispose();
     }
 });
+
+test('automatic prepare waits for OCR, uses defaults once, and leaves adoption to coordinator', async () => {
+    const f=setup(validAI);await tick();
+    await f.module.queue.add([{size:1}]);
+    const prepared=await f.module.prepare({allowAI:true});
+    assert.equal(prepared.entries.length,2);
+    assert.equal(f.calls.length,1);
+    assert.equal(f.draft.getSnapshot().revision,0);
+    assert.ok(prepared.entries.every(entry=>typeof entry.beforeApply==='function'));
+    const revision=f.module.getInputRevision();await f.module.prepare({allowAI:true});assert.equal(f.calls.length,1);assert.equal(f.module.getInputRevision(),revision);
+    f.module.markClean();assert.equal(f.module.isDirty(),false);
+    control(f.root,'补充或手工录入文字（加入合并预览）').value='Changed';control(f.root,'补充或手工录入文字（加入合并预览）').emit('input');assert.equal(f.module.isDirty(),true);
+    f.module.dispose();
+});
+test('automatic preparation can abort late AI and preserve recognized text',async()=>{
+    let finish;const f=setup(()=>new Promise(resolve=>{finish=resolve;}));await tick();await f.module.queue.add([{size:1}]);await tick();
+    const promise=f.module.prepare({allowAI:true});await tick();f.module.cancelPreparation();
+    finish({response:{ok:true},payload:{request_id:f.calls[0][1].request_id,candidates:[]}});
+    await assert.rejects(promise,{name:'AbortError'});
+    assert.equal(f.module.queue.snapshot().images[0].text,'标题：图书');assert.equal(f.draft.getSnapshot().revision,0);f.module.dispose();
+});
+test('automatic preparation distinguishes empty AI results from service errors and permits local progress',async()=>{
+    for(const failed of [false,true]) {
+        const f=setup(async(_url,input)=>({response:{ok:!failed},payload:failed?{code:'unavailable'}:{request_id:input.request_id,candidates:[]}}));await tick();
+        const manual=control(f.root,'补充或手工录入文字（加入合并预览）');manual.value='标题：图书';manual.emit('input');
+        const result=await f.module.prepare({allowAI:true});assert.equal(result.entries.length,1);
+        assert.match(result.warnings.join(' '),failed?/不可用/:/没有找到/);f.module.dispose();
+    }
+});
+
+test('explicit prepare retry refreshes authority and cached suggestions while preserving source and manual fields', async () => {
+    const f = setup(validAI); await tick();
+    const manual = control(f.root, '补充或手工录入文字（加入合并预览）'); manual.value = '标题：图书'; manual.emit('input');
+    const first = await f.module.prepare();
+    f.draft.setField('title', '人工保留');
+    const originalGet = f.api.getJson;
+    f.api.getJson = async (...args) => {
+        const result = structuredClone(await originalGet(...args));
+        if (args[0].endsWith('/ai')) result.payload.config_version = 2;
+        if (args[0].endsWith('/extraction-rules')) result.payload.rules_version = 2;
+        return result;
+    };
+    const second = await f.module.prepare({ retry: true });
+    assert.equal(f.calls.length, 2);
+    assert.equal(f.calls[1][1].config_revision, 2);
+    assert.equal(f.calls[1][1].rules_version, 2);
+    assert.equal(manual.value, '标题：图书');
+    assert.equal(f.draft.getSnapshot().fields.title.value, '人工保留');
+    assert.equal(f.draft.getSnapshot().fields.title.manual_locked, true);
+    await assert.rejects(first.entries[0].beforeApply({ signal: new AbortController().signal }));
+    assert.ok(second.entries.length);
+    await f.module.prepare(); assert.equal(f.calls.length, 2);
+    assert.ok(f.reads.filter(read => !read.url.endsWith('/schema')).every(read => read.options.cache === 'no-store'));
+    f.module.dispose();
+});
+
+test('cancel explicit prepare retry aborts authority reload and ignores late settings', async () => {
+    const f = setup(); await tick();
+    const originalGet = f.api.getJson; const pending = [];
+    f.api.getJson = (...args) => new Promise(resolve => pending.push({ args, finish: async () => resolve(await originalGet(...args)) }));
+    const preparation = f.module.prepare({ retry: true });
+    assert.equal(pending.length, 2);
+    f.module.cancelPreparation();
+    assert.ok(pending.every(item => item.args[1].signal.aborted));
+    await Promise.all(pending.map(item => item.finish()));
+    await assert.rejects(preparation, { name: 'AbortError' });
+    assert.equal(f.calls.length, 0); f.module.dispose();
+});

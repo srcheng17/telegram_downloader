@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend tests lint generated bundles and lifecycle checks"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend and task runtime validation"}
+{"file": ".trellis/spec/frontend/candidate-adoption.md", "reason": "Regression guard for evidence and human edits"}
+{"file": ".trellis/tasks/10-06-guided-media-workflow/prd.md", "reason": "Observable acceptance and the confirmed one-final-confirmation submission boundary"}
+{"file": ".trellis/tasks/10-06-guided-media-workflow/research/screenshot-experiment.md", "reason": "Avoid claiming baseline tests proved improved accuracy"}

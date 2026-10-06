@@ -111,7 +111,7 @@ func TestAdminAuthMiddlewareMatrix(t *testing.T) {
 		handler.ServeHTTP(w, req)
 		return w
 	}
-	for _, path := range []string{"/", "/settings", "/logs", "/api/tasks", "/api/new-future-route", "/api/telegram/account", "/api/telegram/events", "/v2/tasks", "/downloads/private.cbz", "/static/private.json", "/healthz/private"} {
+	for _, path := range []string{"/", "/settings", "/logs", "/api/tasks", "/api/tasks/submissions/stable-client-key-1234", "/api/new-future-route", "/api/telegram/account", "/api/telegram/events", "/v2/tasks", "/downloads/private.cbz", "/static/private.json", "/healthz/private"} {
 		if got := request("GET", path, "", nil, "", ""); got.Code != 401 {
 			t.Fatalf("anonymous %s: %d", path, got.Code)
 		}

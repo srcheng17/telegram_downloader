@@ -116,3 +116,15 @@ Correct: reserve `metadata-<field-key>` for editor inputs, call the shared trans
 and route history through candidate preview/adoption into the single draft.
 Wrong: unmount every form on tab change, or mark a failed first load as completed.
 Correct: retain successful ordinary form instances and retry only incomplete hydration.
+
+## Guided home workflow
+
+Materials, preparing, review and result share one mounted in-memory workspace.
+Hidden panels are inert; entering a step focuses its heading. Previous/next retain
+OCR order/corrections and manual fields. Cancellation fences late preparation and
+settings replies. The review page requires one final confirmation; no upload init,
+task creation or Komga copy runs during preparation. Confirmation freezes metadata,
+source, file hash and target under a stable submission key; authority/schema drift
+returns to review. Lost responses resolve the same key before retrying bytes.
+Only the submitted revision becomes clean. Result polling reuses Task Core actions;
+Komga pending remains distinct from verified IDs and metadata readback.

@@ -11,7 +11,7 @@ const errors = {
 const relationships = { unknown: '层级待核对', series: '系列条目', volume: '单卷条目', volume_in_series: '所属系列已识别' };
 
 export function createMetadataSearchModule({ root, doc = globalThis.document, api = createTasksApi(), getDraft, getRegistry, showCandidate, onInputChange = () => getDraft().getContext() }) {
-    let mounted = false;
+    let mounted = false; let ready; let prepared = null;
     let sequence = 0;
     let controller;
     let sources = [];
@@ -29,7 +29,7 @@ export function createMetadataSearchModule({ root, doc = globalThis.document, ap
     function selected() { return choices.filter(choice => choice.input.checked && !choice.input.disabled).map(choice => choice.source.provider_id); }
     function cancel() { sequence += 1; controller?.abort(); controller = null; }
     function invalidated() {
-        cancel();
+        cancel(); prepared = null;
         onInputChange('provider');
         results.replaceChildren();
         status.textContent = '关键词或来源已变化，请确认后重新搜索。';
@@ -64,8 +64,9 @@ export function createMetadataSearchModule({ root, doc = globalThis.document, ap
             const link = element('a', '查看来源条款'); link.href = text.license_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; parent.appendChild(link);
         }
     }
-    async function resolve(source, record) {
+    async function resolve(source, record, { automatic = false, signal } = {}) {
         cancel(); const ticket = sequence; const base = snapshot(); controller = new AbortController();
+        const request = controller; const abort = () => request.abort(); signal?.addEventListener('abort', abort, { once:true }); if (signal?.aborted) request.abort();
         status.textContent = '正在加载所选条目的字段，请稍候…';
         const customMappings = {};
         for (const mapping of mappings) {
@@ -82,7 +83,7 @@ export function createMetadataSearchModule({ root, doc = globalThis.document, ap
         };
         try {
             const { response, payload } = await api.postJson('/api/metadata/candidates/resolve', input, { signal: controller.signal });
-            if (!current(ticket, base)) return;
+            if (!current(ticket, base) || request.signal.aborted) { if (automatic) throw new DOMException('查询已取消。', 'AbortError'); return; }
             if (!response.ok || !payload?.candidate) throw new Error(errors[payload?.code] || '详情加载失败，请重试。');
             if (payload.config_version !== source.config_version || payload.candidate.input_revision !== base.context.inputRevision || payload.candidate.config_revision !== base.context.configRevision) throw new Error('候选已过期，请重新搜索。');
             const beforeApply = async ({ signal }) => {
@@ -102,10 +103,11 @@ export function createMetadataSearchModule({ root, doc = globalThis.document, ap
                 // config_revision belongs to the shared AI context. The source has its own config_version.
                 if (!Number.isSafeInteger(input.config_version) || configured?.enabled !== true || configured.config_version !== input.config_version) throw new Error('来源设置已变化。');
             };
+            if (automatic) return { candidate:payload.candidate,beforeApply };
             showCandidate(payload.candidate, { beforeApply });
             status.textContent = '详情已送至字段对照区。请核对作品与版本，再明确选择要采用的字段；现有草稿尚未修改。';
-        } catch (error) { if (current(ticket, base) && error.name !== 'AbortError') status.textContent = error.message; }
-        finally { if (ticket === sequence) controller = null; }
+        } catch (error) { if (automatic) throw error; if (current(ticket, base) && error.name !== 'AbortError') status.textContent = error.message; }
+        finally { signal?.removeEventListener('abort',abort); if (ticket === sequence) controller = null; }
     }
     function renderResults(payload) {
         results.replaceChildren();
@@ -144,6 +146,77 @@ export function createMetadataSearchModule({ root, doc = globalThis.document, ap
         } catch (error) { if (current(ticket, base) && error.name !== 'AbortError') status.textContent = error.message; }
         finally { if (ticket === sequence) controller = null; }
     }
+    async function prepare({ title = '', aliases = [], writers = [], signal, retry = false } = {}) {
+        if (signal?.aborted) throw new DOMException('查询已取消。', 'AbortError');
+        if (retry) {
+            const previous = {
+                keyword: keyword?.value,
+                choices: new Map(choices.map(choice => [choice.source.provider_id, { enabled: choice.source.enabled, checked: choice.input.checked }])),
+                mappings: new Map(mappings.map(mapping => [mapping.key, mapping.input.value])),
+            };
+            unmount();
+            ready = hydrate({ signal, previous });
+        }
+        await mount();
+        if (signal?.aborted || !mounted) throw new DOMException('查询已取消。', 'AbortError');
+        if (!keyword || !searchButton) return { entries:[],warnings:['来源设置暂不可用，可以手工继续。'] };
+        const titles = [...new Set([title,...aliases].filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()))];
+        const ids = selected();
+        if (!titles.length || !ids.length) return { entries:[],warnings:[!titles.length ? '尚无标题或别名；可以手工填写后继续。' : '没有启用的书目来源，可以继续。'] };
+        const queries = titles.slice(0,2);
+        const cacheKey = JSON.stringify({queries,writers,ids,context:getDraft().getContext(),versions:choices.filter(choice => ids.includes(choice.source.provider_id)).map(choice => choice.source.config_version)});
+        if (prepared?.key === cacheKey) return prepared.result;
+        keyword.value = queries[0]; updateConfirmation();
+        cancel(); const ticket = sequence; const base = snapshot(); controller = new AbortController(); const request = controller;
+        const abort = () => request.abort(); signal?.addEventListener('abort',abort,{once:true});
+        const check = () => { if (signal?.aborted || request.signal.aborted || !current(ticket,base)) throw new DOMException('查询已取消。','AbortError'); };
+        const warnings = []; const groups = new Map(); let partialFailure = false;
+        status.textContent = '正在用标题和别名查询已启用来源…';
+        try {
+            for (const query of queries) {
+                check();
+                const {response,payload} = await api.postJson('/api/metadata/search',{keyword:query,provider_ids:ids,query_revision:base.context.inputRevision},{signal:request.signal});
+                check();
+                if (!response.ok || !Array.isArray(payload?.sources) || payload.query_revision !== base.context.inputRevision) { partialFailure = true; warnings.push(errors[payload?.code] || '书目查询暂不可用，可以继续。'); continue; }
+                for (const source of payload.sources) {
+                    if (!ids.includes(source.provider_id)) continue;
+                    if (source.error && source.error.code !== 'no_results') { partialFailure = true; warnings.push(errors[source.error.code] || '部分来源未完成，可以继续。'); }
+                    const group = groups.get(source.provider_id) || {...source,candidates:[]};
+                    for (const record of source.candidates || []) if (!group.candidates.some(item => item.record_id === record.record_id)) group.candidates.push(record);
+                    groups.set(source.provider_id,group);
+                }
+                if (ids.some(id => !payload.sources.some(source => source.provider_id === id))) { partialFailure = true; warnings.push('部分来源未返回结果，可以继续。'); }
+            }
+            check(); renderResults({sources:[...groups.values()]});
+            // Literal title/alias plus the complete writer identity and explicit
+            // single-volume level. Similarity, a first row or a series record
+            // alone cannot establish that this is the uploaded work.
+            const normalize = value => String(value).normalize('NFC').trim().replace(/\s+/gu,' ').toLocaleLowerCase('en');
+            const names = values => [...new Set(values.map(normalize))].sort();
+            const expectedWriters = names(writers);
+            const matches = [];
+            for (const source of groups.values()) for (const record of source.candidates || []) {
+                if (record.relationship !== 'volume' || !expectedWriters.length) continue;
+                if (![record.title,...(record.aliases || [])].some(value => titles.some(title => normalize(title) === normalize(value)))) continue;
+                if (JSON.stringify(names(record.creators?.writer || [])) !== JSON.stringify(expectedWriters)) continue;
+                matches.push({source,record});
+            }
+            const entries = [];
+            if (matches.length === 1 && !partialFailure) {
+                // resolve owns a new request generation and its adoption preflight.
+                const entry = await resolve(matches[0].source,matches[0].record,{automatic:true,signal});
+                if (entry) entries.push(entry);
+            } else warnings.push(matches.length > 1 ? '存在多个同名同作者条目，请在高级书目结果中核对版本。' : '没有可唯一确认身份的书目条目，已保留识别结果；可跳过或手工选择。');
+            const result = {entries,warnings};
+            if (!partialFailure) prepared = {key:cacheKey,result};
+            status.textContent = entries.length ? '已准备身份一致的书目建议，等待集中核对。' : warnings.join(' ');
+            return result;
+        } catch(error) {
+            if (error.name === 'AbortError' || signal?.aborted || !mounted) throw new DOMException('查询已取消。','AbortError');
+            const result = {entries:[],warnings:[...warnings,'书目查询暂不可用，识别结果已保留，可以继续。']};
+            if (mounted) status.textContent = result.warnings.join(' '); return result;
+        } finally { signal?.removeEventListener('abort',abort); if (controller === request) controller = null; }
+    }
     function renderMappings(parent) {
         const definitions = getRegistry?.()?.definitions || {};
         for (const [key, definition] of Object.entries(definitions)) {
@@ -157,33 +230,48 @@ export function createMetadataSearchModule({ root, doc = globalThis.document, ap
             label.appendChild(input); parent.appendChild(label); mappings.push({ key, input }); listen(input, 'change', invalidated);
         }
     }
-    async function mount() {
+    function mount() { if (!mounted) ready = hydrate(); return ready; }
+    async function hydrate({ signal, previous } = {}) {
         if (mounted || !root) return;
         mounted = true; cancel(); const ticket = sequence; controller = new AbortController();
+        const request = controller; const abort = () => request.abort();
+        signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) request.abort();
         root.replaceChildren();
         root.appendChild(element('h3', '搜索书目'));
         status = element('p', '正在加载来源设置…'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); root.appendChild(status);
         try {
-            const { response, payload } = await api.getJson('/api/metadata/providers', { signal: controller.signal });
-            if (!mounted || ticket !== sequence) return;
+            const { response, payload } = await api.getJson('/api/metadata/providers', { signal: request.signal, cache: 'no-store' });
+            if (!mounted || ticket !== sequence || request.signal.aborted) return;
             if (!response.ok || !Array.isArray(payload?.sources)) throw new Error('来源设置加载失败，请重新打开工作区。');
             sources = payload.sources;
-            const label = element('label', '确认要发送的标题或别名关键词'); keyword = element('input'); keyword.type = 'text'; keyword.maxLength = 512; keyword.id = 'provider-keyword'; label.appendChild(keyword); root.appendChild(label); listen(keyword, 'input', invalidated);
+            const label = element('label', '确认要发送的标题或别名关键词'); keyword = element('input'); keyword.type = 'text'; keyword.maxLength = 512; keyword.id = 'provider-keyword'; keyword.value = getDraft().getSnapshot().fields.title?.value || ''; label.appendChild(keyword); root.appendChild(label); listen(keyword, 'input', invalidated);
             const list = element('fieldset'); list.appendChild(element('legend', '选择本次发送来源'));
             choices = sources.map(source => {
                 const label = element('label', `${source.descriptor.label} · 优先级 ${source.priority} · ${source.enabled ? (source.credential_configured ? '凭据已配置' : '匿名') : '未启用'}`);
-                const input = element('input'); input.type = 'checkbox'; input.id = `provider-select-${source.provider_id}`; input.disabled = !source.enabled; label.appendChild(input); list.appendChild(label); listen(input, 'change', invalidated); return { source, input };
-            }); root.appendChild(list);
+                const input = element('input'); input.type = 'checkbox'; input.id = `provider-select-${source.provider_id}`; input.disabled = !source.enabled; input.checked = source.enabled === true; label.appendChild(input); list.appendChild(label); listen(input, 'change', invalidated); return { source, input };
+            }); const advanced = element('details'); advanced.appendChild(element('summary', '高级书目来源与字段')); advanced.appendChild(list); root.appendChild(advanced);
             const link = element('a', '管理来源启停、优先级和授权'); link.href = '/settings'; root.appendChild(link);
-            renderMappings(root);
+            renderMappings(advanced);
+            if (previous) {
+                keyword.value = previous.keyword ?? keyword.value;
+                for (const choice of choices) {
+                    const old = previous.choices.get(choice.source.provider_id);
+                    if (old?.enabled && choice.source.enabled) choice.input.checked = old.checked;
+                }
+                for (const mapping of mappings) {
+                    const value = previous.mappings.get(mapping.key);
+                    if ([...mapping.input.children].some(option => option.value === value)) mapping.input.value = value;
+                }
+            }
             confirmation = element('p'); root.appendChild(confirmation);
             searchButton = element('button', '确认关键词与来源并搜索'); searchButton.id = 'provider-search-submit'; searchButton.type = 'button'; listen(searchButton, 'click', () => { void search(); }); root.appendChild(searchButton);
             results = element('div'); results.id = 'provider-search-results'; root.appendChild(results);
             unsubscribe = getDraft().subscribe(() => { if (controller) { cancel(); status.textContent = '草稿已修改，旧请求已取消。请重新核对所选作品。'; } });
-            updateConfirmation(); status.textContent = sources.some(source => source.enabled) ? '选择来源并确认关键词后开始。' : '尚未启用书目来源；手工录入与下载仍可继续。';
+            updateConfirmation(); status.textContent = sources.some(source => source.enabled) ? '已默认选择启用来源；添加素材后可自动准备，也可手工搜索。' : '尚未启用书目来源；手工录入与下载仍可继续。';
             controller = null;
-        } catch (error) { if (mounted && ticket === sequence && error.name !== 'AbortError') status.textContent = error.message; }
+        } catch (error) { if (mounted && ticket === sequence && !request.signal.aborted && error.name !== 'AbortError') status.textContent = '来源设置加载失败，请重试自动准备。'; }
+        finally { signal?.removeEventListener('abort', abort); if (controller === request) controller = null; }
     }
-    function unmount() { if (!mounted) return; mounted = false; cancel(); unsubscribe?.(); unsubscribe = null; cleanup.splice(0).forEach(remove => remove()); choices = []; mappings = []; sources = []; root.replaceChildren(); }
-    return { mount, unmount };
+    function unmount() { if (!mounted) return; mounted = false; cancel(); unsubscribe?.(); unsubscribe = null; cleanup.splice(0).forEach(remove => remove()); choices = []; mappings = []; sources = []; keyword = null; searchButton = null; prepared = null; ready = null; root.replaceChildren(); }
+    return { mount, unmount, prepare, cancelPreparation:cancel };
 }

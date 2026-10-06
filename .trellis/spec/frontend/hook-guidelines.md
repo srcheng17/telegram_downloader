@@ -31,5 +31,11 @@ getLogs(url, options = {}) {
 
 Use AbortController and a mount version guard for action/settings hydration responses.
 XHR upload handlers must settle on HTTP errors (including HTML), error/timeout/abort
-and remove signal listeners. Once init created a task, upload failure must request
-cancel independently of the aborted page signal; do not leave CREATED rows behind.
+and remove signal listeners. Guided uploads bind the file SHA-256, metadata and
+delivery target to a stable submission key. A lost init/upload response first uses
+the protected submission lookup: resume a CREATED task or display an already accepted
+task, never create another task or blindly cancel a possibly accepted upload.
+Transient failures keep that key for an explicit retry. On explicit cancellation or
+page disposal, cancel a known CREATED upload independently of the aborted page signal.
+Final confirmation precedes both upload init and download creation; hiding or returning
+between wizard steps must not unmount the single workspace or lose its input.

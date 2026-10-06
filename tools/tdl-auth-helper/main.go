@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/telegram/peers"
 	"github.com/gotd/td/tg"
@@ -91,14 +92,15 @@ func readPasswordCommand(ctx context.Context, scanner *bufio.Scanner) (command, 
 		return command{}, ctx.Err()
 	}
 }
+func isPasswordInvalid(err error) bool {
+	return errors.Is(err, auth.ErrPasswordInvalid) || tgerr.Is(err, "PASSWORD_HASH_INVALID")
+}
 func errorCode(err error) string {
 	if err == nil {
 		return "authorization_unconfirmed"
 	}
-	for _, code := range []string{"PASSWORD_HASH_INVALID", "PASSWORD_EMPTY"} {
-		if tgerr.Is(err, code) {
-			return "password_invalid"
-		}
+	if isPasswordInvalid(err) || tgerr.Is(err, "PASSWORD_EMPTY") {
+		return "password_invalid"
 	}
 	if _, ok := tgerr.AsFloodWait(err); ok {
 		return "rate_limited"
@@ -195,7 +197,7 @@ func run(ctx context.Context, c command, scanner *bufio.Scanner) (rerr error) {
 					}
 					_, err = client.Auth().Password(ctx, input.Password)
 					input.Password = ""
-					if !tgerr.Is(err, "PASSWORD_HASH_INVALID") {
+					if !isPasswordInvalid(err) {
 						break
 					}
 					if e := emit(event{Type: "password_invalid", Code: "password_invalid"}); e != nil {

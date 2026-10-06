@@ -14,6 +14,10 @@ type extractionModel interface {
 	ExtractionCapability(context.Context, string, credentials.Secret, string) (modelapi.ExtractionCapability, error)
 	Extract(context.Context, string, credentials.Secret, string, string, json.RawMessage, int, modelapi.ExtractionCapability) (json.RawMessage, error)
 }
+type chatExtractionModel interface {
+	LlamaCPPChatCapability(context.Context, string, credentials.Secret, string) (modelapi.ExtractionCapability, error)
+	ExtractLlamaCPPChat(context.Context, string, credentials.Secret, string, string, json.RawMessage, int, modelapi.ExtractionCapability) (json.RawMessage, error)
+}
 type extractionSnapshot struct {
 	config     AIConfig
 	key        credentials.Secret
@@ -51,36 +55,67 @@ func (s *Service) Snapshot(ctx context.Context, expected uint64) (metadataextrac
 	if p.BaseURL == "" || !modelapi.ValidModelID(p.ModelID) || s.models == nil {
 		return metadataextract.ModelSnapshot{}, metadataextract.Failure("not_configured")
 	}
-	client, ok := s.models.(extractionModel)
-	if !ok {
+	var probe func(context.Context, string, credentials.Secret, string) (modelapi.ExtractionCapability, error)
+	var budgetMode string
+	switch p.Protocol {
+	case "", modelapi.ProtocolLlamaCPPNative:
+		p.Protocol = modelapi.ProtocolLlamaCPPNative
+		client, ok := s.models.(extractionModel)
+		if !ok {
+			return metadataextract.ModelSnapshot{}, metadataextract.Failure("schema_unsupported")
+		}
+		probe, budgetMode = client.ExtractionCapability, modelapi.BudgetModeExactTokens
+	case modelapi.ProtocolLlamaCPPChat:
+		client, ok := s.models.(chatExtractionModel)
+		if !ok {
+			return metadataextract.ModelSnapshot{}, metadataextract.Failure("schema_unsupported")
+		}
+		probe, budgetMode = client.LlamaCPPChatCapability, modelapi.BudgetModeVerifiedResponse
+	default:
 		return metadataextract.ModelSnapshot{}, metadataextract.Failure("schema_unsupported")
 	}
 	key, err := s.decrypt(r)
 	if err != nil {
 		return metadataextract.ModelSnapshot{}, extractionError(err)
 	}
-	capability, err := client.ExtractionCapability(ctx, p.BaseURL, key, p.ModelID)
+	capability, err := probe(ctx, p.BaseURL, key, p.ModelID)
 	if err != nil {
 		return metadataextract.ModelSnapshot{}, extractionError(err)
+	}
+	if capability.Protocol != p.Protocol || capability.BudgetMode != budgetMode || capability.Fingerprint == "" {
+		return metadataextract.ModelSnapshot{}, metadataextract.Failure("schema_unsupported")
 	}
 	if err = s.checkVersion(ctx, AIProviderID, p.ConfigVersion); err != nil {
 		return metadataextract.ModelSnapshot{}, extractionError(err)
 	}
-	return metadataextract.ModelSnapshot{ConfigRevision: expected, ModelID: p.ModelID, Destination: p.BaseURL, ContextTokens: capability.ContextTokens, BudgetVerified: true, Handle: extractionSnapshot{p, key, capability}}, nil
+	return metadataextract.ModelSnapshot{ConfigRevision: expected, ModelID: p.ModelID, Destination: p.BaseURL, ContextTokens: capability.ContextTokens, BudgetVerified: true, Protocol: p.Protocol, BudgetMode: budgetMode, CapabilityFingerprint: capability.Fingerprint, Handle: extractionSnapshot{p, key, capability}}, nil
 }
 func (s *Service) ExtractJSON(ctx context.Context, snapshot metadataextract.ModelSnapshot, prompt string, schema json.RawMessage, budget int) (json.RawMessage, error) {
 	h, ok := snapshot.Handle.(extractionSnapshot)
-	if !ok || snapshot.ConfigRevision != uint64(h.config.ConfigVersion) || snapshot.ModelID != h.config.ModelID {
+	if !ok || snapshot.ConfigRevision != uint64(h.config.ConfigVersion) || snapshot.ModelID != h.config.ModelID || snapshot.Destination != h.config.BaseURL || snapshot.Protocol != h.config.Protocol || snapshot.BudgetMode != h.capability.BudgetMode || snapshot.CapabilityFingerprint != h.capability.Fingerprint || !snapshot.BudgetVerified {
 		return nil, metadataextract.Failure("config_changed")
-	}
-	client, ok := s.models.(extractionModel)
-	if !ok {
-		return nil, metadataextract.Failure("schema_unsupported")
 	}
 	if err := s.checkVersion(ctx, AIProviderID, h.config.ConfigVersion); err != nil {
 		return nil, extractionError(err)
 	}
-	result, err := client.Extract(ctx, h.config.BaseURL, h.key, h.config.ModelID, prompt, schema, budget, h.capability)
+	var extract func(context.Context, string, credentials.Secret, string, string, json.RawMessage, int, modelapi.ExtractionCapability) (json.RawMessage, error)
+	switch h.config.Protocol {
+	case modelapi.ProtocolLlamaCPPNative:
+		client, ok := s.models.(extractionModel)
+		if !ok {
+			return nil, metadataextract.Failure("schema_unsupported")
+		}
+		extract = client.Extract
+	case modelapi.ProtocolLlamaCPPChat:
+		client, ok := s.models.(chatExtractionModel)
+		if !ok {
+			return nil, metadataextract.Failure("schema_unsupported")
+		}
+		extract = client.ExtractLlamaCPPChat
+	default:
+		return nil, metadataextract.Failure("schema_unsupported")
+	}
+	result, err := extract(ctx, h.config.BaseURL, h.key, h.config.ModelID, prompt, schema, budget, h.capability)
 	if err != nil {
 		return nil, extractionError(err)
 	}

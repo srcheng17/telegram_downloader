@@ -89,6 +89,7 @@ func buildWorkspaceRouter(ctx context.Context, pool *pgxpool.Pool, cfg config.Co
 	}
 	options := buildLegacyRouterOptions(cfg, postgres.NewUploadTaskStore(pool))
 	options.TaskCoreService, options.SettingsProvider = taskCore, settings
+	options.KomgaDelivery = komgaedit.NewDeliveryService(komgaCatalog, options.KomgaRootDir)
 	options.ReadyzChecker = func(ctx context.Context) (bool, error) {
 		n, err := pgmigrations.PendingCount(ctx, pool)
 		return n == 0, err

@@ -81,7 +81,7 @@ export function createOCRQueue({ recognizerFactory, validate = validateImage, cr
         return { text, segments, excluded: excluded.map(image => image.id), warnings, inputRevision };
     }
     return {
-        snapshot, add, merge,
+        snapshot, add, merge, whenAdmitted: () => admissions,
         subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
         setLanguages(next) { if (!Array.isArray(next) || !next.length || new Set(next).size !== next.length || next.some(lang => !OCR_LANGUAGES.includes(lang))) throw new Error('请选择受支持的识别语言。'); languages = [...next]; publish(true); },
         edit(imageID, text) { const image = find(imageID); if (!image || disposed) return; if (new TextEncoder().encode(text).length > 65536) throw new Error('单图文字不能超过 64 KiB。'); image.text = text; image.dirty = true; image.textRevision++; publish(true); },

@@ -46,8 +46,17 @@ func (s *Store) CreateTask(ctx context.Context, task app.Task, input app.Input, 
 		return app.Task{}, err
 	}
 	defer rollback(ctx, tx)
+	if replay, err := lockSubmission(ctx, tx, input.Submission); err != nil || replay != nil {
+		if replay != nil {
+			return replay.Task, tx.Commit(ctx)
+		}
+		return app.Task{}, err
+	}
 	created, err := s.insertTask(ctx, tx, task, input, progress)
 	if err != nil {
+		return app.Task{}, err
+	}
+	if err := saveSubmission(ctx, tx, input.Submission, app.CreateURLResult{Task: created}); err != nil {
 		return app.Task{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -79,6 +88,18 @@ func (s *Store) CreateURLTask(ctx context.Context, task app.Task, input app.Inpu
 		return app.CreateURLResult{}, err
 	}
 	defer rollback(ctx, tx)
+	if replay, err := lockSubmission(ctx, tx, input.Submission); err != nil || replay != nil {
+		if replay != nil {
+			return *replay, tx.Commit(ctx)
+		}
+		return app.CreateURLResult{}, err
+	}
+	finish := func(result app.CreateURLResult) (app.CreateURLResult, error) {
+		if err := saveSubmission(ctx, tx, input.Submission, result); err != nil {
+			return app.CreateURLResult{}, err
+		}
+		return result, tx.Commit(ctx)
+	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
 		return app.CreateURLResult{}, err
 	}
@@ -86,7 +107,10 @@ func (s *Store) CreateURLTask(ctx context.Context, task app.Task, input app.Inpu
  WHERE t.kind = $2 AND (i.telegram_source IS NOT DISTINCT FROM $3::jsonb) AND `+canonicalURLPredicate+` AND t.status IN ('READY', 'RUNNING', 'CANCELING')
  ORDER BY t.created_at DESC, t.id DESC LIMIT 1`, canonicalURL, string(task.Kind), telegramSource))
 	if err == nil {
-		return app.CreateURLResult{Task: view.Task, Reused: true, Result: view.Result}, tx.Commit(ctx)
+		if input.Submission != nil && !sameReviewedMetadata(input, view.Input) {
+			return app.CreateURLResult{}, app.ErrSubmissionSourceConflict
+		}
+		return finish(app.CreateURLResult{Task: view.Task, Reused: true, Result: view.Result})
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return app.CreateURLResult{}, err
@@ -95,10 +119,13 @@ func (s *Store) CreateURLTask(ctx context.Context, task app.Task, input app.Inpu
 		view, err = scanTaskView(tx.QueryRow(ctx, taskViewQuery()+`
  WHERE t.kind = $2 AND (i.telegram_source IS NOT DISTINCT FROM $3::jsonb) AND `+canonicalURLPredicate+` AND t.status = 'SUCCEEDED' AND r.task_id IS NOT NULL
  ORDER BY t.created_at DESC, t.id DESC LIMIT 1`, canonicalURL, string(task.Kind), telegramSource))
-		if err == nil {
-			return app.CreateURLResult{Task: view.Task, Reused: true, NeedsConfirmation: true, Result: view.Result}, tx.Commit(ctx)
+		if err == nil && (input.CanReuseResult == nil || input.CanReuseResult(view.Result)) {
+			if input.Submission != nil && !sameReviewedMetadata(input, view.Input) {
+				return app.CreateURLResult{}, app.ErrSubmissionSourceConflict
+			}
+			return finish(app.CreateURLResult{Task: view.Task, Reused: true, NeedsConfirmation: true, Result: view.Result})
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return app.CreateURLResult{}, err
 		}
 	}
@@ -106,10 +133,7 @@ func (s *Store) CreateURLTask(ctx context.Context, task app.Task, input app.Inpu
 	if err != nil {
 		return app.CreateURLResult{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return app.CreateURLResult{}, err
-	}
-	return app.CreateURLResult{Task: created}, nil
+	return finish(app.CreateURLResult{Task: created})
 }
 
 func (s *Store) insertTask(ctx context.Context, tx pgx.Tx, task app.Task, input app.Input, progress domain.Progress) (app.Task, error) {
@@ -167,9 +191,9 @@ func (s *Store) insertTask(ctx context.Context, tx pgx.Tx, task app.Task, input 
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO task_core_inputs (
-			task_id, url, canonical_url, source_archive_name, source_archive_path, source_archive_size, metadata, runtime_settings, metadata_document, telegram_source
-		) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb)
-	`, input.TaskID, input.URL, input.CanonicalURL, input.SourceArchiveName, input.SourceArchivePath, nullablePositiveSize(input.SourceArchiveSize), string(metadata), runtimeSettings, string(document), telegramSource)
+			task_id, url, canonical_url, source_archive_name, source_archive_path, source_archive_size, metadata, runtime_settings, metadata_document, telegram_source, source_sha256
+		) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, NULLIF($11, ''))
+	`, input.TaskID, input.URL, input.CanonicalURL, input.SourceArchiveName, input.SourceArchivePath, nullablePositiveSize(input.SourceArchiveSize), string(metadata), runtimeSettings, string(document), telegramSource, input.SourceSHA256)
 	if err != nil {
 		return app.Task{}, mapPgError(err)
 	}
@@ -902,7 +926,7 @@ func taskViewQuery() string {
 	return `
 		SELECT
 			t.id, t.kind, t.status, t.attempt, t.generation, t.last_error, t.lease_owner, t.lease_expires_at, t.created_at, t.updated_at,
-			i.task_id, i.url, i.canonical_url, i.source_archive_name, i.source_archive_path, i.source_archive_size, i.metadata::text, i.runtime_settings::text, i.metadata_document::text, i.telegram_source::text,
+			i.task_id, i.url, i.canonical_url, i.source_archive_name, i.source_archive_path, i.source_archive_size, i.metadata::text, i.runtime_settings::text, i.metadata_document::text, i.telegram_source::text, COALESCE(i.source_sha256, ''),
 			p.phase, p.current, p.total, p.unit, p.message,
 			r.task_id, r.artifact_path, r.artifact_name, r.artifact_size, r.artifact_kind, r.komga_target_path, r.effective_metadata_document::text, r.generation, r.retention_manifest::text,r.metadata_warnings::text,r.metadata_profile
 		FROM task_core_tasks t
@@ -942,6 +966,7 @@ func scanTaskView(row rowScanner) (app.TaskView, error) {
 		&inputScan.runtimeSettings,
 		&inputScan.metadataDocument,
 		&inputScan.telegramSource,
+		&view.Input.SourceSHA256,
 		&progressScan.phase,
 		&progressScan.current,
 		&progressScan.total,

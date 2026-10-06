@@ -207,6 +207,27 @@ test('copy response target_path is never exposed, and Komga indexing remains unv
     assert.doesNotMatch(JSON.stringify(result), /private|PRIVATE_METADATA_AND_ERROR/);
 });
 
+test('copy exposes only verified readback IDs and distinguishes pending indexing', async (t) => {
+    let delivery = { komga_indexed: 'pending', pending_reason: 'readback_pending' };
+    const fixture = await mockServer((req, res) => {
+        if (req.url === '/api/tasks/task-1') return json(res, { task: taskView() });
+        if (req.url === '/api/tasks/task-1/copy-to-komga') return json(res, { ok: true, task_id: 'task-1', target_path: `/private/${privateText}`, ...delivery });
+        return json(res, {}, 404);
+    });
+    t.after(() => fixture.app.close());
+    const pending = await runTasks('copy-to-komga', options(fixture, { id: 'task-1' }));
+    assert.equal(pending.komga_indexed, 'pending');
+    assert.equal(pending.book_id, undefined);
+    delivery = { komga_indexed: 'verified', book_id: 'book_1', library_id: 'library-1' };
+    const verified = await runTasks('copy-to-komga', options(fixture, { id: 'task-1' }));
+    assert.equal(verified.komga_indexed, 'verified');
+    assert.equal(verified.book_id, 'book_1');
+    assert.equal(verified.library_id, 'library-1');
+    assert.doesNotMatch(JSON.stringify(verified), /private|PRIVATE_METADATA_AND_ERROR/);
+    delivery.book_id = '/private/value';
+    await assert.rejects(runTasks('copy-to-komga', options(fixture, { id: 'task-1' })), { code: 'invalid_response' });
+});
+
 test('artifact rejects HTML or invalid ZIP without publishing output', async (t) => {
     const parent = await mkdtemp(join(tmpdir(), 'mediactl-artifact-bad-'));
     t.after(() => rm(parent, { recursive: true, force: true }));

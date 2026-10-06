@@ -14,6 +14,8 @@ import (
 )
 
 type downloadMetadata struct {
+	idempotencyKey   string
+	deliveryTarget   string
 	document         *metadataDomain.Document
 	explicitLegacy   map[string]string
 	author           *string
@@ -190,6 +192,15 @@ func optionalString(value string) *string {
 }
 
 func extractDocumentPayload(payload map[string]any, out *downloadMetadata) error {
+	for key, dest := range map[string]*string{"idempotency_key": &out.idempotencyKey, "delivery_target": &out.deliveryTarget} {
+		if value, exists := payload[key]; exists {
+			text, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("invalid submission field")
+			}
+			*dest = text
+		}
+	}
 	raw, exists := payload["metadata_document"]
 	if !exists {
 		return nil

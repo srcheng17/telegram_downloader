@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { submitArchive, uploadArchiveSource } from '../home/upload_submission.js';
+import { cancelUnfinishedUpload, submitArchive, uploadArchiveSource } from '../home/upload_submission.js';
 
 test('submitArchive initializes task then streams file with xhr progress', async () => {
     const progressSnapshots = [];
@@ -135,4 +135,45 @@ test('page abort stops an in-flight XHR and does not start an already aborted up
     const aborted = createPendingUpload({ signal: controller.signal });
     await assert.rejects(aborted.promise, { name: 'AbortError' });
     assert.equal(aborted.sends(), 0);
+});
+
+test('lost init response recovers the same key and skips streaming an already accepted archive', async () => {
+    const calls = []; let xhrs = 0;
+    const result = await submitArchive({
+        api: {
+            async postJson(url, payload) { calls.push([url, payload.idempotency_key, payload.file_sha256]); throw new Error('connection lost'); },
+            async getJson(url) { calls.push([url]); return { response: { ok: true }, payload: { ok: true, task_id: 'same-task', status: 'READY' } }; },
+        },
+        file: { name: 'sample.zip', size: 42 }, metadata: { idempotency_key: 'stable-submission-key', file_sha256: 'a'.repeat(64) },
+        createXHR() { xhrs += 1; },
+    });
+    assert.equal(result.initPayload.task_id, 'same-task'); assert.equal(xhrs, 0);
+    assert.deepEqual(calls, [['/api/tasks/upload/init', 'stable-submission-key', 'a'.repeat(64)], ['/api/tasks/submissions/stable-submission-key']]);
+});
+
+test('lost upload response is recovered without reuploading or canceling an accepted task', async () => {
+    const api = {
+        async postJson() { return { response: { ok: true }, payload: { ok: true, task_id: 'same-task', status: 'CREATED', upload_url: '/api/tasks/same-task/upload-source' } }; },
+        async getJson() { return { response: { ok: true }, payload: { ok: true, task_id: 'same-task', status: 'RUNNING' } }; },
+    };
+    const result = await submitArchive({ api, file: { name: 'sample.zip', size: 42 }, metadata: { idempotency_key: 'stable-submission-key' }, createXHR() {
+        const handlers = {}; return { upload: { addEventListener() {} }, addEventListener(event, handler) { handlers[event] = handler; }, open() {}, setRequestHeader() {}, send() { handlers.error(); } };
+    } });
+    assert.equal(result.uploadPayload.status, 'RUNNING');
+});
+
+test('a canceled page does not issue a submission recovery request or start an upload', async () => {
+    const controller = new AbortController(); let reads = 0; let uploads = 0;
+    await assert.rejects(submitArchive({
+        api: { async postJson() { controller.abort(); throw new DOMException('cancelled', 'AbortError'); }, async getJson() { reads += 1; } },
+        signal: controller.signal, file: { name: 'sample.zip', size: 42 }, metadata: { idempotency_key: 'stable-submission-key' }, createXHR() { uploads += 1; },
+    }), { name: 'AbortError' });
+    assert.equal(reads, 0); assert.equal(uploads, 0);
+});
+
+test('leaving cancels only a still-CREATED upload, with no inherited aborted page signal', async () => {
+    const canceled = [];
+    const api = { async getJson(url, options) { assert.equal(options, undefined); return { response: { ok: true }, payload: { status: url.endsWith('unfinished') ? 'CREATED' : 'READY' } }; }, async postJson(url, body, options) { assert.equal(options, undefined); canceled.push(url); } };
+    await cancelUnfinishedUpload(api, 'accepted'); await cancelUnfinishedUpload(api, 'unfinished');
+    assert.deepEqual(canceled, ['/api/tasks/unfinished/cancel']);
 });
