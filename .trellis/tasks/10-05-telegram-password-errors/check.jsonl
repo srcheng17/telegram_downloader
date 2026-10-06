@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/telegram-runtime.md","reason":"Authorization and no-secret regression review"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Error classification compatibility"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Required checks"}

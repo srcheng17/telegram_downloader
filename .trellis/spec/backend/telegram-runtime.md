@@ -40,6 +40,12 @@ The helper and official tdl CLI use matching pinned module dependencies (tdl
 private stdin; use namespace allowlists and owner-only nonsymlink directories.
 Do not parse CLI terminal output or silently import an existing private session.
 
+The pinned gotd client converts `PASSWORD_HASH_INVALID` into
+`auth.ErrPasswordInvalid`. Use one shared predicate with `errors.Is` for direct or
+wrapped sentinels and `tgerr.Is` for raw RPC errors in both classification and the
+three-attempt password retry loop. `PASSWORD_EMPTY` remains classified as
+`password_invalid` without retrying. Never trim or otherwise change the password.
+
 Only one ZIP/RAR/7Z document attachment is accepted. Inspection must establish a
 positive declared size below the cap; reject ambiguous filenames/media. Enforce
 the output cap in the helper while streaming and verify actual bytes/hash afterward.
@@ -86,7 +92,8 @@ a child still holds the session; these must fail closed.
 - `internal/app/telegram`: attempt state/CAS, stale identity, size and URL validation.
 - `internal/infra/telegram`: three-process contention, PostgreSQL loss cancellation,
   process reaping, bounded structured events, candidate-only removal.
-- `tools/tdl-auth-helper`: hard stream cap, private deadlines and attachment ambiguity;
+- `tools/tdl-auth-helper`: hard stream cap, private deadlines, attachment ambiguity,
+  direct/wrapped password sentinels and raw RPC classification/retry compatibility;
   Linux amd64/arm64 readonly builds.
 - `internal/store/postgres/{telegram,taskcore}`: real PG promotion, immutable input,
   dedup/retry and stale-generation fences.
