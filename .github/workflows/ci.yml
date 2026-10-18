@@ -53,10 +53,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxml2-utils
-          npm ci
+        run: npm ci
 
       - name: Install Playwright browser
         run: npm run e2e:install

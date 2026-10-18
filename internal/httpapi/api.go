@@ -97,7 +97,6 @@ type API struct {
 }
 
 type RouterOptions struct {
-	KomgaDelivery           KomgaDeliveryService
 	UpstreamBaseURL         string
 	HTTPClient              *http.Client
 	DownloadSubmitter       DownloadSubmitter
@@ -170,7 +169,6 @@ func NewRouterWithOptions(store TaskReader, options RouterOptions) http.Handler 
 			options.SettingsProvider,
 			&config.SettingsSnapshot{Timeout: api.downloadTimeout, Retries: api.downloadRetries, ImageConcurrency: api.imageConcurrency},
 		)
-		taskCore.komgaDelivery = options.KomgaDelivery
 		taskCore.registerRoutes(router)
 	}
 	return router
@@ -218,11 +216,6 @@ func normalizeTelegraphURL(rawURL string) string {
 		host = strings.TrimPrefix(host, "www.")
 	}
 	path := parsed.EscapedPath()
-	if parsed.RawPath != "" {
-		// Parse has validated every percent escape. Escape any literal Unicode
-		// without losing encoded separators when RawPath mixes both forms.
-		path = strings.ReplaceAll((&url.URL{Path: parsed.RawPath}).EscapedPath(), "%25", "%")
-	}
 	if path == "" {
 		path = "/"
 	}
@@ -233,15 +226,10 @@ func normalizeTelegraphURL(rawURL string) string {
 			path = "/"
 		}
 	}
-	decodedPath, err := url.PathUnescape(path)
-	if err != nil {
-		return ""
-	}
 	canonical := &url.URL{
-		Scheme:  "https",
-		Host:    host,
-		Path:    decodedPath,
-		RawPath: path,
+		Scheme: "https",
+		Host:   host,
+		Path:   path,
 	}
 	return canonical.String()
 }

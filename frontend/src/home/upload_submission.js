@@ -1,12 +1,5 @@
 import { normalizeUploadSnapshot } from '../shared/archive_upload.js';
 
-export async function cancelUnfinishedUpload(api, taskId) {
-    if (!taskId) return;
-    // The upload may have been accepted even when its response was lost.
-    const { response, payload } = await api.getJson(`/api/tasks/${encodeURIComponent(taskId)}`);
-    if (response.ok && (payload?.task?.status || payload?.status) === 'CREATED') await api.postJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, {});
-}
-
 function normalizeProgressSnapshot(file, loadedBytes, totalBytes) {
     return normalizeUploadSnapshot({
         status: 'uploading',
@@ -29,8 +22,6 @@ export function buildUploadInitPayload(file, metadata = {}) {
 export function uploadArchiveSource({
     uploadUrl,
     uploadToken,
-    headers = {},
-    onUnauthorized,
     file,
     onProgress,
     signal,
@@ -59,7 +50,6 @@ export function uploadArchiveSource({
             } catch {
                 // Proxies can return HTML errors instead of the API's JSON body.
             }
-            if (xhr.status === 401) onUnauthorized?.();
             if (xhr.status >= 200 && xhr.status < 300 && payload && payload.ok === true) {
                 finish(resolve, payload);
                 return;
@@ -73,7 +63,6 @@ export function uploadArchiveSource({
         try {
             xhr.open('PUT', String(uploadUrl || '').trim());
             xhr.setRequestHeader('Accept', 'application/json');
-            for (const [key, value] of Object.entries(headers)) xhr.setRequestHeader(key, value);
             if (uploadToken) xhr.setRequestHeader('X-Upload-Token', String(uploadToken).trim());
             if (signal) signal.addEventListener('abort', abort, { once: true });
             xhr.send(file);
@@ -93,16 +82,7 @@ export async function submitArchive({
     createXHR,
 }) {
     const initPayload = buildUploadInitPayload(file, metadata);
-    const recover = async () => {
-        if (!metadata?.idempotency_key || signal?.aborted) return null;
-        try {
-            const result = await api.getJson(`/api/tasks/submissions/${encodeURIComponent(metadata.idempotency_key)}`, { signal });
-            return result.response?.ok && result.payload?.ok ? result : null;
-        } catch { return null; }
-    };
-    let initResult;
-    try { initResult = await api.postJson('/api/tasks/upload/init', initPayload, { signal }); }
-    catch (error) { initResult = await recover(); if (!initResult) throw error; }
+    const initResult = await api.postJson('/api/tasks/upload/init', initPayload, { signal });
     if (!initResult.response || !initResult.response.ok || !initResult.payload || initResult.payload.ok !== true) {
         throw new Error((initResult.payload && initResult.payload.message) || '上传初始化失败。');
     }
@@ -110,24 +90,14 @@ export async function submitArchive({
         onInit(initResult.payload);
     }
 
-    const alreadyUploaded = payload => Boolean(metadata?.idempotency_key && payload.status && payload.status !== 'CREATED');
-    if (alreadyUploaded(initResult.payload)) return { initPayload: initResult.payload, uploadPayload: initResult.payload };
-
-    let uploadPayload;
-    try { uploadPayload = await uploadArchiveSource({
+    const uploadPayload = await uploadArchiveSource({
         uploadUrl: initResult.payload.upload_url,
         uploadToken: initResult.payload.upload_token,
         file,
-        headers: api.csrfHeaders ? await api.csrfHeaders(initResult.payload.upload_url) : {},
-        onUnauthorized: api.unauthorized,
         onProgress,
         signal,
         createXHR,
-    }); } catch (error) {
-        const result = await recover();
-        if (!result || !alreadyUploaded(result.payload)) throw error;
-        uploadPayload = result.payload;
-    }
+    });
 
     return {
         initPayload: initResult.payload,

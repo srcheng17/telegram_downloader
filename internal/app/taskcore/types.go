@@ -2,8 +2,6 @@ package taskcore
 
 import (
 	"context"
-	"github.com/ryancheng/telegram-downloader/internal/app/telegram"
-	metadata "github.com/ryancheng/telegram-downloader/internal/domain/metadata"
 	"strings"
 	"time"
 
@@ -12,17 +10,9 @@ import (
 	domain "github.com/ryancheng/telegram-downloader/internal/domain/taskcore"
 )
 
-type MetadataNormalizer interface {
-	NormalizeInput(context.Context, *metadata.Document, metadata.Legacy) (metadata.Document, metadata.Legacy, error)
-}
-
 type Config struct {
-	MetadataEncoder interface {
-		Encode(context.Context, metadata.Document) ([]byte, error)
-	}
-	MetadataNormalizer MetadataNormalizer
-	LeaseTTL           time.Duration
-	MaxAttempts        int
+	LeaseTTL    time.Duration
+	MaxAttempts int
 }
 
 type Task struct {
@@ -39,10 +29,6 @@ type Task struct {
 }
 
 type Input struct {
-	Submission        *Submission
-	SourceSHA256      string
-	CanReuseResult    func(*Result) bool
-	Telegram          *telegram.Input
 	TaskID            string
 	URL               string
 	CanonicalURL      string
@@ -50,15 +36,12 @@ type Input struct {
 	SourceArchivePath string
 	SourceArchiveSize int64
 	Metadata          map[string]string
-	MetadataDocument  *metadata.Document
 	RuntimeSettings   *config.SettingsSnapshot
 }
 
 // HasSource reports whether the persisted input can execute the task kind.
 func (in Input) HasSource(kind domain.Kind) bool {
 	switch kind {
-	case domain.KindTelegram:
-		return in.Telegram != nil && telegram.ValidateInput(*in.Telegram) == nil
 	case domain.KindUpload:
 		return strings.TrimSpace(in.SourceArchivePath) != ""
 	case domain.KindURL:
@@ -69,17 +52,12 @@ func (in Input) HasSource(kind domain.Kind) bool {
 }
 
 type Result struct {
-	MetadataWarnings          []metadata.Warning
-	MetadataProfile           string
-	RetentionManifest         *domain.RetentionManifest
-	TaskID                    string
-	ArtifactPath              string
-	ArtifactName              string
-	ArtifactSize              int64
-	ArtifactKind              string
-	KomgaTargetPath           string
-	EffectiveMetadataDocument *metadata.Document
-	Generation                int64
+	TaskID          string
+	ArtifactPath    string
+	ArtifactName    string
+	ArtifactSize    int64
+	ArtifactKind    string
+	KomgaTargetPath string
 }
 
 type TaskView struct {
@@ -90,23 +68,12 @@ type TaskView struct {
 }
 
 type CreateURLInput struct {
-	IdempotencyKey   string
-	DeliveryTarget   string
-	ID               string
-	URL              string
-	CanonicalURL     string
-	Metadata         map[string]string
-	MetadataDocument *metadata.Document
-	Force            bool
-	RuntimeSettings  *config.SettingsSnapshot
-}
-
-type CreateTelegramInput struct {
-	ID               string
-	Source           telegram.Input
-	MetadataDocument *metadata.Document
-	Force            bool
-	RuntimeSettings  *config.SettingsSnapshot
+	ID              string
+	URL             string
+	CanonicalURL    string
+	Metadata        map[string]string
+	Force           bool
+	RuntimeSettings *config.SettingsSnapshot
 }
 
 type CreateURLResult struct {
@@ -129,15 +96,9 @@ type TaskPage struct {
 }
 
 type InitUploadInput struct {
-	IdempotencyKey   string
-	DeliveryTarget   string
-	FileName         string
-	FileSize         int64
-	FileSHA256       string
-	ID               string
-	Metadata         map[string]string
-	MetadataDocument *metadata.Document
-	RuntimeSettings  *config.SettingsSnapshot
+	ID              string
+	Metadata        map[string]string
+	RuntimeSettings *config.SettingsSnapshot
 }
 
 type AttachUploadSourceInput struct {
@@ -156,17 +117,13 @@ type HeartbeatResult struct {
 }
 
 type CompleteInput struct {
-	MetadataWarnings          []metadata.Warning
-	MetadataProfile           string
-	RetentionManifest         *domain.RetentionManifest
-	EffectiveMetadataDocument *metadata.Document
-	TaskID                    string
-	WorkerID                  string
-	Attempt                   int
-	Generation                int64
-	ArtifactPath              string
-	ArtifactName              string
-	ArtifactSize              int64
+	TaskID       string
+	WorkerID     string
+	Attempt      int
+	Generation   int64
+	ArtifactPath string
+	ArtifactName string
+	ArtifactSize int64
 }
 
 type FailInput struct {

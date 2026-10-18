@@ -113,8 +113,7 @@ export function mapTaskToLogViewModel(log) {
     const task = log && typeof log === 'object' ? log : {};
     const statusCode = normalizeStatusCode(task.status);
     const statusLabel = String(task.status_label || '').trim();
-    const rawType = String(task.task_type || '').trim().toLowerCase();
-    const taskType = ['upload', 'telegram'].includes(rawType) ? rawType : 'url';
+    const taskType = String(task.task_type || '').trim().toLowerCase() === 'upload' ? 'upload' : 'url';
     const startTimeSeconds = Number(task.start_time || 0);
     const taskCoreProgressText = buildTaskCoreProgressLabel(task);
     const progressText = taskCoreProgressText || buildLegacyTaskProgressText(task, statusCode, taskType);
@@ -132,10 +131,9 @@ export function mapTaskToLogViewModel(log) {
         status: statusCode,
         statusLabel,
         taskType,
-        taskTypeLabel: taskType === 'upload' ? '上传' : taskType === 'telegram' ? 'Telegram' : 'URL',
+        taskTypeLabel: taskType === 'upload' ? '上传' : 'URL',
         progressText,
         errorText: String(task.error || '').trim(),
-		metadataWarnings: Array.isArray(task.metadata_warnings) ? task.metadata_warnings.map(warning => String(warning?.message || '').trim()).filter(Boolean) : [],
         startTimeLabel: new Date(startTimeSeconds * 1000).toLocaleString(),
         canRetry: Boolean(task.id && (statusCode === 'FAILED' || statusCode === 'CANCELED') && task.retryable),
         availableActions,

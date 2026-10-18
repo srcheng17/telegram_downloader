@@ -23,17 +23,12 @@ PY
   )"
 fi
 export E2E_BASE_URL="http://127.0.0.1:${APP_PORT}"
-export APP_PUBLIC_ORIGIN="${E2E_BASE_URL}"
-export APP_BIND_ADDRESS=127.0.0.1
-export ALLOW_INSECURE_LOOPBACK=true
-# Synthetic fixture password only; never read deployment credentials for E2E.
-export E2E_ADMIN_PASSWORD=e2e-synthetic-admin-password
 artifacts_dir="${E2E_ARTIFACTS_DIR:-tests/e2e/.artifacts}"
 rm -rf "${artifacts_dir}"
 mkdir -p "${artifacts_dir}"
 
 playwright_project="${PLAYWRIGHT_PROJECT:-}"
-if [[ -z "${playwright_project}" && "${E2E_CONFIG_ONLY:-0}" != "1" ]]; then
+if [[ -z "${playwright_project}" ]]; then
   if ! playwright_project="$(node tests/e2e/browser_preflight.cjs)"; then
     echo "Playwright browser preflight failed before Compose startup." >&2
     exit 1
@@ -44,45 +39,14 @@ export PLAYWRIGHT_PROJECT="${playwright_project}"
 temp_docker_config=""
 temp_data_root="$(mktemp -d)"
 temp_compose_override="$(mktemp)"
-compose_started=0
-umask 077
-mkdir -p "${temp_data_root}/secrets"
-export ADMIN_BOOTSTRAP_PASSWORD_FILE_HOST="${temp_data_root}/secrets/admin-bootstrap-password"
-export SOURCE_SETTINGS_MASTER_KEY_FILE_HOST="${temp_data_root}/secrets/source-settings-master-key"
-python3 - <<'PYSECRET'
-import base64
-import os
-import secrets
-from pathlib import Path
-Path(os.environ["ADMIN_BOOTSTRAP_PASSWORD_FILE_HOST"]).write_text(os.environ["E2E_ADMIN_PASSWORD"] + "\n")
-Path(os.environ["SOURCE_SETTINGS_MASTER_KEY_FILE_HOST"]).write_text(base64.b64encode(secrets.token_bytes(32)).decode() + "\n")
-PYSECRET
 
 mkdir -p \
   "${temp_data_root}/downloaded_images" \
   "${temp_data_root}/temp_downloads" \
-  "${temp_data_root}/komga" \
-  "${temp_data_root}/komga-config" \
-  "${temp_data_root}/komga-edit-backups" \
-  "${temp_data_root}/telegram-private" \
-  "${temp_data_root}/source-retention"
+  "${temp_data_root}/komga"
 
 cat > "${temp_compose_override}" <<EOF
 services:
-  komga:
-    image: gotson/komga:1.28.1
-    user: "${APP_UID}:${APP_GID}"
-    environment:
-      JAVA_TOOL_OPTIONS: -Xmx512m
-    ports:
-      - "127.0.0.1::25600"
-    networks:
-      default:
-        aliases:
-          - host.docker.internal
-    volumes:
-      - ${temp_data_root}/komga:/books
-      - ${temp_data_root}/komga-config:/config
   postgres:
     volumes:
       - e2e_postgres:/var/lib/postgresql/data
@@ -90,20 +54,13 @@ services:
     environment:
       KOMGA_LIBRARY_ROOT: /app/komga
     volumes: !override
-      - ${ADMIN_BOOTSTRAP_PASSWORD_FILE_HOST}:/run/secrets/admin-bootstrap-password:ro
-      - ${SOURCE_SETTINGS_MASTER_KEY_FILE_HOST}:/run/secrets/source-settings-master-key:ro
       - ${temp_data_root}/downloaded_images:/app/downloaded_images
       - ${temp_data_root}/temp_downloads:/app/temp_downloads
-      - ${temp_data_root}/telegram-private:/app/telegram-private
-      - ${temp_data_root}/source-retention:/app/source-retention
       - ${temp_data_root}/komga:/app/komga
-      - ${temp_data_root}/komga-edit-backups:/app/komga-edit-backups
   go-worker:
     volumes: !override
       - ${temp_data_root}/downloaded_images:/app/downloaded_images
       - ${temp_data_root}/temp_downloads:/app/temp_downloads
-      - ${temp_data_root}/telegram-private:/app/telegram-private
-      - ${temp_data_root}/source-retention:/app/source-retention
   gateway:
     ports: !override
       - "127.0.0.1:${APP_PORT}:80"
@@ -151,9 +108,7 @@ cleanup() {
     compose ps > "${artifacts_dir}/compose-ps.on-exit.txt" || true
     compose logs --no-color > "${artifacts_dir}/compose-logs.on-exit.txt" || true
   fi
-  if [[ "${compose_started}" == "1" ]]; then
-    compose down --rmi local --volumes --remove-orphans || true
-  fi
+  compose down --rmi local --volumes --remove-orphans || true
   if [[ -n "${temp_docker_config}" && -d "${temp_docker_config}" ]]; then
     rm -rf "${temp_docker_config}"
   fi
@@ -166,26 +121,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ "${E2E_CONFIG_ONLY:-0}" == "1" ]]; then
-  compose config --quiet
-  docker compose -f docker-compose.yml -f docker-compose.image.yml config --quiet
-  echo "Isolated build and image Compose configurations are valid."
-  exit 0
-fi
-
-compose_started=1
-compose up -d komga
-komga_endpoint="$(compose port komga 25600)"
-if [[ ! "${komga_endpoint}" =~ ^127\.0\.0\.1:[0-9]+$ ]]; then
-  echo "Isolated Komga did not bind one loopback port." >&2
-  exit 1
-fi
-export E2E_KOMGA_CONNECTION_FILE="${temp_data_root}/secrets/komga-connection.json"
-python3 tests/e2e/bootstrap_komga.py bootstrap \
-  --server "http://${komga_endpoint}" --connection-file "${E2E_KOMGA_CONNECTION_FILE}"
-export E2E_KOMGA_LIBRARY_ID="$(python3 -c 'import json,os; print(json.load(open(os.environ["E2E_KOMGA_CONNECTION_FILE"]))["library_id"])')"
-export E2E_KOMGA_LIBRARY_ROOT="${temp_data_root}/komga"
-export KOMGA_LIBRARY_MAPPINGS="$(python3 -c 'import json,os; print(json.dumps([{"library_id":os.environ["E2E_KOMGA_LIBRARY_ID"],"komga_root":"/books","local_root":"/app/komga"}]))')"
 compose up -d --build
 compose ps > "${artifacts_dir}/compose-ps.after-up.txt" || true
 compose config > "${artifacts_dir}/compose.config.yaml" || true
@@ -200,13 +135,6 @@ for i in $(seq 1 120); do
   fi
   sleep 1
 done
-
-python3 tests/e2e/bootstrap_komga.py configure-app \
-  --server "${E2E_BASE_URL}" --connection-file "${E2E_KOMGA_CONNECTION_FILE}"
-# Playwright sees only the synthetic library identity and filesystem. Keeping
-# the API key out of its process prevents it from entering a retained trace.
-rm -f "${E2E_KOMGA_CONNECTION_FILE}"
-unset E2E_KOMGA_CONNECTION_FILE
 
 playwright_exit=0
 npx playwright test --config tests/e2e/playwright.config.ts --project="${PLAYWRIGHT_PROJECT}" "$@" || playwright_exit=$?

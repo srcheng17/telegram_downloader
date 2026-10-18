@@ -12,7 +12,6 @@ func normalizeLogQuery(rawPage, rawPerPage, rawStatus, rawKeyword string) domain
 	if len(keyword) > 120 {
 		keyword = keyword[:120]
 	}
-	keyword = strings.ToValidUTF8(keyword, "")
 
 	return domain.LogQuery{
 		Page:    clampInt(parseInt(rawPage, 1), 1, math.MaxInt),

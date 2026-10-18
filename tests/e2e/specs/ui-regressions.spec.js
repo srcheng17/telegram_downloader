@@ -1,4 +1,4 @@
-const { test, expect, enterReview, waitForMetadata } = require('../fixtures/auth');
+const { test, expect } = require('@playwright/test');
 
 const settings = { timeout: 30, retries: 3, image_concurrency: 2, download_action_mode: 'browser' };
 
@@ -30,16 +30,11 @@ test('浏览器历史恢复重新挂载交互，缓存缺失时保留导航和�
     return route.fulfill({ json: settings });
   });
   await page.goto('/');
-  await waitForMetadata(page);
-  await page.locator('.main-nav').getByRole('link', { name: '任务', exact: true }).click();
-  await expect(page).toHaveURL(/\/logs$/);
-  await expect(page.locator('#logs-page')).toBeVisible();
+  await expect(page.locator('#summary-active')).toHaveText('2');
+  await page.locator('.main-nav').getByRole('link', { name: '日志' }).click();
   await expect.poll(() => logRequests).toBeGreaterThan(0);
-  const beforeSettings = settingsRequests;
   await page.locator('.main-nav').getByRole('link', { name: '设置' }).click();
-  await expect(page).toHaveURL(/\/settings$/);
-  await expect(page.locator('#settings-form')).toBeVisible();
-  await expect.poll(() => settingsRequests).toBeGreaterThan(beforeSettings);
+  await expect.poll(() => settingsRequests).toBe(1);
 
   const beforeRestore = logRequests;
   await page.goBack();
@@ -49,10 +44,9 @@ test('浏览器历史恢复重新挂载交互，缓存缺失时保留导航和�
   await page.getByRole('button', { name: '筛选', exact: true }).click();
   await expect.poll(() => lastQuery).toBe('cached-history');
 
-  const beforeForward = settingsRequests;
   await page.goForward();
   await expect(page.locator('#settings-form')).toBeVisible();
-  await expect.poll(() => settingsRequests).toBeGreaterThan(beforeForward);
+  await expect.poll(() => settingsRequests).toBe(2);
   await expect(page.locator('#task_concurrency, #log_retention_days, #file_retention_days')).toHaveCount(0);
   await page.evaluate(() => localStorage.removeItem('htmx-history-cache'));
   const beforeMiss = logRequests;
@@ -93,17 +87,15 @@ test('上传HTML 413错误会释放提交按钮并允许重试', async ({ page }
     return route.fulfill({ status: 202, json: { ok: true } });
   });
   await page.goto('/');
-  await waitForMetadata(page);
   await page.getByLabel('上传压缩包').check();
   await page.setInputFiles('#archive_file', { name: 'demo.zip', mimeType: 'application/zip', buffer: Buffer.from('PK\x03\x04demo') });
-  await enterReview(page);
-  const submit = page.getByRole('button', { name: '确认并开始', exact: true });
+  const submit = page.getByRole('button', { name: '开始下载', exact: true });
   await submit.click();
   await expect(page.locator('#download-feedback')).toContainText('上传失败（413）');
   await expect(submit).toBeEnabled();
   await submit.click();
   await expect.poll(() => uploads).toBe(2);
-  expect(cancellations).toBe(0);
+  await expect.poll(() => cancellations).toBe(2);
   await expect(submit).toBeEnabled();
   expect(pageErrors).toEqual([]);
 });
@@ -118,15 +110,14 @@ test('失败导航不会卸载仍显示的首页表单', async ({ page }) => {
     return route.fulfill({ status: 202, json: { ok: true, task_id: 'after-navigation-error' } });
   });
   await page.goto('/');
-  await waitForMetadata(page);
+  await expect(page.locator('#summary-active')).toHaveText('2');
   const failedNavigation = page.waitForResponse((response) => new URL(response.url()).pathname === '/settings' && response.status() === 500);
   await page.locator('.main-nav').getByRole('link', { name: '设置' }).click();
   await failedNavigation;
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('#download-form')).toBeVisible();
   await page.locator('#url').fill('https://telegra.ph/After-Navigation-Error-10-03');
-  await enterReview(page);
-  await page.getByRole('button', { name: '确认并开始', exact: true }).click();
+  await page.getByRole('button', { name: '开始下载', exact: true }).click();
   await expect.poll(() => submissions).toBe(1);
   await expect(page.locator('#download-feedback')).toContainText('任务已加入队列。');
 });

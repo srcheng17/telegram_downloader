@@ -1,4 +1,0 @@
-BEGIN;
-ALTER TABLE task_core_results ADD COLUMN IF NOT EXISTS metadata_warnings JSONB NOT NULL DEFAULT '[]';
-ALTER TABLE task_core_results ADD COLUMN IF NOT EXISTS metadata_profile TEXT NOT NULL DEFAULT '';
-COMMIT;

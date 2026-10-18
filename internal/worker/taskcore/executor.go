@@ -35,9 +35,8 @@ type Executor struct {
 }
 
 type executionResult struct {
-	path     string
-	err      error
-	metadata ExecutionOutput
+	path string
+	err  error
 }
 
 func (e *Executor) ProcessOne(ctx context.Context) (bool, error) {
@@ -59,13 +58,6 @@ func (e *Executor) ProcessOne(ctx context.Context) (bool, error) {
 
 	resultCh := make(chan executionResult, 1)
 	go func() {
-		if enriched, ok := e.Downloader.(interface {
-			ExecuteWithMetadata(context.Context, app.Task) (ExecutionOutput, error)
-		}); ok {
-			output, runErr := enriched.ExecuteWithMetadata(runCtx, *task)
-			resultCh <- executionResult{path: output.Path, err: runErr, metadata: output}
-			return
-		}
 		path, runErr := e.Downloader.Execute(runCtx, *task)
 		resultCh <- executionResult{path: path, err: runErr}
 	}()
@@ -101,7 +93,7 @@ func (e *Executor) ProcessOne(ctx context.Context) (bool, error) {
 				return true, e.resolveReportError(ctx, task.ID, task.Attempt, task.Generation, failErr)
 			}
 			name := filepath.Base(result.path)
-			completeErr := e.Service.Complete(ctx, app.CompleteInput{TaskID: task.ID, WorkerID: e.WorkerID, Attempt: task.Attempt, Generation: task.Generation, ArtifactPath: result.path, ArtifactName: name, ArtifactSize: info.Size(), EffectiveMetadataDocument: result.metadata.EffectiveMetadataDocument, RetentionManifest: result.metadata.RetentionManifest, MetadataWarnings: result.metadata.MetadataWarnings, MetadataProfile: result.metadata.MetadataProfile})
+			completeErr := e.Service.Complete(ctx, app.CompleteInput{TaskID: task.ID, WorkerID: e.WorkerID, Attempt: task.Attempt, Generation: task.Generation, ArtifactPath: result.path, ArtifactName: name, ArtifactSize: info.Size()})
 			if errors.Is(completeErr, app.ErrConflict) {
 				removeExecutionArtifact(result.path)
 			}

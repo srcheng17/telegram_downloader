@@ -1,14 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applyInputMode, getSelectedMode } from '../home/input_mode.js';
-
-test('removed Telegram source and unknown modes normalize to the visible URL source', () => {
-    for (const value of ['telegram', 'invalid', '']) {
-        assert.equal(getSelectedMode({ querySelector: () => ({ value }) }), 'url');
-        assert.equal(applyInputMode({ getElementById: () => null }, value), 'url');
-    }
-});
+import { applyInputMode } from '../home/input_mode.js';
 
 test('applyInputMode toggles url and upload controls', () => {
     const nodes = {
