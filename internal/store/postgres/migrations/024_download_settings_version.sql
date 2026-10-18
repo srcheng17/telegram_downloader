@@ -1,6 +1,0 @@
-BEGIN;
-
-ALTER TABLE app_settings
-    ADD COLUMN IF NOT EXISTS config_version BIGINT NOT NULL DEFAULT 1;
-
-COMMIT;

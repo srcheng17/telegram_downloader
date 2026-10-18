@@ -12,7 +12,7 @@ module.exports = {
   },
   overrides: [
     {
-      files: ["frontend/src/**/*.js", "cli/**/*.mjs"],
+      files: ["frontend/src/**/*.js"],
       parserOptions: {
         sourceType: "module"
       }

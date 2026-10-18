@@ -12,12 +12,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	appmetadata "github.com/ryancheng/telegram-downloader/internal/app/metadata"
 	apptaskcore "github.com/ryancheng/telegram-downloader/internal/app/taskcore"
 	"github.com/ryancheng/telegram-downloader/internal/config"
 	"github.com/ryancheng/telegram-downloader/internal/downloader"
-	appruntime "github.com/ryancheng/telegram-downloader/internal/runtime"
-	"github.com/ryancheng/telegram-downloader/internal/store/postgres/metadatadoc"
 	pgtaskcore "github.com/ryancheng/telegram-downloader/internal/store/postgres/taskcore"
 	workertaskcore "github.com/ryancheng/telegram-downloader/internal/worker/taskcore"
 )
@@ -32,8 +29,7 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	ctx := context.Background()
 
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -71,25 +67,11 @@ func main() {
 	}
 
 	taskCoreStore := pgtaskcore.NewStore(pool)
-	metadataStore := metadatadoc.NewStore(pool)
-	taskCoreService := apptaskcore.NewService(taskCoreStore, apptaskcore.Config{LeaseTTL: 30 * time.Second, MaxAttempts: 3, MetadataEncoder: appmetadata.NewService(metadataStore)})
-	telegram, err := appruntime.Telegram(ctx, pool, cfg)
-	if err != nil {
-		log.Fatalf("initialize Telegram runtime: %v", err)
-	}
-	var telegramDownloader workertaskcore.TelegramDownloader
-	if telegram != nil {
-		telegramDownloader = telegram
-		defer telegram.Close()
-	}
+	taskCoreService := apptaskcore.NewService(taskCoreStore, apptaskcore.Config{LeaseTTL: 30 * time.Second, MaxAttempts: 3})
 	taskCoreDownloader := workertaskcore.NewTaskDownloader(workertaskcore.TaskDownloaderConfig{
-		Registry:        metadataStore,
-		RetentionRoot:   cfg.SourceRetentionRoot,
-		RecordRetention: taskCoreStore.RecordRetention,
-		Telegram:        telegramDownloader,
-		Tasks:           taskCoreService,
-		Service:         downloadService,
-		DownloadRoot:    downloadRoot,
+		Tasks:        taskCoreService,
+		Service:      downloadService,
+		DownloadRoot: downloadRoot,
 	})
 	taskCoreExecutor := &workertaskcore.Executor{
 		Service:           taskCoreService,
@@ -98,7 +80,8 @@ func main() {
 		HeartbeatInterval: 5 * time.Second,
 	}
 
-	runCtx := ctx
+	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	log.Printf(
 		"go-worker running task-core executor consumer=%s",
