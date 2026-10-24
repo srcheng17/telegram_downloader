@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block title %}书库设置{% endblock %}
+{% block content %}
+<header class="page-heading"><div><h1>书库设置</h1><p>把图页归档，接入你的 Komga 书库。</p></div><span class="page-corner" aria-hidden="true"></span></header>
+<div class="settings-layout">
+  <form id="settings-form" class="settings-form" action="/api/settings" method="post" data-testid="settings-form">
+    <fieldset class="komga-fields"><legend>Komga 配置</legend>
+      <p class="settings-description">文件通过共享目录入库；网页地址用于打开书库。</p>
+      <div class="field"><label for="komga-url">Komga 网页地址 <span class="label-optional">选填</span></label><input id="komga-url" name="komga_url" type="url" maxlength="2048" value="{{ settings.komga_url | default('') }}" placeholder="https://komga.example.com" aria-describedby="komga-url-hint" data-testid="komga-url"><p id="komga-url-hint" class="field-hint">仅支持 HTTP 或 HTTPS。网页地址本身不能接收 CBZ 文件。</p></div>
+      <div class="field"><label for="komga-dir">共享书库目录</label><input id="komga-dir" name="komga_dir" type="text" maxlength="4096" value="{{ settings.komga_dir | default('') }}" placeholder="例如：/komga" required aria-describedby="komga-dir-hint" data-testid="komga-dir"><p id="komga-dir-hint" class="field-hint">填写本应用可写的绝对目录，并确保它与 Komga 的书库映射到同一位置。</p></div>
+    </fieldset>
+    <div class="form-bottom"><p>归档完成后自动入库。</p><button class="button button-primary" type="submit" data-testid="save-settings">保存 Komga 配置</button></div>
+    <p class="form-feedback" role="status" aria-live="polite" data-settings-feedback data-testid="settings-feedback"></p>
+  </form>
+  <aside class="settings-notes"><h2>共享同一份书库</h2><p>墨渡把文件写入共享目录，Komga 从对应的书库目录发现漫画。</p><dl class="archive-facts"><div><dt>入库配置</dt><dd data-komga-state>{{ '已配置共享目录' if komga_enabled else '尚未配置' }}</dd></div><div><dt>归档方式</dt><dd>生成 CBZ 后自动放入书库</dd></div><div><dt>原图与书目</dt><dd>一并保存在漫画文件中</dd></div></dl><p class="availability-note">入库后，Komga 会在扫描书库时发现新漫画。也可以在 Komga 中手动扫描。</p><a class="text-link" href="{{ settings.komga_url | default('#') }}" target="_blank" rel="noopener noreferrer" data-open-komga{% if not settings.komga_url %} hidden{% endif %}>打开 Komga</a></aside>
+</div>
+{% endblock %}

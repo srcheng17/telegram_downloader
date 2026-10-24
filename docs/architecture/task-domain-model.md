@@ -1,6 +1,6 @@
 # 任务领域模型（Baseline to Target）
 
-本文保留历史重构目标。当前 Task Core 状态、执行代际和输入资格以 [任务生命周期](task-lifecycle-baseline.md) 及 `.trellis/spec/backend/task-runtime-contract.md` 为准。
+本文仅保留旧 Go／PostgreSQL 重构阶段的历史目标，不描述当前运行时。当前单机 Python 任务状态和输入资格以 [任务生命周期](task-lifecycle-baseline.md) 及 `.trellis/spec/backend/task-runtime-contract.md` 为准。
 
 ## 目的
 

@@ -1,33 +1,11 @@
 # State Management
 
-State lives in plain page-module objects and small state/view-model functions; there is no state-library dependency.
-See `frontend/src/home/index.js`, `frontend/src/logs/index.js`, and `frontend/src/settings.js`.
+SQLite owns job state, cancel/retry eligibility and Komga settings. Frontend owns form mode/file, busy controls and local feedback.
 
-## Existing State Boundaries
+Home only submits; do not place history/recent-task previews there. Task history is /tasks. Settings stores komga_url and komga_dir with configured response; there is no default_action or manual destination mode.
 
-- Page modules own handlers, current roots, in-flight requests, polling timers, and transient UI state.
-- Preserve existing `win.__telegraphHomeState`, `win.__telegraphLogsState`, and settings state where used.
-- `frontend/src/home/state.js` collects form fields; `frontend/src/logs/state.js` builds filters/query strings.
-- `frontend/src/settings/state.js` applies successful server snapshots and caches the download-action mode.
-- Derive logs presentation in `frontend/src/logs/view_model.js`, keeping render functions separate.
+komga_url is an optional HTTP/HTTPS site link. Actual automatic delivery requires the existing writable shared directory visible inside the app (typically /komga in Docker). Do not present URL-only setup as configured transfer or add API-key/scan fields.
 
-The existing logs query uses the native URL builder:
+Use status_label, phase, error, filename and available_actions. Only cancel/retry actions exist. delivering shows 入库中 without cancel; succeeded shows 已入库 after actual copy. Delivery failure retains internal CBZ and retry uses it; success cleans cache/source. Never add browser download or manual-copy controls.
 
-```js
-const params = new URLSearchParams();
-params.set('page', String(page));
-params.set('per_page', String(perPage));
-```
-
-## Task Contracts
-
-Consume backend `status_label`, progress, and `available_actions`; do not add frontend lifecycle rules.
-Current states/actions are defined in `internal/domain/taskcore/status.go` and presented by `internal/httpapi/taskcore_presenter.go`.
-Older lifecycle documents contain legacy statuses; consult current source when task payloads change.
-Reset stale filters, handlers, and request state through the existing mount/unmount paths.
-Test mappings with `frontend/src/tests/logs_view_model.test.mjs` and `frontend/src/tests/settings_state.test.mjs`.
-
-Supported settings are timeout, retries, image_concurrency and download_action_mode.
-New-task download settings are captured by the backend; UI action mode may change
-for existing successful results. Do not expose task concurrency or retention
-controls without a corresponding runtime implementation.
+Metadata fields remain author, series_name, series_number, comic_name, summary, tags and genres. Tags/genres are independent. Keep local state small; no global legacy state, duplicate confirmation or metadata history.

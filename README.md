@@ -1,281 +1,110 @@
-# Telegraph Downloader
+# 墨渡 PanelPort
 
-## 声明
+把 Telegraph 图集或本地 ZIP / RAR / 7Z 整理成带 ComicInfo 元数据的 CBZ，自动放入 Komga 共享书库。
 
-**本项目中的大部分代码由 AI（Google Gemini）生成和修改。** 它旨在作为一个功能原型和开发示例，可能未经过详尽的测试，请谨慎用于生产环境。
+## 使用流程
 
-## 概述
+1. 在「偏好设置」填写应用可访问的 Komga 书库目录，可另填 Komga 网站链接。
+2. 首页只负责新建任务：选择 Telegraph 链接或上传压缩包，填写作者、系列、编号、漫画名、简介、标签和类型。
+3. 在独立的「任务记录」查看进度。生成 CBZ 后自动入库，成功显示「已入库」。
+4. 失败或取消后可手动重试。入库失败会保留已生成的内部 CBZ，重试直接交付，不必重新抓取。
 
-Telegraph Downloader 是一个简单的 Web 应用，旨在帮助用户从 [Telegraph](https://telegra.ph/) 页面（通常用于发布漫画或图集）批量下载图片，并将它们打包为 CBZ 漫画文件（兼容历史 ZIP 下载记录）。
+界面与错误反馈使用中文，支持桌面和移动端。URL 来源限于 `telegra.ph`、`graph.org`。站点解析和下载交给固定版本 [gallery-dl](https://github.com/mikf/gallery-dl)，RAR/7Z 使用 [libarchive](https://www.libarchive.org/) 的 bsdtar；ZIP、XML 和 SQLite 使用 Python 标准库。
 
-## 主要功能
+上传最多 64 MiB；解包最多 300 张图片、单图 25 MiB、所有常规成员合计 500 MiB。失败不交付半成品。入库成功后删除应用的临时 CBZ 和上传源包，最终文件保留在 Komga 书库中。
 
-*   **通过 URL 下载**：只需粘贴 Telegraph 页面的 URL 即可开始下载。
-*   **通过压缩包上传生成 CBZ**：首页支持上传 ZIP / RAR / 7Z，按首页填写的元数据重新生成 CBZ。
-*   **重复 URL 智能复用 + 强制重抓**：默认命中已下载文件时进入“确认生成新 CBZ”流程；可强制创建新任务。
-*   **CBZ 元数据**：首页支持手动填写作者、漫画系列名、漫画名、简介、标签、类型（可空），并写入 `ComicInfo.xml`（`Writer/Series/Title/Summary/Tags/Genre`，其中 `Tags` 与 `Genre` 独立填写）。
-*   **首页元数据历史**：首页展示最近 20 条填写过的元数据，点击即可回填；URL 记录会连同链接一起恢复，上传记录会自动切到上传模式。
-*   **并发下载**：支持多线程并发下载图片，以提高效率。
-*   **自动打包**：下载完成后，所有图片会自动打包成 `.cbz`，文件名规则为 `作者_[系列名]_漫画名_时间戳.cbz`（系列名为空则省略该段，作者/漫画名空值自动占位）。
-*   **后端暂存 + 手动下载 / Komga 复制**：任务完成后产物会先存储在后端；日志页可按设置选择浏览器下载，或复制到固定 Komga 目录（系列名目录 / `tankobon`）。
-*   **上传任务日志化**：上传任务和 URL 任务共用同一张日志表，日志页会标识任务类型，并显示上传进度、失败重试、取消与成功动作。
-*   **下载预检与页内错误反馈**：日志页成功任务在浏览器下载模式下会先预检文件状态；如果文件不可用会在当前页给出明确错误，不会跳离 Logs 页面。
-*   **容错下载**：单张图片 404/失败会继续尝试其他图片；只要存在失败，该任务最终标记为失败并不给下载按钮。
-*   **下载日志**：提供一个日志页面，可以查看所有下载任务的状态（中文标签）、进度和错误信息。
-*   **任务看板与筛选**：首页/日志页提供任务概览指标；移动端默认折叠概览卡，日志支持按状态与关键词筛选，便于快速定位问题任务。
-*   **准确取消反馈**：取消操作为异步流程，前端会按后端真实响应显示状态与提示，减少误导。
-*   **可配置性**：
-    *   可自定义图片并发数、下载超时和重试次数。
-    *   可选择浏览器下载或复制到 Komga。新任务固定保存创建时的下载设置；修改设置作用于后续新任务。
-    *   当前没有自动清理日志和结果文件的定时机制。
-*   **动态前端**：前端使用 htmx + 原生 JS 模块，实现无刷新页面切换；除项目名外页面文案均为中文。
-*   **Docker 支持**：项目已完全容器化，并支持通过环境变量和卷挂载自定义下载路径。
+## Komga 连接方式
 
-## 技术栈
+`komga_url` 是可选的 HTTP/HTTPS 网站链接，用于打开书库；实际交付使用现有、可写、绝对路径的共享书库目录 `komga_dir`。官方 Komga 没有 CBZ 上传 API，因此这里不通过网站 URL 上传，也不要求 API 凭据或承诺触发扫描。
 
-*   **后端主线**: Go（`go-api` + `go-worker`）
-*   **前端**: HTML + CSS + htmx + 原生 JS（Vite 最小工程化）
-*   **部署**: Docker Compose, Nginx, PostgreSQL
-*   **测试**: Go test, Playwright, GitHub Actions CI
+Docker 中先将宿主书库挂到 `/komga`，再在设置页填写容器内路径 `/komga`。目录未配置时提交返回 409。系列名用作子目录，无系列使用 `tankobon`。交付采用目标文件系统中的临时文件和原子发布，同名不同内容不覆盖；短暂的「入库中」阶段不可取消。
 
-## 后端架构（重构后）
-
-默认生产拓扑：
-
-`gateway -> go-api -> postgres`
-
-`go-worker -> postgres`
-
-`go-worker` 通过 PostgreSQL 中的 Task Core 任务、lease、heartbeat 与 recovery 推进任务生命周期。
-
-核心目录：
-
-```text
-cmd/server/               # go-api 入口
-cmd/worker/               # go-worker 入口
-internal/httpui/          # 首页/日志/设置 UI（保持现有界面）
-internal/httpapi/         # /download + /api/* legacy-facing 适配层
-internal/httpv2/          # /v2/* API
-internal/app/taskcore/    # Task Core 应用服务与任务生命周期用例
-internal/worker/taskcore/ # PostgreSQL lease 驱动的 worker 执行链路
-internal/store/postgres/  # Task Core / 上传 / 设置仓储 + migrations runner
-web/templates/            # Go 页面模板
-web/static/               # 页面静态资源与构建产物
-```
-
-仓库当前只保留 Go 运行时主线；历史 Python compatibility runtime 已下线并转入 Git 历史参考。
-
-### Task Core lifecycle
-
-Task Core cutover uses `task_core_*` tables as the canonical task lifecycle store. The logs page renders backend-provided status labels and available actions for URL and upload tasks; legacy task rows are preserved but not migrated into the new logs view. Deployment, validation, and rollback steps are documented in `docs/runbooks/2026-04-22-task-core-rebuild.md`.
-
-## 测试分层（重构后）
-
-```text
-./...            # Go 单元/集成/竞态测试
-tests/e2e/       # Playwright 端到端测试（可复现，自动拉起 Compose）
-.github/workflows/ci.yml  # CI 门禁（go test + race + lint + e2e）
-```
-
-## 项目修改文档
-
-本轮改动的分项说明见：`docs/PROJECT_UPDATES.md`（后端、前端、测试、CI 与容器运行命令汇总）。
-
-## 架构与运行文档
-
-- `docs/architecture/current-system-overview.md`：当前系统结构与模块职责基线
-- `docs/architecture/task-lifecycle-baseline.md`：URL / 上传任务生命周期与动作路径基线
-- `docs/architecture/config-inventory.md`：环境变量、卷挂载、运行隐性知识清单
-
-## 开发约束
-
-- `docs/development/module-boundaries.md`：重构期模块边界与职责约束
-- `docs/development/testing-strategy.md`：测试分层与最低回归要求
-
-## 前端源码与静态资源约定
-
-- `frontend/src/` 是首页、日志页、设置页和应用壳层的源码入口；Vite 从这里构建运行时 bundle。
-- 页面模板只直接引用 `web/static/dist/*.bundle.js`。
-- Docker 构建阶段使用 Node 24 执行 `npm ci` 和 `vite build`，镜像自带完整静态资源。默认 Compose 保留宿主静态目录挂载，因此前端源码和 `web/static/dist/` 必须一起更新；发布门禁验证重新构建结果与 Git 一致。Vite 配置为 `vite.config.mjs`。
-
-## 运行测试
-
-### Go 单元与竞态测试
-
-```bash
-export TEST_DATABASE_URL="postgresql://<test-user>:<test-password>@127.0.0.1:<test-port>/<test-db>?sslmode=disable"
-go test ./... -count=1
-go test -race ./... -count=1
-go vet ./...
-```
-
-`TEST_DATABASE_URL` 必须指向隔离的测试数据库；未设置时本地 PostgreSQL 集成测试会跳过，CI 则直接失败。使用 Go 1.27.1 和 Node 24。
-
-### 前端检查与构建
-
-```bash
-npm ci
-npm run test:frontend
-npm run lint
-npm run build
-```
-
-### Playwright 端到端测试（可复现）
-
-```bash
-npm ci
-npm run e2e:install
-npm run e2e:test
-```
-
-> `npm run e2e:test` 会自动执行 `docker compose up -d --build`，等待 `/readyz`，执行 Playwright，然后自动清理容器、测试卷和临时文件。每次使用独立 Compose 项目、本地端口及合成凭据，不挂载生产下载或 Komga 目录。真实上传测试不拦截 API，校验 worker 生成 CBZ 的图片字节和 ComicInfo 元数据；其余部分 UI 测试使用 mock 验证错误、取消和导航反馈。
->
-> 本地运行前会先做一次 Playwright 浏览器 preflight：
-> - macOS 本地默认优先尝试 `chrome`，再回退到 `chromium`
-> - 可用 `E2E_BROWSER_PROJECT=chrome` 或 `E2E_BROWSER_PROJECT=chromium` 强制指定项目
-> - 如需跳过 preflight，使用 `E2E_SKIP_BROWSER_PREFLIGHT=1 npm run e2e:test`
-> - 若 preflight 报 `Permission denied (1100)` / `SIGABRT`，通常表示当前 macOS 会话不允许该 shell 启动浏览器自动化
-
-### 发布级验收
-
-推荐直接运行统一门禁脚本：
-
-```bash
-bash scripts/verify_release_gates.sh
-```
-
-脚本会顺序执行：
-
-```bash
-go test ./... -count=1
-go test -race ./... -count=1
-go vet ./...
-node --test tests/e2e/browser_preflight.test.cjs
-npm run test:frontend && npm run lint && npm run build
-git diff --exit-code -- web/static/dist
-npm run e2e:test
-```
-
-本地门禁前先配置隔离 `TEST_DATABASE_URL`，并将正确的源码和构建产物暂存到 Git；门禁比较工作区与暂存区，CI 比较检出提交。未跟踪的构建产物也会被拒绝。
-
-如需额外做显式 Compose smoke：
-
-```bash
-INTERNAL_ENQUEUE_TOKEN=test-token docker compose up -d --build
-curl -fsS http://localhost:5002/healthz
-curl -fsS http://localhost:5002/readyz
-docker compose down
-```
-
-> Compose smoke 依赖 `INTERNAL_ENQUEUE_TOKEN` 与可用 Docker 凭据会话（macOS 非交互 shell 可能遇到 keychain 访问失败）。
->
-> 迁移步骤、回滚方案与已知问题见：`docs/runbooks/2026-03-16-fullstack-refactor-migration.md` 与 `docs/runbooks/2026-03-18-project-refactor-rollout.md`。
-
-## 关键接口说明
-
-*   `POST /download`
-    *   支持元数据字段：`author`、`series_name`、`comic_name`、`summary`、`tags`、`genres`（表单或 JSON）。
-    *   支持 `force` 参数（布尔语义）。
-    *   命中已有成功文件时返回确认态（`needs_confirmation=true` + `download_url`）；用户可选择直接下载已有文件，或以 `force=true` 再次提交生成新 CBZ。
-    *   若已有同 URL 活跃任务，仍会复用活跃任务避免重复并发。
-*   `GET /api/tasks/<task_id>/download`
-    *   下载任务产物（新任务为 CBZ；历史任务可为 ZIP）。
-*   `HEAD /api/tasks/<task_id>/download`
-    *   仅做下载可用性预检（前端用来避免错误时离开 Logs 页面）。
-
-上传源包最多 64 MiB；解包最多 300 张图片、单图 25 MiB、总常规文件 500 MiB。ZIP 在读取中检查取消，RAR/7Z 使用 bsdtar 转换为 tar 流逐成员读取，不展开整包到磁盘。产物存放于 `DOWNLOAD_PATH/<task_id>/<generation>/`，显示文件名保留原规则。成功后删除上传源；失败和取消保留源包供重试。未附着完整源包的上传任务不能从日志重试，需重新选择文件上传。迁移 014 与发布步骤见 [优化发布说明](docs/runbooks/2026-10-03-taskcore-optimization.md)。
-
-## 如何运行
-
-### 1. 准备环境变量
+## Docker 启动
 
 ```bash
 cp .env.example .env
-# 至少设置 INTERNAL_ENQUEUE_TOKEN
-```
-
-### 2. 启动 Compose 单主线（Go）
-
-```bash
 bash scripts/start_local.sh
 ```
 
-本地脚本创建共享目录并以当前用户 UID/GID 启动 API 和 worker。直接运行 Compose 时，在 `.env` 设置 `APP_UID`/`APP_GID`（默认 `10001:10001`），提前创建下载、临时及 Komga 目录，并使它们可由该 UID/GID 写入。已有部署只调整所需目录权限，避免递归更改无关数据。
+访问 `http://localhost:5002`。本地脚本使用当前用户 UID/GID，按 Compose 配置创建数据和共享目录。默认新数据目录为 `./data/single-host`，与旧 PostgreSQL 分开。
 
-### 3. 访问应用
+| 配置 | 默认值 | 用途 |
+| --- | --- | --- |
+| `APP_PORT` | `5002` | 宿主端口，容器固定监听 5000 |
+| `DATA_DIR_HOST` | `./data/single-host` | SQLite、输入与内部工作缓存 |
+| `APP_UID / APP_GID` | `10001 / 10001` | 容器用户；须能写挂载目录 |
+| `KOMGA_DIR_HOST` | `./data/komga` | 挂载到 `/komga` 的宿主共享书库 |
+| `KOMGA_DIR` | 空 | 尚未保存设置时的初始目录，可设为 `/komga` |
 
-在浏览器中打开 `http://localhost:5002`。
+在 `.env` 设置 `KOMGA_DIR_HOST` 指向实际书库；首次启动可在设置页保存 `/komga`，也可设置初始 `KOMGA_DIR=/komga`。数据库中已保存的设置优先于环境默认值。
 
-## Compose 单主线部署（Go）
+直接使用 Compose 时，先为 APP_UID/GID 创建可写目录：
 
 ```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-默认服务拓扑为：`gateway + go-api + go-worker + postgres`。
-
-- `gateway`（Nginx）统一对外暴露 `APP_PORT`（默认 `5002`）。
-- 网关规则文件：`deploy/nginx/canary-go-full.conf`。
-- 页面与 API 入口统一转发到 `go-api`（单主线，不再依赖 Python web/worker）。
-
-可用以下命令验证服务健康：
+使用发布镜像：
 
 ```bash
-curl -sS http://localhost:5002/healthz
-curl -sS -w '\nHTTP %{http_code}\n' http://localhost:5002/readyz
+docker compose -f docker-compose.yml -f docker-compose.image.yml pull
+docker compose -f docker-compose.yml -f docker-compose.image.yml up -d
 ```
 
-返回体中 `service` 为 `go-backend` 表示网关已命中 Go 主线。
+`TELEGRAPH_IMAGE` 可固定为 `ghcr.io/srcheng17/telegram_downloader:sha-<完整提交SHA>`。main 的 CI 通过后发布 `latest` 和 SHA 标签，支持 amd64/arm64；PR 不发布镜像。现有 GHCR 路径与 Python 模块名暂时沿用，不随产品更名自动改变。
 
-## 自动发布镜像与 Dockhand 部署
+## 架构与开发
 
-`main` 的 CI 门禁通过后，GitHub Actions 自动向 GHCR 发布 `ghcr.io/srcheng17/telegram_downloader:latest` 和 `sha-<完整提交 SHA>`，支持 `linux/amd64`、`linux/arm64`。PR 只运行检查，不覆盖 `latest`。
+一个 Python 3.14 / FastAPI 进程提供页面和 API，并运行一个串行执行器。SQLite 保存任务与 Komga 设置，文件留在本机目录。独占目录锁阻止重复实例；不要使用多个 Uvicorn workers、横向扩容或网络共享 SQLite。
 
-预构建镜像部署使用 `docker-compose.image.yml` 覆盖本地构建配置（需要 Docker Compose 2.24.4+）。API 与 worker 使用同一镜像，静态资源直接来自镜像，数据和 Komga 挂载保留：
+```text
+telegraph_downloader/
+  __main__.py, main.py   启动、页面与 API
+  config.py             路径与限制
+  store.py              SQLite 任务、入库状态与设置
+  jobs.py               串行执行、自动交付、取消/重试/重启恢复
+  media.py              下载器、受限解包、CBZ 与安全复制
+  templates/, static/   中文页面、CSS 与原生 JavaScript
+tests/                  Python 功能、安全与浏览器测试
+scripts/                启动、发布门禁与隔离容器 smoke
+```
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.image.yml pull go-api go-worker
-docker compose -f docker-compose.yml -f docker-compose.image.yml up -d --no-build
+python3.14 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m playwright install chromium
+DATA_DIR="$PWD/data/local" python -m telegraph_downloader
 ```
 
-Dockhand 使用单个 Compose 文件时，先生成合并配置：
+Linux 浏览器依赖使用 `python -m playwright install --with-deps chromium` 安装；RAR/7Z 另需系统 bsdtar。macOS 可安装 libarchive，确认 bsdtar 在 PATH 中。
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.image.yml \
-  config --no-interpolate --no-path-resolution > /tmp/telegraph-dockhand.yml
+python -m ruff check telegraph_downloader tests
+python -m pytest -m 'not e2e'
+python -m pytest -m e2e
+bash scripts/verify_release_gates.sh
+bash scripts/smoke_container.sh
 ```
 
-将生成内容放入 Dockhand 的现有 Stack；保留原 Stack 名称与环境变量，设置 `INTERNAL_ENQUEUE_TOKEN`、目录权限和宿主挂载路径，并让网关的 `deploy/nginx/canary-go-full.conf` 指向宿主已有文件。此命令保留变量及相对路径；Dockhand 的工作目录可能不同，部署前核对各宿主路径。GHCR 首次发布的 package 默认私有；可在 GitHub 的 Package settings 将其设置为 Public 以免登录拉取，或在 Dockhand 配置具有拉取权限的 Registry 凭据。
+容器 smoke 使用唯一 project、临时挂载、随机本地端口和空 env-file。它保存测试 Komga 设置，上传两张不同 PNG 的 ZIP，校验书库 CBZ 页序、图片字节、中文 XML 与本地缓存清理，并确认旧下载/手动复制接口不存在。测试不读取生产目录，也不依赖公网图集。
 
-发布新 `latest` 后，在 Dockhand 对该 Stack 拉取镜像并重新部署，API 与 worker 一起更新到同一版本；`pull_policy: always` 在部署时拉取，不会自行创建定时更新任务。回滚时将 `TELEGRAPH_IMAGE` 设置为 `ghcr.io/srcheng17/telegram_downloader:sha-<完整提交 SHA>`，再拉取并重新部署。
+静态源文件直接进入镜像，没有 Node/Vite 构建。外部下载器的超时、取消和临时磁盘预算不等于操作系统硬配额。只报告实际检查；浏览器或 Docker 不可用时注明未运行。
 
-## SQLite 迁移到 Postgres（停机迁移）
+## API
 
-1. 停止旧服务（冻结写入）。
-2. 准备一个**可从迁移脚本所在主机直连**的 Postgres 实例（可为外部实例，或临时对 Compose 的 `postgres` 暴露端口）。
-3. 执行迁移脚本（将 `<host>:<port>` 替换为实际可达地址）：
+- `POST /api/jobs/url`：JSON 或表单，提交 URL 与元数据。
+- `POST /api/jobs/upload`：multipart，一次提交 `file` 与元数据。
+- `GET /api/jobs`、`GET /api/jobs/{id}`：任务列表和详情，公开文件名字段为 `filename`。
+- `POST /api/jobs/{id}/cancel`、`/retry`：取消或重试；可用动作只有 cancel/retry。
+- `GET/POST /api/settings`：`{komga_url, komga_dir, configured}`。
+- `GET /healthz`：健康检查。
 
-```bash
-.venv/bin/python scripts/migrate_sqlite_to_postgres.py \
-  --source-sqlite data/tasks.db \
-  --target-postgres "postgresql://telegraph:telegraph@<host>:<port>/telegraph" \
-  --truncate-target
-```
+没有浏览器产物下载或手动 Komga 复制接口。新版本不兼容历史 `/download`、`/api/tasks`、`/v2/settings` 协议。
 
-> 注意：当前 `docker-compose.yml` 默认**不**对外发布 `postgres:5432`。
+## 切换与备份
 
-4. 迁移完成后使用 compose 启动新架构：
+新版本不自动读取、迁移或删除旧 PostgreSQL、下载目录和已有 CBZ。切换前保留旧不可变镜像、Compose/env、数据库与文件备份；步骤见 [单机版切换说明](docs/runbooks/2026-10-24-single-host-cutover.md)。
 
-```bash
-docker compose up -d --build
-```
-
-## 更新后重建（镜像与容器）
-
-当代码或前端资源有变更时，建议重新构建并替换 Compose 服务：
-
-```bash
-docker compose down --remove-orphans
-docker compose up -d --build
-```
+排队任务重启后保留，运行/入库中任务标为中断失败，用户手动重试。备份同时考虑应用 DATA_DIR 和独立的 Komga 书库。当前约束见 [模块边界](docs/development/module-boundaries.md)、[测试策略](docs/development/testing-strategy.md) 和 [系统概览](docs/architecture/current-system-overview.md)；旧 plans/runbooks 仅作历史追溯。

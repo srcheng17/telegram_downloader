@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-24-single-host-rebuild/prd.md", "reason": "approved user outcomes"}
+{"file": ".trellis/tasks/10-24-single-host-rebuild/design.md", "reason": "new runtime and cross-worker contracts"}
+{"file": ".trellis/tasks/10-24-single-host-rebuild/research/evidence.md", "reason": "verified dependency behavior"}
+{"file": "docs/development/module-boundaries.md", "reason": "preserve validation and filesystem boundaries while retiring old layer layout"}

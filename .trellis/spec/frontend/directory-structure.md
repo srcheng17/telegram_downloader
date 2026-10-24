@@ -1,29 +1,7 @@
-# Directory Structure
+# Frontend Directory Structure
 
-The runtime layout is documented in `README.md` and `docs/architecture/current-system-overview.md`.
+`telegraph_downloader/templates/` owns Jinja pages/layouts, and `static/` owns CSS and native JavaScript. FastAPI serves both from the application package, including inside the Docker image.
 
-```text
-frontend/src/
-  app.js                       htmx navigation and page lifecycle
-  index.js, logs.js, settings.js  bundle entry points
-  home/, logs/, settings/       page behavior, API adapters, state, and view models
-  shared/                      API transport, polling, messages, and shared models
-  tests/                       Node test runner tests (*.test.mjs)
-web/templates/                 Go HTML templates
-web/static/style.css           shared page styles
-web/static/dist/               generated Vite bundles and shared chunks
-```
+Keep page-specific behavior local; share code only for actual repeated transport/rendering needs. Ordinary browser navigation owns page teardown, so do not recreate the retired htmx mount/unmount dispatcher.
 
-## Placement Rules
-
-- Keep page-specific behavior in its existing page directory; share only actual cross-page logic.
-- Existing files use descriptive snake_case names such as `logs/view_model.js` and `home/form_submission.js`.
-- Page entry points create/register modules; composition belongs in `home/index.js` or `logs/index.js`.
-- Reuse `shared/api/tasks_api.js` for transport and `shared/page_modules.js` for lifecycle dispatch.
-- Follow `docs/development/module-boundaries.md`: frontend presents backend semantics, not task rules.
-
-## Build Boundary
-
-`vite.config.js` builds `app`, `index`, `logs`, and `settings` into `web/static/dist/`.
-`web/templates/base.html` loads those bundles; do not import raw `frontend/src/` paths into templates.
-Run `npm run build` and include generated output whenever frontend source changes.
+There is no frontend build, Node dependency or dist directory. Include source assets directly in Docker's package copy and test the image's files without a host static mount. Reuse the task design's Chinese library workspace styling, responsive navigation and readable form/task hierarchy.

@@ -42,3 +42,6 @@ worktrees/
 
 # External administrator and source encryption secrets
 secrets/
+
+# Single-host application state
+/data/single-host/

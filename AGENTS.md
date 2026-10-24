@@ -22,10 +22,13 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 ## Project conventions
 
-- Runtime: Go API and worker, PostgreSQL Task Core, nginx; frontend: native JavaScript, htmx, Go templates, Vite. See `README.md` for the current layout.
+- Runtime: Python 3.14 FastAPI, local SQLite, one serial background executor and one application instance. Frontend: Jinja templates, CSS and native JavaScript. See `README.md` for the current layout.
 - Read `docs/development/module-boundaries.md` and the relevant `.trellis/spec/backend/` or `.trellis/spec/frontend/` index before editing a layer.
-- Current task states and action eligibility are defined in `internal/domain/taskcore/`; older architecture documents can describe retired states or Redis paths. Resolve discrepancies against the current code.
-- UI text is Chinese. Frontend source changes must include rebuilt `web/static/dist/*.bundle.js` artifacts.
+- Current task states and action eligibility live in `telegraph_downloader/store.py` and the public job API. Older Go/PostgreSQL/Redis documents are historical; resolve discrepancies against current code.
+- UI text is Chinese. Templates and static source under `telegraph_downloader/` are served directly; there is no Node/Vite build or generated bundle requirement.
+- Product: 墨渡 PanelPort. Home is submit-only, task history and Komga settings have separate pages. Jobs automatically enter Komga; there are no browser download or manual-copy routes. Keep the Python module and existing GHCR path unchanged unless explicitly migrating them.
+- Delegate site downloads to pinned gallery-dl and RAR/7Z handling to libarchive. Keep filesystem containment, upload/archive limits, subprocess cancellation and atomic artifact publication.
+- Use isolated temporary data and Komga directories for tests. Never migrate/delete old production data or operate production services as a side effect of development.
 - Run checks appropriate to the changed layer, following its spec index. Report only checks actually run and their results.
 - Follow the English Conventional Commits instructions in `paseo.json`.
 - Trellis session and task bookkeeping does not auto-commit; review and commit it with the intended work.

@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block title %}新建归档{% endblock %}
+{% block content %}
+<header class="page-heading"><div><h1>新建归档</h1><p>从图集链接或压缩包开始，完成后自动送入 Komga。</p></div><span class="page-corner" aria-hidden="true"></span></header>
+<div class="editor-layout">
+  <div class="archive-form">
+    {% if not komga_enabled %}<p class="inline-note">请先配置 Komga 书库，再开始归档。<a href="/settings">前往书库设置</a></p>{% endif %}
+    <fieldset class="source-switch">
+      <legend class="visually-hidden">选择图页来源</legend>
+      <label><input type="radio" name="input_mode" value="url" checked data-testid="mode-url"><span>图集链接</span></label>
+      <label><input type="radio" name="input_mode" value="upload" data-testid="mode-upload"><span>上传压缩包</span></label>
+    </fieldset>
+    <form id="archive-form" action="/api/jobs/url" method="post" data-testid="archive-form">
+    <div class="source-panel" data-source-panel="url">
+      <label for="source-url">Telegraph 图集链接</label>
+      <input id="source-url" type="url" name="url" maxlength="2048" placeholder="https://telegra.ph/…" autocomplete="url" required aria-describedby="url-hint" data-testid="source-url">
+      <p id="url-hint" class="field-hint">支持 telegra.ph 和 graph.org，图页按原顺序归档。</p>
+    </div>
+    <div class="source-panel" data-source-panel="upload" hidden>
+      <label for="source-file">选择图页压缩包</label>
+      <div class="file-picker"><input id="source-file" class="visually-hidden" type="file" name="file" accept=".zip,.rar,.7z" disabled aria-describedby="upload-hint" data-testid="source-file"><label class="button button-outline file-select" for="source-file">选择压缩包</label><span class="file-description" data-file-description>尚未选择文件</span></div>
+      <p id="upload-hint" class="field-hint">ZIP、RAR 或 7Z，最大 64 MiB。保留图片，重新生成 CBZ。</p>
+    </div>
+    <fieldset class="metadata-fields">
+      <legend>书目信息 <span>选填，随漫画文件保存</span></legend>
+      <div class="field-grid">
+        <div class="field"><label for="comic-name">漫画名</label><input id="comic-name" name="comic_name" maxlength="200" type="text" placeholder="这一本漫画的名字" data-testid="comic-name"></div>
+        <div class="field"><label for="author">作者</label><input id="author" name="author" maxlength="200" type="text" placeholder="作者或创作者" data-testid="author"></div>
+        <div class="field"><label for="series-name">系列名</label><input id="series-name" name="series_name" maxlength="200" type="text" placeholder="同一系列，放在一起" data-testid="series-name"></div>
+        <div class="field"><label for="series-number">卷号 / 序号</label><input id="series-number" name="series_number" maxlength="50" type="text" placeholder="例如：1、番外" data-testid="series-number"></div>
+        <div class="field field-wide"><label for="summary">简介</label><textarea id="summary" name="summary" maxlength="10000" rows="3" placeholder="留下这本漫画的故事梗概" data-testid="summary"></textarea></div>
+        <div class="field"><label for="tags">标签</label><input id="tags" name="tags" maxlength="2000" type="text" placeholder="用逗号分隔" aria-describedby="tags-hint" data-testid="tags"><span id="tags-hint" class="field-hint">用于这一本漫画</span></div>
+        <div class="field"><label for="genres">类型</label><input id="genres" name="genres" maxlength="2000" type="text" placeholder="用逗号分隔" aria-describedby="genres-hint" data-testid="genres"><span id="genres-hint" class="field-hint">在 Komga 中用于系列分类</span></div>
+      </div>
+    </fieldset>
+    <div class="form-bottom"><p>归档完成后，自动送入书库。</p><button class="button button-primary" type="submit" data-testid="submit-job"{% if not komga_enabled %} disabled{% endif %}><span data-submit-label>生成并入库</span></button></div>
+    <div class="form-feedback" id="submit-feedback" role="status" aria-live="polite" data-testid="submit-feedback" hidden><span data-submit-message></span><a class="receipt-link" href="/tasks" data-testid="view-submitted-job" hidden>查看任务</a></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

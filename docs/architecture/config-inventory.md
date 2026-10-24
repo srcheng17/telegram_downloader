@@ -1,148 +1,28 @@
-# 配置与运行约束清单（Baseline）
+# 墨渡 PanelPort 配置与数据
 
-## 目的
+## 应用设置
 
-本文档盘点当前系统运行依赖的环境变量、挂载目录与隐性知识，为后续配置治理和 runbook 标准化提供基线。
+GET/POST /api/settings 返回 `{komga_url: str, komga_dir: str, configured: bool}`。komga_dir 必须是现有、可写、应用内可见的绝对共享书库目录；komga_url 是可选 HTTP/HTTPS 网站链接，不是上传 API。无 API 凭据或自动扫描配置。
 
-## Compose 服务级配置
+SQLite 中保存的设置优先于初始 KOMGA_DIR 环境值。未配置目录时任务提交返回 409。Docker 推荐将宿主书库挂到 /komga，再在页面保存 /komga；宿主路径与容器路径不要混填。
 
-### postgres
+## Compose 变量
 
-环境变量：
-- `POSTGRES_DB`（默认 `telegraph`）
-- `POSTGRES_USER`（默认 `telegraph`）
-- `POSTGRES_PASSWORD`（默认 `telegraph`）
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| APP_PORT | 5002 | 宿主映射到容器 5000 |
+| DATA_DIR_HOST | ./data/single-host | 新 SQLite、输入与内部缓存根 |
+| APP_UID / APP_GID | 10001 / 10001 | 须能写数据和书库 |
+| KOMGA_DIR | 空 | 尚无保存设置时的初始目录，可用 /komga |
+| KOMGA_DIR_HOST | ./data/komga | /komga 的宿主共享目录 |
+| TELEGRAPH_IMAGE | ghcr.io/srcheng17/telegram_downloader:latest | 继续使用现有远程分发路径 |
 
-卷：
-- `./data/postgres:/var/lib/postgresql/data`
+start_local.sh 默认使用当前用户 UID/GID，并读取 Compose 解析结果创建目录。不要递归更改不相关宿主目录权限。旧 POSTGRES_*、DATABASE_URL、INTERNAL_ENQUEUE_TOKEN、GO_*、CONSUMER_NAME 不参与新运行时。
 
-### go-api
+## 限制和存储
 
-关键环境变量：
-- `PORT`（默认 `5000`）
-- `DATABASE_URL`
-- `INTERNAL_ENQUEUE_TOKEN`（必填）
-- `GO_DOWNLOAD_TIMEOUT`
-- `GO_DOWNLOAD_RETRIES`
-- `GO_IMAGE_CONCURRENCY`
-- `DOWNLOAD_PATH`（默认 `/app/downloaded_images`）
-- `TEMP_PATH`（默认 `/app/temp_downloads`）
-- `KOMGA_LIBRARY_ROOT`（默认 `/app/komga/myReadingManga`）
+默认任务超时 900 秒；上传 64 MiB、300 图、单图 25 MiB、常规成员合计 500 MiB。下载器 argv 固定；超时、取消和暂存预算不等于内核硬配额。
 
-卷：
-- `./downloaded_images:/app/downloaded_images`
-- `./temp_downloads:/app/temp_downloads`
-- `./web/static:/app/static:ro`
-- `${KOMGA_LIBRARY_ROOT_HOST:-/Users/ryancheng/docker_data/komga/data/myReadingManga}:${KOMGA_LIBRARY_ROOT:-/app/komga/myReadingManga}:rw`
+DATA_DIR 保存 SQLite、失败/取消任务输入、工作目录与待交付 CBZ。成功入库后清理内部 CBZ 与源包，最终漫画只在 Komga 书库保留。交付失败保留缓存供重试，没有失败缓存定时删除承诺。
 
-### go-worker
-
-关键环境变量：
-- `DATABASE_URL`
-- `INTERNAL_ENQUEUE_TOKEN`
-- `CONSUMER_NAME`（由 Compose 的 `GO_WORKER_CONSUMER_NAME` 注入，空值时回退到容器 hostname）
-- `GO_DOWNLOAD_TIMEOUT`
-- `GO_DOWNLOAD_RETRIES`
-- `GO_IMAGE_CONCURRENCY`
-- `DOWNLOAD_PATH`
-- `TEMP_PATH`
-
-卷：
-- `./downloaded_images:/app/downloaded_images`
-- `./temp_downloads:/app/temp_downloads`
-
-### gateway
-
-关键环境变量：
-- `APP_PORT`（默认 `5002`）
-
-卷：
-- `./deploy/nginx/canary-go-full.conf:/etc/nginx/conf.d/default.conf:ro`
-
-## 当前配置分类观察
-
-当前配置大致混合了以下几类语义：
-
-1. **应用行为**
-   - 下载超时、重试次数、图片并发数
-2. **数据存储与路径**
-   - `DOWNLOAD_PATH`、`TEMP_PATH`、`KOMGA_LIBRARY_ROOT`
-3. **worker 身份与执行**
-   - `CONSUMER_NAME`
-4. **基础设施连接**
-   - `DATABASE_URL`
-5. **运维与入口**
-   - `PORT`、`APP_PORT`、`INTERNAL_ENQUEUE_TOKEN`
-
-当前问题不是变量不够，而是**分组和归属还没有完全制度化**。
-
-## 当前挂载语义
-
-### 结果与临时文件
-
-- `downloaded_images/`
-  - 任务产物目录，也是 API / worker 共享结果目录。
-- `temp_downloads/`
-  - worker 临时下载与处理目录。
-
-### 前端静态资源
-
-- `web/static/` 被只读挂载进 `go-api`。
-- 运行时直接消费 `web/static/dist/*.bundle.js`。
-
-### Komga 目录
-
-- 宿主机目录通过 `KOMGA_LIBRARY_ROOT_HOST` 挂载到容器内 `KOMGA_LIBRARY_ROOT`。
-- 当前默认宿主机路径是：
-  `/Users/ryancheng/docker_data/komga/data/myReadingManga`
-- 当前默认容器内路径是：
-  `/app/komga/myReadingManga`
-
-这套路径映射是修复 Komga copy 失败问题后的当前基线。
-
-## 当前隐性知识
-
-### 1. 前端源码修改后必须同步更新 bundle
-
-Docker 构建阶段会执行 `vite build`，镜像包含静态资源；默认 Compose 的只读资源挂载会覆盖镜像目录。因此：
-
-- 改了 `frontend/src/`
-- 必须同时更新 `web/static/dist/*.bundle.js`
-
-否则容器里仍会运行旧前端逻辑。
-
-### 2. gateway 使用 Docker DNS 动态解析
-
-当前 nginx upstream 使用 `server go-api:5000 resolve`、共享 zone 和
-`resolver 127.0.0.11 valid=10s`。重建 API 后会刷新地址；如出现 502，应检查
-API 健康、Docker DNS 和网关日志，不把重启 gateway 当作根因证明。
-
-### 3. Komga copy 依赖容器挂载，而不是宿主机直写
-
-当前代码默认写容器内路径，真正落宿主机依赖 volume 映射。如果仅在代码里写宿主机路径、不做 volume 挂载，会重新触发类似：
-
-- `mkdir /Users: permission denied`
-
-### 4. 热修链路存在二进制覆盖经验路径
-
-在紧急场景中，可以通过本地交叉编译 Linux 二进制，再 `docker cp` 到运行中的容器并重启服务完成热修。这不是标准发布流程，但目前是实际存在的运维经验路径。
-
-### 5. macOS 本地工具链存在环境约束
-
-当前仓库上下文中已观察到：
-
-- Apple 自带 `git` / `python3` 可能触发 Xcode license 问题；
-- 通常需要优先使用 Homebrew `git` 或已知可用解释器路径。
-
-## 建议后续治理方向（摘要）
-
-后续在重构阶段应把这些基线信息转化为：
-
-- 更明确的配置分组；
-- 更稳定的开发/运行脚本；
-- 更标准化的 runbook；
-- 更少依赖经验记忆的发布与排障过程。
-
-## 下载设置与权限
-
-`APP_UID`/`APP_GID` 控制 API/worker 用户，默认 10001:10001；本地启动脚本使用宿主用户 ID。共享下载、临时、Komga 目录必须可写。新任务保存 app_settings 的超时、重试和图片并发快照；旧无快照任务使用 worker 环境默认值。当前没有任务并发与日志/文件到期清理设置。
+只支持本机单实例。备份时同时考虑 DATA_DIR 和 Komga 目录；应用数据库可停机复制或使用 SQLite backup API，不能仅复制在线主文件漏掉 WAL。镜像内含静态资源，无宿主静态挂载。

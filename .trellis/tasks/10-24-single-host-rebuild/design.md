@@ -1,0 +1,26 @@
+# PanelPort design
+
+## Runtime and modules
+`telegraph_downloader/` contains config.py, store.py, jobs.py, media.py, main.py, templates/ and static/. Distribution/brand is PanelPort; the internal module and existing GHCR remote stay stable. One Uvicorn process uses FastAPI lifespan to acquire an exclusive data-directory flock, initialize/recover SQLite, and run one serial background loop. No second broker, PostgreSQL, nginx, Node/Vite or frontend build output.
+
+Config carries data_dir, optional initial komga_dir, task_timeout=900, max_upload_bytes=64MiB, max_images=300, max_image_bytes=25MiB, max_total_bytes=500MiB and a fixed gallery command prefix. Production never loads fixture environment variables. SQLite uses short per-operation connections and transactions; network/file work is outside transactions. File bytes stay under inputs/, work/ and artifacts/.
+
+## Data and lifecycle
+Jobs contain id, kind(url/upload), source, metadata, status, phase/error, cancel_requested, generated artifact_path/filename/page_count/size and komga_path. Settings contain komga_dir and komga_url. Saved directory overrides initial environment default. HTTP settings validate string types, existing writable absolute directory, and credential-free HTTP/HTTPS website URLs. Website URL is only for opening Komga, never described as binary upload. Komga's official books/import consumes server file paths; actual transport here is a shared library directory.
+
+States: queued -> running -> delivering -> succeeded; running may fail/cancel, delivering may fail. Startup under the exclusive lock maps interrupted running/delivering to failed and preserves cache metadata for retry. A retry keeps its input and any validated CBZ. Missing source can still retry a cached CBZ. No lease/heartbeat/generation system.
+
+The runner calls synchronous media.execute using asyncio.to_thread and a threading.Event. Before copying it atomically enters delivering only if running and not cancelled, recording the validated artifact. Cancellation is rejected after this commit phase begins. Copy succeeds before SQLite marks succeeded and records komga_path; only then are local CBZ/input cleaned. If copy/registration fails or the process crashes, retry reuses identical CBZ/name and the copy helper recognizes identical existing content. External same-name different content is never overwritten: same-directory temporary copy publishes by atomic hard link, conflicts compare or fail. Filesystems without hard-link support fail safely.
+
+## Media
+media.execute(job,config,cancel,progress)->Artifact(path,filename,page_count,size), MediaError/MediaCancelled; no SQLite writes. canonical_url and validate_artifact are shared boundary helpers. Fixed gallery-dl flags isolate config, restrict extractor, write info.json once, bound page range and use deterministic numbered filenames in an empty per-job directory. Verify positive manifest count, actual count/numbering, no partials and final byte limits before ZIP/XML.
+
+ZIP streams members; RAR/7Z use bsdtar -cf - --format=pax @<absolute source> and streaming tar reads. Never extractall or write member-provided paths; reject links/special files and count all regular decoded bytes. Preserve ordered image bytes and write the seven ComicInfo fields with ElementTree XML escaping/control cleanup. Temporary CBZ is atomically renamed under artifacts/<jobid>.cbz. Watchdog kills and waits for process groups on cancel/timeout and bounds temporary storage approximately; exact kernel/filesystem quota is not claimed.
+
+## HTTP and frontend
+GET / is submission only. GET /tasks owns history and polling; GET /settings owns Komga configuration. POST /api/jobs/url (JSON/form) and /upload (multipart file+metadata) require a configured directory. GET /api/jobs returns {jobs:[...]}; GET /api/jobs/{id}; POST /cancel and /retry return public job. GET/POST /api/settings return {komga_dir,komga_url,configured}. GET /healthz verifies the runner. There is no download or manual /komga route. Public jobs include Chinese labels and available_actions limited to cancel/retry; no internal source/artifact paths.
+
+Jinja templates + native CSS/JS, ordinary navigation, backend-owned action eligibility and textContent-safe dynamic text. Home does not query or render job lists; successful submit shows only a receipt link to /tasks. Task page shows 已入库 after physical copy; optional page-level 打开Komga link uses validated URL. Settings explain shared path mapping. Local Chinese fonts, navy/cobalt/page-white design; skip link is clipped until keyboard focus to avoid full-page screenshot artifacts. No fake examples/metrics, external fonts or CDN.
+
+## Migration and verification
+New data root; no live production migration or filesystem deletion. Old CBZ/PG remain in place; cutover runbook records immutable image/data backups and rollback. Existing user .gitignore /progress/ line is preserved independently. Unit/integration tests cover subprocess, archive/path, cancellation, delivery-cache/idempotency and settings boundaries; browser tests use a live isolated app and offline real gallery CLI; container smoke validates actual ZIP->SQLite->automatic Komga bytes/XML with temporary bind directories and cleans its own resources.

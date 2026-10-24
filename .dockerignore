@@ -1,35 +1,22 @@
-# 忽略虚拟环境
-.venv/
-
-# 忽略下载的文件
-downloaded_images/
-temp_downloads/
-data/
-
-# 忽略 Python 缓存文件
-*.pyc
-__pycache__/
-
-# 忽略 macOS 特定文件
-.DS_Store
-
-# 忽略项目文档
-PROJECT_STRUCTURE.md
-
-# 忽略前端依赖与测试产物
-node_modules/
-playwright-report/
-test-results/
-tests/e2e/.artifacts/
-
-# Local credentials and development bookkeeping
+.git
 .env
 .env.*
 !.env.example
-.git/
-.trellis/
-.agents/
-.codex/
-
-# External administrator and source encryption secrets
-secrets/
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.trellis
+.agents
+.codex
+data
+downloaded_images
+temp_downloads
+node_modules
+playwright-report
+test-results
+progress
+secrets
+tests
+docs

@@ -1,19 +1,7 @@
 # Logging Guidelines
 
-Current runtime logging uses Go's standard-library `log`, not a structured
-logging framework. Reuse the existing patterns in `cmd/server/main.go`,
-`cmd/worker/main.go`, and `internal/httpapi/api.go`.
+Use Python's standard logging facilities. Keep startup failures at the entry point and map request failures to user-facing HTTP responses.
 
-Actual internal-error pattern in `internal/httpapi/api.go`:
+Record task ID and operation context needed to diagnose failure. Never log full requests, uploaded content, database/config dumps, credentials, private source URLs or raw downloader output that may contain those values.
 
-```go
-if err != nil && !errors.Is(err, context.Canceled) {
-    log.Printf("request failed: %v", err)
-}
-```
-
-- Fatal startup errors stay in runtime entry points; request handlers return HTTP errors.
-- Record operation/error context needed for diagnosis without dumping entire requests.
-- Never add credentials, database DSNs, private source URLs, downloaded content,
-  or full environment/configuration objects to logs or reports.
-- Return the existing generic internal-error response rather than exposing logged details.
+Return concise Chinese errors to the browser. Detailed traces belong only in controlled internal diagnostics; routine cancellation is not an unexpected exception. Test that external tool errors are sanitized before storage/API display.

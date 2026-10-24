@@ -1,27 +1,15 @@
 # Frontend Quality Guidelines
 
-Follow `docs/development/testing-strategy.md` and `docs/development/module-boundaries.md`.
-Behavior changes should start with a focused failing test; reuse existing tests and plain Node assertions.
-
-## Required Checks for Frontend Code Changes
+Follow [testing strategy](../../../docs/development/testing-strategy.md) and the selected frontend skill/task design.
 
 ```bash
-npm run test:frontend
-npm run lint
-npm run build
+python -m ruff check telegraph_downloader tests
+python -m pytest -m 'not e2e'
+python -m pytest -m e2e
 ```
 
-`package.json` defines these commands; Node tests live in `frontend/src/tests/*.test.mjs`.
-Prefer state/view-model/action tests with small injected DOM/API doubles over full browser setup for every detail.
-Examples: `frontend/src/tests/page_modules.test.mjs` and `frontend/src/tests/logs_view_model.test.mjs`.
+Python Playwright browser tests verify desktop/mobile, labeled forms, keyboard use, submit-only home, separate task history, saved Komga settings and actual upload-to-automatic-delivery. Cover delivery failures/cache retry and queued/running cancellation; delivering is noncancellable. Use temporary data roots; mock only isolated interaction failures.
 
-## Review Checklist
+Check safe text rendering, focus visibility, mobile overflow, honest loading/cancellation feedback, HTTP/business error handling and input preservation. No npm test/lint/build or generated bundle comparison is part of the runtime.
 
-- Source changes include rebuilt `web/static/dist/` output; verify `frontend/src/tests/bundle_contract.test.mjs`.
-- Repeated mount/unmount does not leave listeners, polling, or stale requests behind.
-- User-controlled display text uses safe DOM APIs; Chinese feedback and accessible controls remain usable.
-- Task actions and labels follow current backend payloads, with existing compatibility fallbacks preserved.
-- Shared functions are reused instead of copying polling, API transport, or status normalization.
-
-`npm run e2e:test` runs Playwright against an isolated temporary Compose stack; reserve it for affected critical user flows.
-`scripts/verify_release_gates.sh` is the full release gate and includes E2E; record environment-limited checks honestly.
+Templates/CSS/JS are copied into the image; run isolated container smoke for packaging changes. Report actual browser/Docker results and any environment limitation.

@@ -1,57 +1,27 @@
-# Task Core execution and upload contracts
+# PanelPort Automatic-delivery Contract
 
-## 1. Scope / Trigger
+## Runtime and HTTP
 
-Changes to lifecycle, worker, upload, settings, artifacts or CI cross application,
-SQL, files and HTTP boundaries. Use this contract with the existing database guide.
+One FastAPI process holds an exclusive DATA_DIR lock and runs a serial executor. SQLite queued work survives restart; interrupted running/delivering jobs fail for manual retry.
 
-## 2. Signatures
+- GET /: submit-only home; GET /tasks: history; GET /settings: Komga configuration.
+- POST /api/jobs/url accepts JSON/form; POST /api/jobs/upload accepts multipart file and metadata.
+- GET /api/jobs and /api/jobs/{id} query jobs; POST cancel/retry are the only actions.
+- GET/POST /api/settings returns {komga_url, komga_dir, configured}. Saved settings override initial KOMGA_DIR.
+- komga_dir must be an existing writable absolute shared directory visible to the app. Unconfigured submission is 409.
+- komga_url is an optional HTTP/HTTPS website link only. No official Komga CBZ upload API, API credentials or scan guarantee.
+- Public jobs expose filename, status_label, phase/error and available_actions. No download/manual-Komga routes.
 
-- `CreateURLTask(ctx, CreateURLInput) (CreateURLResult, error)` includes `Force` and `RuntimeSettings`; result embeds Task and exposes Reused/NeedsConfirmation/Result.
-- `Execute(ctx, app.Task)` receives a claimed lease owner and generation.
-- Heartbeat/ReportProgress/AcknowledgeCancel/Complete/Fail carry generation.
-- `QueryTasks(ctx, TaskQuery) (TaskPage, error)` filters/counts/pages in SQL; `StatusCounts` aggregates all tasks.
-- Migration 014 adds `task_core_tasks.generation BIGINT`, `task_core_inputs.runtime_settings JSONB` and created_at/id ordering index.
+## Lifecycle and Files
 
-## 3. Contracts
+queued -> running -> delivering -> succeeded. Cancellation is allowed only before delivering, with an atomic begin_delivery check. The short delivery commit is noncancellable. succeeded means 已入库, not only CBZ generated.
 
-- `/download`: active canonical URL reuses a task atomically. Existing readable successful artifact yields HTTP 200 + duplicate/needs_confirmation/download_url; force creates anew unless an active task exists. New tasks yield 202.
-- Upload init requires a ZIP/RAR/7Z filename; optional file_size is an integer <=64 MiB. Source PUT enforces actual 64 MiB, including chunked bodies.
-- Extraction caps 300 images, 25 MiB/image, 500 MiB/all regular members; no-image archives fail. RAR/7Z stream through bsdtar, without full disk extraction.
-- Download settings persist at task creation; retry uses the same snapshot. Supported fields: timeout, retries, image_concurrency, download_action_mode. Last field controls UI success action rather than worker execution.
-- Retry requires FAILED/CANCELED and a kind-appropriate attached source (upload archive path or URL/canonical URL). UI and server consume the same qualification; no-source uploads must be initialized again.
-- Claim increments generation monotonically; manual retry resets attempt only. All execution writes match owner/generation; terminal writes also match attempt. Cancel acknowledgment follows Execute exit and unpublished artifact cleanup.
-- Files use DOWNLOAD_PATH/taskID/generation/displayName. Success cleanup removes upload source only after Complete; fail/cancel retain source.
-- TEST_DATABASE_URL is isolated test PG; CI rejects its absence. E2E uses unique project, local URL, synthetic credentials and temporary writable volumes. APP_UID/GID must match shared directory permissions.
+Use fixed gallery-dl argv, isolated work directories, timeout/cancel and temporary disk budget. ZIP reads per member; RAR/7Z use bsdtar tar stream. Never extractall. Reject unsafe paths, links/special entries; enforce 64 MiB upload, 300 images, 25 MiB/image and 500 MiB/all regular members.
 
-## 4. Validation & Error Matrix
+Verify a positive complete image sequence and types/bytes. Write temporary CBZ then atomically publish internally; copy atomically into the configured Komga series directory (tankobon fallback). Check source/target real containment including symlinks. Do not overwrite a different same-name file; same bytes permit idempotent retry.
 
-| Condition | Result |
-| --- | --- |
-| Invalid extension/declared upload size | 400 before task creation |
-| Actual oversized upload | 413, partial file removed, no source attached |
-| Archive count/size/no-image violation or cancellation | execution fails/stops, no published CBZ |
-| Retry without a source | 409, no READY transition or retry action |
-| Stale owner/generation/attempt | ErrConflict; no heartbeat/progress/terminal overwrite |
-| Artifact outside real root including symlink | unavailable; no download/copy |
-| Komga non-2xx or payload.ok != true | error feedback, no success toast |
+Delivery failure preserves internal CBZ/filename for retry without re-grabbing. Success removes internal CBZ and input source. Running cancellation stops subprocesses before final state; generated or partial media is never exposed via browser.
 
-## 5. Good/Base/Bad Cases
+## Checks
 
-- Good: simultaneous canonical submissions create one active task; >10000 tasks retain complete counts.
-- Base: older task without runtime_settings uses worker defaults; migration initializes generation from attempt.
-- Bad: old run with same worker ID and reset attempt tries to complete after retry; generation rejects it.
-
-## 6. Tests Required
-
-- PostgreSQL store: concurrent dedupe/force, snapshot roundtrip, same-owner retry ABA fencing, cancellation recovery and >10000 query/count.
-- Worker/archive/HTTP: Execute exit before cancel ack, settings application, same-name artifact isolation, source cleanup ordering, limits and partial upload cleanup.
-- Frontend/browser: HTML413 recovery/cancel, Komga failure, cached and cache-miss history restore without stale callbacks.
-- Real E2E: UI ZIP upload -> PG/worker -> SUCCEEDED -> downloaded CBZ exact image bytes/ComicInfo metadata -> Komga copy.
-- Full gate: Go test/race/vet, Node tests/preflight, lint/build, tracked bundle diff and isolated Compose E2E.
-
-## 7. Wrong vs Correct
-
-Wrong: reset attempt to zero, then fence only by worker ID/attempt; acknowledge cancel while Execute still writes.
-
-Correct: keep generation unchanged on retry, increment it on claim, check it on every execution write; cancel context, await Execute, remove its unpublished artifact, then acknowledge.
+Test configuration and 409, setting precedence, cancellation/delivery race, interrupted delivery, cached retry, byte/XML output, cleanup, unsafe paths and old-route 404. Browser/container tests perform actual auto-delivery using temporary shared directories and no production paths.

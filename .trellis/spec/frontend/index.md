@@ -1,31 +1,20 @@
 # Frontend Development Guidelines
 
-Scope: `frontend/src/`, `web/templates/`, and `web/static/` in this single-repository Go application.
-The frontend uses native JavaScript ES modules, htmx, Go templates, and Vite; it is not React or TypeScript.
-Existing project conventions live in `README.md` and `docs/development/module-boundaries.md`.
+Scope: `telegraph_downloader/templates/` and `telegraph_downloader/static/`. The UI is Jinja HTML, CSS and native JavaScript served directly by FastAPI. No Node/Vite, React, generated bundles or htmx page lifecycle.
 
-## Guidelines Index
+## Before Development
 
-| Guide | Read for |
+Read [module boundaries](../../../docs/development/module-boundaries.md), the task design, [directory](./directory-structure.md), [components](./component-guidelines.md) and [quality](./quality-guidelines.md). For requests/state changes read the corresponding guide and trace backend payloads. Read [shared guides](../guides/index.md).
+
+| Guide | Scope |
 | --- | --- |
-| [Directory Structure](./directory-structure.md) | Page modules, templates, and generated bundles |
-| [Component Guidelines](./component-guidelines.md) | DOM rendering, module lifecycle, and accessibility |
-| [Hook Guidelines](./hook-guidelines.md) | htmx events, API calls, polling, and cleanup |
-| [State Management](./state-management.md) | Page state, settings snapshots, and backend task semantics |
-| [Type Safety](./type-safety.md) | Runtime normalization of JavaScript inputs |
-| [Quality Guidelines](./quality-guidelines.md) | Tests, lint, build, and review checks |
+| [Directory](./directory-structure.md) | Templates and static assets |
+| [Components](./component-guidelines.md) | Safe rendering, Chinese UI and accessibility |
+| [Async requests](./hook-guidelines.md) | Forms, fetch and polling |
+| [State](./state-management.md) | Backend actions and local state |
+| [Type safety](./type-safety.md) | Boundary validation |
+| [Quality](./quality-guidelines.md) | Python/browser checks |
 
-## Pre-Development Checklist
+The product is 墨渡 PanelPort. Home only submits new tasks; /tasks owns history and /settings owns Komga configuration. No browser download or manual-copy controls.
 
-- Read directory and quality guidelines before changing frontend files.
-- Read component and hook guidelines for DOM, event, or request changes.
-- Read state and type guidelines when changing forms or API payloads.
-- Read `.trellis/spec/guides/index.md`; trace API contracts into the backend when they change.
-- Search existing page/shared modules before adding helpers; inspect the relevant Node tests.
-
-## Quality Check
-
-- Follow `docs/development/testing-strategy.md`; verify changed behavior with focused tests.
-- Run `npm run test:frontend`, `npm run lint`, and `npm run build` for frontend code changes.
-- Include updated `web/static/dist/` bundles with source changes; check Chinese feedback and lifecycle cleanup.
-- Use current Task Core source contracts when older architecture documents describe legacy states.
+Browser tests cover desktop/mobile, saved shared-directory settings and actual upload-to-auto-Komga delivery. Static source is runtime source; no rebuild artifacts are required.

@@ -1,185 +1,22 @@
-# 测试策略与重构期回归要求
+# 测试策略
 
-## 目的
-
-本文档定义项目在重构期的测试职责分层与最低回归要求。目标是让测试服务于架构演进，而不是仅仅追求数量。
-
-## 总体原则
-
-1. **规则优先写单测**：只要是领域规则、状态机、命名、清洗逻辑，优先 domain/app 单测。
-2. **接口适配要有契约测试**：legacy / v2 的映射与动作接口必须有 focused tests。
-3. **E2E 只保关键链路**：不让 E2E 承担全部细节验证。
-4. **重构必须先稳基线**：若基线测试失败，先定位并恢复基线，再继续执行计划。
-5. **遵守 TDD**：新功能、bugfix、行为变更与重构，都应先写或先更新失败测试，再做实现。
-
-## 分层职责
-
-### Domain tests
-
-适合覆盖：
-- 任务状态转换
-- 重试/取消资格
-- 进度阶段语义
-- 元数据规范化
-- 文件名与 Komga 路径规则
-
-要求：
-- 尽量纯函数
-- 不依赖数据库、HTTP、Redis、文件系统
-- 运行快、反馈快
-
-### Application tests
-
-适合覆盖：
-- 创建 URL 任务的用例编排
-- 初始化上传任务与上传源文件接入
-- 取消/重试是否复用同一任务
-- 下载与 Komga copy 走正确动作
-
-要求：
-- 可用 fake interfaces
-- 验证输入输出与编排流程
-- 不把所有细节推给 E2E
-
-### Interface / API tests
-
-适合覆盖：
-- Task Core 到 legacy-facing 日志 payload 的字段映射
-- task actions 接口的状态码与响应体
-- 页面 handler 的关键分支
-- v2 handler 的查询与输入验证
-
-要求：
-- 测接口契约，不把业务规则散写在这里
-- 若发现 adapter 测试在验证业务规则，优先考虑把规则上移
-
-### Infrastructure tests
-
-适合覆盖：
-- PostgreSQL repo
-- migrations
-- PostgreSQL lease、generation fencing 与任务 SQL 查询
-- archive / downloader 的实现正确性
-
-要求：
-- 测技术实现，不测页面语义
-- 失败时应能快速定位到具体实现层
-
-### Frontend tests
-
-适合覆盖：
-- 页面状态映射
-- 日志 view model
-- 首页模式切换与历史回填
-- 设置保存与动作切换
-- shared 模块（polling、本地化、模块挂载）
-
-要求：
-- 优先测试 view model、状态和动作函数
-- 尽量减少直接依赖真实 DOM 细枝末节
-
-### E2E tests
-
-适合覆盖关键用户路径：
-- URL 下载
-- 上传生成 CBZ
-- 失败重试
-- 取消
-- Komga copy
-- 设置切换
-
-要求：
-- 只覆盖最重要的端到端路径
-- 用来发现跨层集成问题，不替代单测/契约测试
-
-数据库集成测试必须使用隔离的 `TEST_DATABASE_URL`，不得指向运行中的业务库；CI 缺少变量时直接失败。真实上传 E2E 通过镜像内静态资源、API、PostgreSQL 和 worker，检查下载 CBZ 的图片字节与 XML 元数据，并执行 Komga copy。其余 UI mock 用例只证明交互契约，不代表实际外部下载成功。
-
-## 重构任务的最低回归要求
-
-### 后端主导改动
-
-至少运行：
+验证墨渡 PanelPort 的真实自动入库链路与信任边界，避免保留旧接口 mock。
 
 ```bash
-go test ./... -count=1
+python -m ruff check telegraph_downloader tests
+python -m pytest -m 'not e2e'
+python -m pytest -m e2e
 ```
 
-若改动触及核心状态机、worker 或 repo，推荐追加：
+安装 requirements-dev.txt 和 `python -m playwright install chromium`；Linux CI 使用 --with-deps。完整门禁为 verify_release_gates.sh，部署另跑 smoke_container.sh。
 
-```bash
-go test -race ./... -count=1
-```
+- Store/runner：持久排队、独占锁、中断恢复、取消与 begin_delivery 竞态、交付失败保留缓存、重试不重复抓取、成功清理。
+- Media：受控 URL fixture、序列/字节/XML、ZIP/RAR/7Z、数量/体积、损坏/不安全成员、工具取消/超时、Komga 幂等/冲突。
+- HTTP：Komga 目录未配置返回 409、保存设置覆盖环境、网站 URL 只作链接、上传实际大小与部分清理、旧下载/手动复制路由 404。
+- Browser e2e：桌面/移动端首页只提交，独立任务历史，设置书库，真实上传 -> 自动已入库、错误恢复、取消/重试。
 
-### 前端主导改动
+测试用 tmp_path、临时本地端口与合成内容。API mock 只证明交互，不能替代实际媒体执行。默认不依赖公网图集。
 
-至少运行：
+容器 smoke 使用唯一 project、空 env-file、临时 DATA_DIR/Komga 和本地端口：先保存 /komga 与测试网站链接，上传两张不同 PNG 的 ZIP；等已入库，读取挂载书库 CBZ 检查页序/图片字节/中文 XML；确认旧下载/手动复制接口 404，成功任务内部产物和源包已清理。结束只清理自己的测试资源。
 
-```bash
-npm run test:frontend
-npm run build
-```
-
-### 运行脚本 / Compose / 发布链路改动
-
-至少运行：
-
-```bash
-bash scripts/verify_release_gates.sh
-```
-
-若受环境限制无法全跑，必须记录：
-- 哪条命令未跑
-- 原因是什么
-- 已完成的替代验证是什么
-
-## 重构提交的建议粒度
-
-推荐遵循：
-
-1. 写失败测试
-2. 运行并确认失败
-3. 最小实现 / 最小调整
-4. 跑 focused tests
-5. 跑阶段性最小回归
-6. 单独提交
-
-不要把多层大改、测试更新、文档更新和 unrelated cleanup 混成一个 commit。
-
-## 何时必须补测试
-
-以下情况默认必须补测试：
-
-- 新增行为
-- 改变现有行为
-- 修复 bug
-- 调整状态机/动作资格语义
-- 移动逻辑到新模块导致行为可能变化
-
-以下情况可不强制新增测试，但应谨慎说明：
-
-- 纯文档更新
-- 纯注释更新
-- 完全不改变行为的机械重命名（且已有测试覆盖）
-
-## 重构期常见误区
-
-### 1. “只是重构，不用补测试”
-
-错误。重构会改变代码落点和依赖关系，如果没有测试，很难证明行为未变。
-
-### 2. “E2E 过了就够了”
-
-错误。E2E 只能告诉你系统大体可用，无法替代对领域规则和映射语义的精确验证。
-
-### 3. “先改完再补测试”
-
-错误。重构期更需要 TDD，否则很容易把旧问题、新问题和结构调整混在一起。
-
-## 成功标准
-
-当一项重构改动完成时，应能回答：
-
-1. 新旧行为差异是否被测试明确表达？
-2. 回归命令是否实际运行过？
-3. 若有环境限制，是否留下明确记录？
-4. 测试是否帮助说明了代码现在为什么该放在这里？
+无 Go/PG/Node/Vite/bundle 门禁。页面源直接入镜像，需核验镜像内页面和静态资源。只报告实际执行结果及未跑原因，不操作生产数据。

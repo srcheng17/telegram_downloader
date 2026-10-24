@@ -1,35 +1,21 @@
-FROM node:24-alpine3.24 AS frontend
+FROM python:3.14-slim-bookworm
 
-WORKDIR /src
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY frontend ./frontend
-COPY vite.config.mjs ./
-RUN npm run build
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DATA_DIR=/data
 
-FROM golang:1.27.1-alpine3.24 AS builder
-
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/go-api ./cmd/server
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/go-worker ./cmd/worker
-
-FROM alpine:3.24
-
-RUN apk add --no-cache ca-certificates tzdata libarchive-tools \
-    && adduser -D -u 10001 app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libarchive-tools \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 app \
+    && mkdir /data \
+    && chown app:app /data
 
 WORKDIR /app
-COPY --from=builder /out/go-api /app/go-api
-COPY --from=builder /out/go-worker /app/go-worker
-COPY --from=frontend /src/web/static/dist /app/static/dist
-COPY web/static/style.css /app/static/style.css
-RUN mkdir -p downloaded_images temp_downloads \
-    && chown app:app downloaded_images temp_downloads
+COPY requirements.txt ./
+RUN python -m pip install --no-cache-dir -r requirements.txt
+COPY telegraph_downloader ./telegraph_downloader
 
 USER app
 EXPOSE 5000
-
-ENTRYPOINT ["/app/go-api"]
+CMD ["python", "-m", "telegraph_downloader"]

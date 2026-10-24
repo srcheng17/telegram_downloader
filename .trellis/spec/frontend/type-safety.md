@@ -1,26 +1,7 @@
 # Runtime Type Safety
 
-Frontend code is JavaScript ES modules; there is no TypeScript compiler or schema-validation dependency.
-`.eslintrc.cjs` enables `eslint:recommended` with module parsing for `frontend/src/**/*.js`.
+Use plain JavaScript and native browser APIs. There is no TypeScript compiler, schema framework or legacy response normalization layer.
 
-## Boundary Normalization
+Check response objects, lists, optional text and DOM nodes before access. Validate finite numeric progress/size values before formatting. Use FormData/JSON and URL/URLSearchParams rather than manual escaping.
 
-- Normalize strings and optional form fields in `frontend/src/home/state.js` and `frontend/src/logs/state.js`.
-- Reuse `normalizeStatusCode` / `buildStatusCatalog` from `frontend/src/shared/models/status_catalog.js`.
-- Check nullable DOM nodes and response payloads before reading properties.
-- Use existing numeric/finite checks where required; see `frontend/src/shared/polling.js` and settings state.
-
-`frontend/src/logs/view_model.js` guards untyped payloads before deriving display data:
-
-```js
-const task = log && typeof log === 'object' ? log : {};
-const availableActions = Array.isArray(task.available_actions)
-    ? task.available_actions.slice()
-    : Array.isArray(task.availableActions)
-      ? task.availableActions.slice()
-      : [];
-```
-
-Preserve API field names and compatibility fallbacks when editing view models; validate malformed/empty input in Node tests.
-References: `frontend/src/tests/status_catalog.test.mjs`, `frontend/src/tests/logs_view_model.test.mjs`, and `frontend/src/tests/settings_state.test.mjs`.
-Do not introduce TypeScript assertions, a validation framework, or duplicated status/action catalogs for this stack.
+Treat every server/user string as text. Keep backend field names consistent across forms, API and rendering; reject malformed input at the server as well. Browser tests should include empty/error responses and failed submissions without uncaught exceptions.

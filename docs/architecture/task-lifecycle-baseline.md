@@ -1,30 +1,27 @@
-# Task Core 任务生命周期
-
-当前状态以 `internal/domain/taskcore/status.go` 为准：`CREATED`、`READY`、`RUNNING`、`CANCELING`、`SUCCEEDED`、`FAILED`、`CANCELED`。页面消费 backend `status_label`、`progress` 和 `available_actions`。
-
-## URL 与上传
+# 自动入库任务生命周期
 
 ```text
-URL: POST /download -> READY -> RUNNING -> SUCCEEDED / FAILED
-上传: init -> CREATED -> upload-source -> READY -> RUNNING -> SUCCEEDED / FAILED
-活跃状态 -> CANCELING -> CANCELED
-FAILED / CANCELED -> retry -> READY
+queued -> running -> delivering -> succeeded
+queued -> cancelled
+running -> failed / cancelled
+delivering -> failed
+failed / cancelled -> queued（手动重试）
 ```
 
-同 URL 活跃任务复用；成功产物可用时返回确认态，force 新建但仍复用活跃任务。每个新任务保存创建时的下载设置快照，重试沿用原设置。
+以 store.py 和 API 返回的 status_label、phase、available_actions 为准。succeeded 的产品含义是「已入库」，不是仅已生成 CBZ。可用动作只有 cancel/retry，delivering 不提供取消。
 
-上传字节进度由客户端 XHR 展示；落盘完成后后端进度进入 preparing。URL 图片发现和完成回调写入 downloading current/total，打包进入 packaging，成功进入 done。不得用时间推算伪进度。
+## 执行与恢复
 
-## 取消与重试
+URL 或完整上传源持久化后排队，后台串行处理。启动先取得 DATA_DIR 独占锁，queued 保留，遗留 running/delivering 标为中断失败，用户手动重试。
 
-取消接口返回 `CANCELING`，不代表执行已停止。运行中的 worker 取消 context，等 Execute 返回并清理未发布产物，再写 `CANCELED`；尚未领取任务由 recovery 确认取消。
+取消仅针对 queued/running；运行取消等待子进程退出和临时文件清理。进入 delivering 时由 store 原子检查是否已有取消请求；交付提交阶段不再接受取消，避免已写入书库却显示取消。
 
-attempt 是自动恢复重试预算，手动 retry 可清零；generation 每次 claim 单调递增，不能清零。所有执行写回必须匹配 lease owner 和 generation；终态另检查 attempt。
+生成失败保留输入。入库失败还保留已生成内部 CBZ、filename 等信息，重试先交付有效缓存，不重复抓取。成功后删除应用产物与上传源，Komga 文件保留。已有同名同内容目标可作为幂等交付；不同内容不覆盖。
 
-上传失败或取消保留源包；成功且 Complete 提交后清理源包。未附着源包的取消任务不能执行重试，用户重新选择文件上传。
+## 路径与设置
 
-## 下载和 Komga
+内部 work/artifacts 按任务隔离，CBZ 和 Komga 目标都用临时文件原子发布；拒绝目录越界、symlink 和不安全成员。
 
-成功任务经 `HEAD /api/tasks/{id}/download` 预检，再 GET 下载。路径需在 DOWNLOAD_PATH 真实边界内；物理目录为 task ID/generation，下载文件名保留元数据规则。
+设置包含 komga_dir（现有、可写、应用内可见的绝对共享目录）和可选 komga_url（HTTP/HTTPS 网站链接）。保存设置覆盖初始 KOMGA_DIR，未配置目录时提交返回 409。URL 本身不提供文件传输能力。
 
-`POST /api/tasks/{id}/copy-to-komga` 写入配置 root 的系列目录，无系列则 `tankobon`。前端同时检查 HTTP 和 payload.ok 才展示成功。失败保留在当前页面。
+系列名清理后作为书库子目录，无系列为 tankobon。API 不返回源路径或可下载产物地址；旧 download/手动 komga 动作不存在。历史去重确认、元数据历史、运行参数设置与分布式代际规则不属于新版本。

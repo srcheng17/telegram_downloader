@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}墨渡{% endblock %} · PanelPort</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" type="module"></script>
+</head>
+<body data-page="{{ active_page }}" data-komga-enabled="{{ 'true' if komga_enabled else 'false' }}">
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <aside class="sidebar" aria-label="工作台导航">
+    <a class="brand" href="/" aria-label="墨渡 PanelPort 首页">
+      <span class="brand-mark" aria-hidden="true">墨</span>
+      <span class="brand-name">墨渡<small>PanelPort</small></span>
+    </a>
+    <div class="sidebar-rule" aria-hidden="true"></div>
+    <nav class="main-nav" aria-label="主要导航">
+      {% for path, key, label in [('/', 'home', '新建归档'), ('/tasks', 'tasks', '任务记录'), ('/settings', 'settings', '书库设置')] %}
+      <a href="{{ path }}"{% if active_page == key %} aria-current="page"{% endif %} data-testid="nav-{{ key }}"><span>{{ label }}</span><span class="nav-mark" aria-hidden="true"></span></a>
+      {% endfor %}
+    </nav>
+    <div class="sidebar-bottom"><span class="spine-rule" aria-hidden="true"></span><p>图页有序，书目有据。</p><span>直达你的 Komga 书库</span></div>
+  </aside>
+  <main id="main" class="main-content" tabindex="-1">
+    <div class="workspace-topline"><span>私人漫画工作台</span><span class="workspace-format">图页 / 书目 / CBZ</span></div>
+    {% block content %}{% endblock %}
+    <footer class="page-footer"><span>墨渡</span><p>整理图页，送入书库。</p></footer>
+  </main>
+</body>
+</html>

@@ -1,18 +1,15 @@
 # Directory Structure
 
-See [README](../../../README.md) and [module boundaries](../../../docs/development/module-boundaries.md).
-
 | Path | Responsibility |
 | --- | --- |
-| `cmd/server/`, `cmd/worker/` | Runtime wiring and startup |
-| `internal/httpapi/`, `internal/httpv2/`, `internal/httpui/` | Request validation, HTTP mapping, rendered UI |
-| `internal/app/taskcore/`, `internal/app/tasks/` | Task lifecycle and artifact/Komga use cases |
-| `internal/domain/taskcore/`, `internal/domain/metadata/` | States, action eligibility, metadata normalization |
-| `internal/store/postgres/` | Persistence and numbered SQL migrations |
-| `internal/worker/taskcore/` | Lease, heartbeat, recovery, task execution |
-| `internal/downloader/`, `internal/archive/` | Downloading, CBZ writing, archive extraction |
+| `telegraph_downloader/__main__.py`, `main.py` | Startup, lifespan, routes, templates/static and HTTP boundaries |
+| `config.py` | Paths, fixed tool command and resource limits |
+| `store.py` | SQLite jobs/settings, state transitions and public actions |
+| `jobs.py` | Serial execution, cancel/retry and restart handling |
+| `media.py` | Site tool, archive reader, CBZ/XML and Komga copy |
+| `templates/`, `static/` | Chinese UI, CSS and native JS |
+| `tests/` | pytest functional/security tests; e2e marker for browsers |
 
-Reuse domain/app decisions in HTTP and worker callers rather than duplicating
-status or action rules. Keep database access in repositories. Use colocated
-`*_test.go` files, as in `internal/app/taskcore/service_test.go` and
-`internal/domain/taskcore/status_test.go`.
+Prefer these small modules to adding domain/app/adapter/repository layers. Media accepts a job/config/cancel/progress callback and returns an artifact; it does not access SQLite. State writes belong to store/runner, and pages consume backend state/actions.
+
+Keep paths under DATA_DIR; a configured Komga root is the only extra write destination. Read [module boundaries](../../../docs/development/module-boundaries.md) before moving responsibilities.

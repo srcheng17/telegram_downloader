@@ -1,19 +1,14 @@
 # Error Handling
 
-- Task Core service sentinels are `ErrInvalidInput`, `ErrNotFound`, and `ErrConflict`
-  in `internal/app/taskcore/service.go`. Use `errors.Is` when mapping wrapped errors.
-- Add operation context with `fmt.Errorf("operation: %w", err)` while preserving the cause.
-- Reuse `writeServiceError`, `writeAPIErrorResponse`, and `writeInternalError` in
-  `internal/httpapi/`; internal failures return a generic message to clients.
-- Preserve endpoint contracts: `/api/*` uses `{error, code, message?, details?}`;
-  `/v2/*` currently uses `{error}`. Do not change one contract to match another incidentally.
+Use explicit media cancellation and media failure exceptions; cancellation is not successful completion. Preserve operation context internally, but return Chinese user-facing explanations without traceback, credentials, private URLs or raw subprocess output.
 
-Actual example from `internal/store/postgres/migrations/runner.go`:
+HTTP routes require configured Komga delivery (409 otherwise), validate source/metadata and enforce upload limits before queuing. Invalid settings/actions/input and oversized uploads need appropriate HTTP errors. The frontend must handle non-JSON errors as well as JSON responses.
 
-```go
-return fmt.Errorf("acquire migration connection: %w", err)
-```
+- Abort failed uploads and remove partial files.
+- Stop and wait for task subprocesses on cancel/timeout before finalizing the task.
+- Do not deliver a partial CBZ after execution failure; there is no browser download route.
+- Keep uploaded input on failed/cancelled attempts, and retain valid internal CBZ after delivery failure for retry without re-fetching.
+- Mark succeeded only after atomic Komga delivery, then clean the internal CBZ and uploaded source. There is no manual-copy endpoint.
+- Do not swallow file-close, subprocess-exit or rename failures that affect correctness.
 
-Check error-code/status behavior with `internal/httpapi/error_response_test.go`
-and affected handler tests. Preserve cancellation handling and cleanup errors
-that protect uploaded or generated files.
+Test real error branches at HTTP/media/filesystem boundaries, rather than reproducing implementation details in mocks.
