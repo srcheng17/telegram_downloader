@@ -21,3 +21,5 @@ Readback after the change at1920x1000: sidebar and main both top0/bottom1317.593
 - Fresh unedited captures: `test-results/columns-preview-home.png` and `columns-1920-{home,settings,tasks}.png`. The former uses the same1920x1000 viewport as the reproduced screenshot. Root inspected the real full-page capture.
 
 An existing upstream Starlette/httpx deprecation warning remains. No production deployment, real Komga write, API/database change, dependency change, push or merge. The user's pre-existing `/progress/` ignore entry remains outside task commits. Container smoke was not repeated for this layout-only change.
+
+Independent review passed the real full-page capture, desktop scrolling, low-height navigation access, keyboard skip-link and compact mobile header. No confirmed remaining issue in this equal-height fix.
