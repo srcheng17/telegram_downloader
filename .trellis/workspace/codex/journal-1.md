@@ -152,3 +152,39 @@ Correct the user-reported screenshot misalignment across home/settings/tasks and
 ### Next Steps
 
 - User review of local preview http://127.0.0.1:49360 and new alignment screenshots. No production deployment, push or merge.
+
+
+## Session 7: Keep left navigation and right document columns equal height
+<!-- trellis-session: v=2 fp=af0755a0417e107c -->
+
+**Date**: 2026-10-24
+**Task**: Keep left navigation and right document columns equal height
+**Branch**: `refactor/single-host-workspace`
+
+### Summary
+
+Correct the independently confirmed full-page sidebar truncation after the user clarified the left navigation/right page scope. Preserve the menu starting baseline and sticky scrolling; no production changes.
+
+### Main Changes
+
+- Use a real stretched outer grid column and sticky sidebar-inner wrapper; restore normal compact top navigation on mobile.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e6a0b2b` | fix(ui): keep navigation and page columns equal height |
+
+### Testing
+
+- [OK] Original column regression failed at1024x720 with bottom720 versus1317.59; final sidebar/main both1317.59px in the comparable screenshot.
+- [OK] 95 non-e2e and15 browser cases passed, including real column heights, desktop scrolling, mobile heading visibility and previous business/horizontal checks. Ruff/JS/whitespace passed.
+- [OK] Independent full-page visual, low-height scrolling, keyboard skip-link and mobile review passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- User review of columns-preview-home.png and local preview; menu/title starting baseline remains unchanged pending optional clarification. No push, merge or production deployment.
