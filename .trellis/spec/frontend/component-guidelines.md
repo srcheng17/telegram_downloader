@@ -12,5 +12,6 @@ Use Jinja's escaping and DOM textContent for user/server text; never interpolate
 - Do not replace user input during polling or move focus unexpectedly.
 - A dialog, if needed, must handle Escape and focus correctly; avoid one when inline feedback is sufficient.
 - Use local/system fonts and assets; no external font/CDN request is needed.
+- Keep the shared workspace visually restrained: light navigation, system sans-serif typography, compact outline icons, neutral form surfaces and one action accent. Source segments remain native labeled radios with a visible keyboard focus state; they do not require tab-widget JavaScript.
 
 Consume backend action eligibility; UI component visibility must not create new task rules.

@@ -1,20 +1,22 @@
 {% extends 'base.html' %}
+{% from '_icons.html' import icon %}
 {% block title %}新建归档{% endblock %}
 {% block content %}
-<header class="page-heading"><div><h1>新建归档</h1><p>从图集链接或压缩包开始，完成后自动送入 Komga。</p></div><span class="page-corner" aria-hidden="true"></span></header>
+<header class="page-heading"><div><h1>新建归档</h1><p>整理一份漫画，送入你的 Komga 书库。</p></div></header>
 <div class="editor-layout">
   <div class="archive-form">
     {% if not komga_enabled %}<p class="inline-note">请先配置 Komga 书库，再开始归档。<a href="/settings">前往书库设置</a></p>{% endif %}
-    <fieldset class="source-switch">
+    <div class="source-heading"><div><h2>图页来源</h2><p>选择图集链接或本地压缩包。</p></div><fieldset class="source-switch">
       <legend class="visually-hidden">选择图页来源</legend>
-      <label><input type="radio" name="input_mode" value="url" checked data-testid="mode-url"><span>图集链接</span></label>
-      <label><input type="radio" name="input_mode" value="upload" data-testid="mode-upload"><span>上传压缩包</span></label>
-    </fieldset>
+      <label><input type="radio" name="input_mode" value="url" checked data-testid="mode-url">{{ icon('link') }}<span>图集链接</span></label>
+      <label><input type="radio" name="input_mode" value="upload" data-testid="mode-upload">{{ icon('upload') }}<span>上传压缩包</span></label>
+    </fieldset></div>
     <form id="archive-form" action="/api/jobs/url" method="post" data-testid="archive-form">
+    <div class="source-fields">
     <div class="source-panel" data-source-panel="url">
       <label for="source-url">Telegraph 图集链接</label>
       <input id="source-url" type="url" name="url" maxlength="2048" placeholder="https://telegra.ph/…" autocomplete="url" required aria-describedby="url-hint" data-testid="source-url">
-      <p id="url-hint" class="field-hint">支持 telegra.ph 和 graph.org，图页按原顺序归档。</p>
+      <p id="url-hint" class="field-hint">支持 telegra.ph 和 graph.org，保留图页顺序。</p>
     </div>
     <div class="source-panel" data-source-panel="upload" hidden>
       <label for="source-file">选择图页压缩包</label>
@@ -25,9 +27,11 @@
     <div class="destination-field field"><label for="library-select">目标书库</label><select id="library-select" name="library_id" required aria-describedby="library-select-hint" data-testid="library-select"{% if not komga_enabled %} disabled{% endif %}>
       {% if libraries | length != 1 %}<option value="" selected disabled>{{ '请选择目标书库' if libraries else '请先配置书库' }}</option>{% endif %}
       {% for library in libraries %}<option value="{{ library.id }}"{% if libraries | length == 1 %} selected{% endif %}>{{ library.name }}</option>{% endfor %}
-    </select><p id="library-select-hint" class="field-hint">本次漫画将送入所选书库；已提交任务的目标不会随设置改变。</p></div>
+    </select><p id="library-select-hint" class="field-hint">完成后自动送入所选书库。</p></div>
+    </div>
     <fieldset class="metadata-fields">
-      <legend>书目信息 <span>选填，随漫画文件保存</span></legend>
+      <legend>书目信息 <span>选填</span></legend>
+      <p class="metadata-description">补全书目，方便在 Komga 中整理与查找。</p>
       <div class="field-grid">
         <div class="field"><label for="comic-name">漫画名</label><input id="comic-name" name="comic_name" maxlength="200" type="text" placeholder="这一本漫画的名字" data-testid="comic-name"></div>
         <div class="field"><label for="author">作者</label><input id="author" name="author" maxlength="200" type="text" placeholder="作者或创作者" data-testid="author"></div>
@@ -38,7 +42,7 @@
         <div class="field"><label for="genres">类型</label><input id="genres" name="genres" maxlength="2000" type="text" placeholder="用逗号分隔" aria-describedby="genres-hint" data-testid="genres"><span id="genres-hint" class="field-hint">在 Komga 中用于系列分类</span></div>
       </div>
     </fieldset>
-    <div class="form-bottom"><p>归档完成后，自动送入书库。</p><button class="button button-primary" type="submit" data-testid="submit-job"{% if not komga_enabled %} disabled{% endif %}><span data-submit-label>生成并入库</span></button></div>
+    <div class="form-bottom"><p>{{ icon('book') }}生成 CBZ，自动入库。</p><button class="button button-primary" type="submit" data-testid="submit-job"{% if not komga_enabled %} disabled{% endif %}>{{ icon('plus') }}<span data-submit-label>生成并入库</span></button></div>
     <div class="form-feedback" id="submit-feedback" role="status" aria-live="polite" data-testid="submit-feedback" hidden><span data-submit-message></span><a class="receipt-link" href="/tasks" data-testid="view-submitted-job" hidden>查看任务</a></div>
     </form>
   </div>

@@ -16,7 +16,7 @@
 </li>
 {% endmacro %}
 <section class="jobs-section" data-jobs aria-labelledby="jobs-heading">
-  <div class="section-heading"><div><h2 id="jobs-heading">入库记录</h2><p>查看处理进度，继续未完成的任务。</p></div></div>
+  <div class="section-heading"><div><h2 id="jobs-heading">全部任务</h2><p>状态自动更新，未完成的任务可在这里继续处理。</p></div></div>
   <p class="poll-feedback" role="status" aria-live="polite" data-poll-feedback></p>
   <ul class="job-list" data-job-list data-testid="job-list">{% for job in jobs %}{{ job_row(job) }}{% endfor %}</ul>
   <div class="empty-state" data-jobs-empty data-testid="jobs-empty"{% if jobs %} hidden{% endif %}><span class="empty-pages" aria-hidden="true"></span><h3>还没有归档任务</h3><p>每次归档与入库，都会记录在这里。</p><a class="button button-outline" href="/">新建归档</a></div>

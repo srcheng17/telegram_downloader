@@ -1,7 +1,8 @@
 {% extends 'base.html' %}
+{% from '_icons.html' import icon %}
 {% block title %}任务记录{% endblock %}
 {% block content %}
-<header class="page-heading"><div><h1>任务记录</h1><p>查看图页处理进度与书库入库结果。</p></div>{% if settings.komga_url %}<a class="button button-outline" href="{{ settings.komga_url }}" target="_blank" rel="noopener noreferrer" data-testid="open-komga">打开 Komga</a>{% endif %}</header>
+<header class="page-heading"><div><h1>任务记录</h1><p>跟进处理进度，查看每一次入库。</p></div>{% if settings.komga_url %}<a class="button button-outline" href="{{ settings.komga_url }}" target="_blank" rel="noopener noreferrer" data-testid="open-komga">打开 Komga {{ icon('external') }}</a>{% endif %}</header>
 {% if not komga_enabled %}<p class="inline-note">Komga 尚未配置，任务需要配置书库后才能入库。<a href="/settings">前往书库设置</a></p>{% endif %}
 {% include '_jobs.html' %}
 {% endblock %}
