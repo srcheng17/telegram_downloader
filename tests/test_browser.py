@@ -343,6 +343,7 @@ def test_page_alignment_across_breakpoints(page, live_app, width):
                     geometry["viewport"] - geometry["main"]["right"], f"{path} main gutters")
         else:
             aligned(geometry["navigation"]["left"], geometry["top"]["left"], f"{path} mobile gutter")
+            expect(page.locator("h1")).to_be_in_viewport()
         if geometry["input"]:
             insets.append(geometry["input"]["left"] - geometry["panel"]["left"])
         if path == "/settings":
@@ -366,3 +367,30 @@ def test_page_alignment_across_breakpoints(page, live_app, width):
             name = {"/": "home", "/settings": "settings", "/tasks": "tasks"}[path]
             page.screenshot(path=str(ARTIFACTS / f"alignment-{width}-{name}.png"), full_page=True)
     aligned(insets[0], insets[1], "home/settings form inset")
+
+
+@pytest.mark.parametrize("width", [1024, 1440, 1920])
+def test_navigation_column_matches_page_and_stays_visible(page, live_app, width):
+    url, _ = live_app
+    page.set_viewport_size({"width": width, "height": 720})
+    for path in ("/", "/settings", "/tasks"):
+        page.goto(url + path, wait_until="networkidle")
+        columns = page.evaluate('''() => {
+            const rect = selector => {
+                const r=document.querySelector(selector).getBoundingClientRect();
+                return {top:r.top,bottom:r.bottom,height:r.height};
+            };
+            return {sidebar:rect('.sidebar'),main:rect('main')};
+        }''')
+        assert abs(columns["sidebar"]["top"] - columns["main"]["top"]) <= 1
+        assert abs(columns["sidebar"]["bottom"] - columns["main"]["bottom"]) <= 1, (width, path, columns)
+        page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+        navigation = page.locator(".main-nav").bounding_box()
+        assert navigation["y"] >= 0
+        assert navigation["y"] + navigation["height"] <= 720
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        page.evaluate("window.scrollTo(0, 0)")
+        if width == 1920:
+            ARTIFACTS.mkdir(exist_ok=True)
+            name = {"/": "home", "/settings": "settings", "/tasks": "tasks"}[path]
+            page.screenshot(path=str(ARTIFACTS / f"columns-{width}-{name}.png"), full_page=True)

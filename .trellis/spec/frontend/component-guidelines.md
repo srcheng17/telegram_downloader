@@ -8,6 +8,7 @@ Use Jinja's escaping and DOM textContent for user/server text; never interpolate
 - Restore submission controls after network, HTTP or parsing failure.
 - Support narrow mobile screens without horizontal page overflow.
 - Center the main frame within the space remaining beside the sidebar. Share panel gutters across forms and task content; align stacked library inputs without reserving a separate action column. Reset native legend padding so headings follow the same text edge.
+- Desktop navigation and main content share a real equal-height grid row; keep sticky behavior on the navigation's inner wrapper. The outer sidebar must reach the full document bottom on long pages. Mobile restores a compact normal-flow top header.
 - Do not replace user input during polling or move focus unexpectedly.
 - A dialog, if needed, must handle Escape and focus correctly; avoid one when inline feedback is sufficient.
 - Use local/system fonts and assets; no external font/CDN request is needed.

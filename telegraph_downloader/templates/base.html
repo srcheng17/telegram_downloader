@@ -11,6 +11,7 @@
 <body data-page="{{ active_page }}" data-komga-enabled="{{ 'true' if komga_enabled else 'false' }}">
   <a class="skip-link" href="#main">跳到主要内容</a>
   <aside class="sidebar" aria-label="工作台导航">
+    <div class="sidebar-inner">
     <a class="brand" href="/" aria-label="墨渡 PanelPort 首页">
       <span class="brand-mark" aria-hidden="true">墨</span>
       <span class="brand-name">墨渡<small>PanelPort</small></span>
@@ -22,6 +23,7 @@
       {% endfor %}
     </nav>
     <div class="sidebar-bottom"><span class="spine-rule" aria-hidden="true"></span><p>图页有序，书目有据。</p><span>直达你的 Komga 书库</span></div>
+    </div>
   </aside>
   <main id="main" class="main-content" tabindex="-1">
     <div class="workspace-topline"><span>私人漫画工作台</span><span class="workspace-format">图页 / 书目 / CBZ</span></div>
