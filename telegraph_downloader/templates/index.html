@@ -21,6 +21,11 @@
       <div class="file-picker"><input id="source-file" class="visually-hidden" type="file" name="file" accept=".zip,.rar,.7z" disabled aria-describedby="upload-hint" data-testid="source-file"><label class="button button-outline file-select" for="source-file">选择压缩包</label><span class="file-description" data-file-description>尚未选择文件</span></div>
       <p id="upload-hint" class="field-hint">ZIP、RAR 或 7Z，最大 64 MiB。保留图片，重新生成 CBZ。</p>
     </div>
+    {% set libraries = settings.libraries | default([], true) %}
+    <div class="destination-field field"><label for="library-select">目标书库</label><select id="library-select" name="library_id" required aria-describedby="library-select-hint" data-testid="library-select"{% if not komga_enabled %} disabled{% endif %}>
+      {% if libraries | length != 1 %}<option value="" selected disabled>{{ '请选择目标书库' if libraries else '请先配置书库' }}</option>{% endif %}
+      {% for library in libraries %}<option value="{{ library.id }}"{% if libraries | length == 1 %} selected{% endif %}>{{ library.name }}</option>{% endfor %}
+    </select><p id="library-select-hint" class="field-hint">本次漫画将送入所选书库；已提交任务的目标不会随设置改变。</p></div>
     <fieldset class="metadata-fields">
       <legend>书目信息 <span>选填，随漫画文件保存</span></legend>
       <div class="field-grid">

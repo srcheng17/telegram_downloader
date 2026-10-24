@@ -13,7 +13,7 @@ export APP_UID="$(id -u)"
 export APP_GID="$(id -g)"
 export APP_PORT
 APP_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-mkdir -p "$DATA_DIR_HOST" "$KOMGA_DIR_HOST"
+mkdir -p "$DATA_DIR_HOST" "$KOMGA_DIR_HOST/japanese" "$KOMGA_DIR_HOST/chinese"
 touch "$smoke_root/empty.env"
 cat > "$smoke_root/compose.override.yml" <<EOF
 services:
@@ -63,12 +63,16 @@ for path in ("/", "/static/app.css", "/static/app.js"):
         assert response.read(), path
 
 settings_request = urllib.request.Request(base + "/api/settings", data=json.dumps({
-    "komga_dir": "/komga", "komga_url": "https://komga.example.invalid",
+    "komga_url": "https://komga.example.invalid", "libraries": [
+        {"id": "japanese", "name": "日漫", "path": "/komga/japanese"},
+        {"id": "chinese", "name": "国漫", "path": "/komga/chinese"},
+    ],
 }).encode(), headers={"Content-Type": "application/json"})
 with urllib.request.urlopen(settings_request, timeout=5) as response:
     settings = json.load(response)
     assert settings["configured"] is True
-    assert settings["komga_dir"] == "/komga"
+    assert settings["komga_dir"] == "/komga/japanese"
+    assert [library["name"] for library in settings["libraries"]] == ["日漫", "国漫"]
     assert settings["komga_url"] == "https://komga.example.invalid"
 
 def png(rgb):
@@ -89,7 +93,7 @@ metadata = {
 }
 boundary = "panelport-smoke-" + uuid.uuid4().hex
 parts = []
-for name, value in metadata.items():
+for name, value in {**metadata, "library_id": "chinese"}.items():
     parts.append((f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'
                   f'{value}\r\n').encode("utf-8"))
 parts.extend([
@@ -113,8 +117,12 @@ while job["status"] != "succeeded":
 assert job["page_count"] == 2
 assert job["status_label"] == "已入库"
 assert job["available_actions"] == []
-target = Path(os.environ["KOMGA_DIR_HOST"]) / metadata["series_name"] / job["filename"]
+assert job["library_id"] == "chinese"
+assert job["library_name"] == "国漫"
+assert "library_id" not in job["metadata"]
+target = Path(os.environ["KOMGA_DIR_HOST"]) / "chinese" / metadata["series_name"] / job["filename"]
 assert target.is_file()
+assert not list((Path(os.environ["KOMGA_DIR_HOST"]) / "japanese").rglob("*.cbz"))
 cbz = target.read_bytes()
 assert len(cbz) == job["size"]
 with zipfile.ZipFile(io.BytesIO(cbz)) as archive:
@@ -136,7 +144,7 @@ data = Path(os.environ["DATA_DIR_HOST"])
 assert (data / "app.sqlite3").is_file()
 assert not (data / "inputs" / job["id"]).exists()
 assert not list((data / "artifacts").iterdir())
-print("PanelPort ZIP -> SQLite job -> automatic Komga delivery passed (ordered bytes/XML, 2 pages).")
+print("PanelPort ZIP -> selected 国漫 library passed (no 日漫 output; ordered bytes/XML, 2 pages).")
 PY
 compose exec -T app python -c 'import gallery_dl; import sqlite3; print("gallery-dl and SQLite available")'
 compose exec -T app bsdtar --version

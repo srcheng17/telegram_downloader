@@ -12,7 +12,8 @@ from fastapi.testclient import TestClient
 
 from telegraph_downloader.config import Config
 from telegraph_downloader.main import create_app
-from telegraph_downloader.media import MediaCancelled, MediaError
+from telegraph_downloader.media import MediaCancelled, MediaError, execute
+from telegraph_downloader.store import Store
 
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jw1cAAAAASUVORK5CYII="
@@ -42,6 +43,16 @@ def config(tmp_path):
     destination = tmp_path / "komga"
     destination.mkdir()
     return Config(data_dir=tmp_path / "data", komga_dir=destination)
+
+
+@pytest.fixture
+def libraries(config):
+    result = []
+    for library_id, name in (("japanese", "日漫"), ("chinese", "国漫")):
+        directory = config.komga_dir / name
+        directory.mkdir()
+        result.append({"id": library_id, "name": name, "path": str(directory.resolve())})
+    return result
 
 
 def test_real_upload_automatically_delivers_metadata_to_komga(config):
@@ -92,10 +103,17 @@ def test_failed_delivery_retries_cached_cbz_without_source(config, monkeypatch):
         assert Path(internal["artifact_path"]).is_file()
         Path(internal["source"]).unlink()
         assert "retry" in client.get(f"/api/jobs/{job['id']}").json()["available_actions"]
+        changed = config.komga_dir.parent / "changed-library"
+        changed.mkdir()
+        response = client.post("/api/settings", json={"libraries": [
+            {"id": "changed", "name": "修改后的书库", "path": str(changed)},
+        ]})
+        assert response.status_code == 200
         monkeypatch.setattr(jobs, "copy_to_komga", original)
         assert client.post(f"/api/jobs/{job['id']}/retry").status_code == 200
         assert wait_job(client, job["id"])["status"] == "succeeded"
         assert len(list(config.komga_dir.glob("tankobon/*.cbz"))) == 1
+        assert not list(changed.iterdir())
         assert not list((config.data_dir / "artifacts").iterdir())
 
 
@@ -228,3 +246,210 @@ def test_home_contains_no_job_history_or_download_controls(config):
         assert 'data-testid="job-list"' not in home
         assert 'data-testid="download-job"' not in home
         assert 'data-testid="job-list"' in client.get("/tasks").text
+
+
+def test_real_upload_chooses_only_selected_library_and_keeps_metadata(config, libraries):
+    with TestClient(create_app(config)) as client:
+        assert client.post("/api/settings", json={"libraries": libraries}).status_code == 200
+        response = client.post("/api/jobs/upload", files={"file": ("漫画.zip", archive_bytes())}, data={
+            "library_id": "chinese", "author": "作者", "series_name": "系列", "series_number": "3",
+            "comic_name": "国漫目标", "summary": "简介", "tags": "标签", "genres": "类型",
+        })
+        assert response.status_code == 202, response.text
+        job = wait_job(client, response.json()["id"])
+        assert job["status"] == "succeeded", job
+        assert job["library_id"] == "chinese" and job["library_name"] == "国漫"
+        assert "library_id" not in job["metadata"]
+        assert "destination" not in job and "path" not in job
+        assert not list(Path(libraries[0]["path"]).rglob("*.cbz"))
+        targets = list(Path(libraries[1]["path"]).glob("系列/*.cbz"))
+        assert len(targets) == 1
+        with zipfile.ZipFile(targets[0]) as archive:
+            images = sorted(name for name in archive.namelist() if name.endswith(".png"))
+            assert [archive.read(name) for name in images] == [PNG, PNG + b"second"]
+            xml = ElementTree.fromstring(archive.read("ComicInfo.xml"))
+            assert xml.findtext("Title") == "国漫目标"
+            assert xml.findtext("Number") == "3"
+            assert xml.find("library_id") is None
+
+
+def test_url_submission_passes_frozen_library_without_polluting_metadata(config, libraries):
+    executed = []
+
+    def offline_executor(job, *_):
+        executed.append(job)
+        raise MediaError("离线边界验证")
+
+    with TestClient(create_app(config, executor=offline_executor)) as client:
+        assert client.post("/api/settings", json={"libraries": libraries}).status_code == 200
+        response = client.post("/api/jobs/url", json={
+            "url": "https://telegra.ph/library-test", "library_id": "japanese", "comic_name": "日漫任务",
+        })
+        assert response.status_code == 202, response.text
+        job = wait_job(client, response.json()["id"])
+        assert job["status"] == "failed"
+        assert job["library_name"] == "日漫"
+        assert executed[0]["destination"] == libraries[0]
+        assert executed[0]["metadata"]["comic_name"] == "日漫任务"
+        assert "library_id" not in executed[0]["metadata"]
+
+
+def test_legacy_job_without_destination_requires_resubmission_even_when_configured(config):
+    config.prepare()
+    store = Store(config.data_dir)
+    store.initialize()
+    old = store.create("url", "https://telegra.ph/old", {})
+    store.claim()
+    store.finish(old["id"], "failed", "旧任务没有可确定的目标")
+    with TestClient(create_app(config)) as client:
+        assert client.get("/api/settings").json()["configured"]
+        assert client.get(f"/api/jobs/{old['id']}").json()["available_actions"] == []
+        response = client.post(f"/api/jobs/{old['id']}/retry")
+        assert response.status_code == 409
+        assert "重新提交" in response.json()["detail"]
+        assert store.get(old["id"])["destination"] == {}
+
+
+def test_queued_jobs_keep_original_library_after_rename_move_and_delete(config, libraries):
+    entered, release = threading.Event(), threading.Event()
+
+    def hold_first(job, *args):
+        if job["metadata"]["comic_name"] == "等待中的日漫":
+            entered.set()
+            assert release.wait(5)
+        return execute(job, *args)
+
+    with TestClient(create_app(config, executor=hold_first)) as client:
+        assert client.post("/api/settings", json={"libraries": libraries}).status_code == 200
+        try:
+            first = client.post("/api/jobs/upload", files={"file": ("first.zip", archive_bytes())},
+                                data={"library_id": "japanese", "comic_name": "等待中的日漫"}).json()
+            assert entered.wait(3)
+            second = client.post("/api/jobs/upload", files={"file": ("second.zip", archive_bytes())},
+                                 data={"library_id": "chinese", "comic_name": "排队中的国漫"}).json()
+            assert second["status"] == "queued"
+            changed = config.komga_dir / "changed"
+            changed.mkdir()
+            response = client.post("/api/settings", json={"libraries": [
+                {"id": "chinese", "name": "新名称", "path": str(changed)},
+            ]})
+            assert response.status_code == 200, response.text
+        finally:
+            release.set()
+        assert wait_job(client, first["id"])["status"] == "succeeded"
+        second = wait_job(client, second["id"])
+        assert second["status"] == "succeeded"
+        assert second["library_name"] == "国漫"
+        assert len(list(Path(libraries[0]["path"]).rglob("*.cbz"))) == 1
+        assert len(list(Path(libraries[1]["path"]).rglob("*.cbz"))) == 1
+        assert not list(changed.iterdir())
+
+
+def test_generation_rejects_library_root_replaced_with_another_library_symlink(config, libraries):
+    entered, release = threading.Event(), threading.Event()
+
+    def held_generation(job, *args):
+        entered.set()
+        assert release.wait(5)
+        return execute(job, *args)
+
+    app = create_app(config, executor=held_generation)
+    with TestClient(app) as client:
+        assert client.post("/api/settings", json={"libraries": libraries}).status_code == 200
+        try:
+            response = client.post("/api/jobs/upload", files={"file": ("book.zip", archive_bytes())},
+                                   data={"library_id": "japanese", "comic_name": "不能跨库的日漫"})
+            assert response.status_code == 202, response.text
+            assert entered.wait(3)
+            original = Path(libraries[0]["path"])
+            moved = original.with_name("original-japanese")
+            original.rename(moved)
+            original.symlink_to(libraries[1]["path"], target_is_directory=True)
+        finally:
+            release.set()
+        job = wait_job(client, response.json()["id"])
+        assert job["status"] == "failed", job
+        assert job["library_name"] == "日漫"
+        assert Path(app.state.store.get(job["id"])["artifact_path"]).is_file()
+        assert not list(Path(libraries[1]["path"]).rglob("*.cbz"))
+        assert not list(moved.rglob("*.cbz"))
+
+
+def test_submission_rejects_saved_root_with_replaced_symlink_ancestor(config, libraries):
+    def unexpected_execution(*_):
+        raise AssertionError("Rejected submissions must not execute")
+
+    with TestClient(create_app(config, executor=unexpected_execution)) as client:
+        assert client.post("/api/settings", json={"libraries": libraries[:1]}).status_code == 200
+        original_parent = config.komga_dir
+        moved = original_parent.with_name("original-root")
+        original_parent.rename(moved)
+        redirected = original_parent.with_name("redirected-root")
+        (redirected / "日漫").mkdir(parents=True)
+        original_parent.symlink_to(redirected, target_is_directory=True)
+        response = client.post("/api/jobs/url", json={"url": "https://telegra.ph/book", "library_id": "japanese"})
+        assert response.status_code == 409, response.text
+        response = client.post("/api/jobs/upload", files={"file": ("book.zip", archive_bytes())},
+                               data={"library_id": "japanese"})
+        assert response.status_code == 409, response.text
+        assert client.get("/api/jobs").json()["jobs"] == []
+        assert not list((config.data_dir / "inputs").iterdir())
+        assert not list(redirected.rglob("*.cbz"))
+
+
+def test_invalid_or_missing_library_selection_has_no_queued_job_or_upload(config, libraries):
+    with TestClient(create_app(config)) as client:
+        assert client.post("/api/settings", json={"libraries": libraries}).status_code == 200
+        for selection in ({}, {"library_id": "unknown"}):
+            assert client.post("/api/jobs/url", json={"url": "https://telegra.ph/book", **selection}).status_code == 400
+            assert client.post("/api/jobs/upload", files={"file": ("book.zip", archive_bytes())},
+                               data=selection).status_code == 400
+        assert client.post("/api/settings", json={"libraries": libraries[:1]}).status_code == 200
+        assert client.post("/api/jobs/upload", files={"file": ("book.zip", archive_bytes())},
+                           data={"library_id": "chinese"}).status_code == 400
+        assert client.get("/api/jobs").json()["jobs"] == []
+        assert not list((config.data_dir / "inputs").iterdir())
+
+
+def test_library_ids_are_generated_persisted_and_legacy_alias_remains(config, libraries):
+    with TestClient(create_app(config)) as client:
+        response = client.post("/api/settings", json={"libraries": [{
+            "name": " 日漫 ", "path": libraries[0]["path"],
+        }]})
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["libraries"][0]["id"]
+        assert saved["libraries"][0]["name"] == "日漫"
+        assert saved["komga_dir"] == libraries[0]["path"]
+        assert client.post("/api/settings", json={"libraries": saved["libraries"]}).json() == saved
+        assert client.post("/api/settings", json={"komga_dir": libraries[1]["path"]}).json()["libraries"] == [
+            {"id": "default", "name": "默认书库", "path": libraries[1]["path"]},
+        ]
+
+
+@pytest.mark.parametrize("invalid", ["id", "name", "root", "child", "symlink", "empty-name", "control"])
+def test_library_configuration_rejects_duplicates_and_overlaps_without_saving(config, libraries, invalid):
+    entries = [dict(entry) for entry in libraries]
+    if invalid == "id":
+        entries[1]["id"] = " japanese "
+    elif invalid == "name":
+        entries[1]["name"] = " 日漫 "
+    elif invalid == "root":
+        entries[1]["path"] = entries[0]["path"]
+    elif invalid == "child":
+        child = Path(entries[0]["path"]) / "nested"
+        child.mkdir()
+        entries[1]["path"] = str(child)
+    elif invalid == "symlink":
+        alias = config.komga_dir / "alias"
+        alias.symlink_to(entries[0]["path"], target_is_directory=True)
+        entries[1]["path"] = str(alias)
+    elif invalid == "control":
+        entries[1]["id"] = "bad\x00id"
+    else:
+        entries[1]["name"] = "   "
+    with TestClient(create_app(config)) as client:
+        original = client.get("/api/settings").json()
+        response = client.post("/api/settings", json={"libraries": entries})
+        assert response.status_code == 400, response.text
+        assert client.get("/api/settings").json() == original

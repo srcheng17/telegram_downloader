@@ -88,7 +88,7 @@ def _inside(root: Path, path: Path) -> Path:
         current /= part
         if current.is_symlink():
             raise MediaError("不允许使用符号链接")
-    if root.is_symlink():
+    if root.resolve() != root:
         raise MediaError("不允许使用符号链接目录")
     return path
 
@@ -478,7 +478,7 @@ def copy_to_komga(config: Config, path: str | Path, filename: str, series_name: 
     if Path(filename).name != filename or not filename.endswith(".cbz") or "\\" in filename:
         raise MediaError("产物文件名无效")
     try:
-        root = config.komga_dir.resolve()
+        root = config.komga_dir
         directory = _directory(root, root / _segment(series_name, "tankobon"))
         target = _inside(root, directory / filename)
     except OSError as exc:

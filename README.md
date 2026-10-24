@@ -4,10 +4,10 @@
 
 ## 使用流程
 
-1. 在「偏好设置」填写应用可访问的 Komga 书库目录，可另填 Komga 网站链接。
-2. 首页只负责新建任务：选择 Telegraph 链接或上传压缩包，填写作者、系列、编号、漫画名、简介、标签和类型。
+1. 在「书库设置」配置应用可访问的目标书库，例如「日漫」「国漫」及各自的共享目录，可另填 Komga 网站链接。
+2. 首页只负责新建任务：选择目标书库、Telegraph 链接或压缩包，填写作者、系列、编号、漫画名、简介、标签和类型。只有一个书库时自动选中，多个书库时需要明确选择。
 3. 在独立的「任务记录」查看进度。生成 CBZ 后自动入库，成功显示「已入库」。
-4. 失败或取消后可手动重试。入库失败会保留已生成的内部 CBZ，重试直接交付，不必重新抓取。
+4. 失败或取消后可手动重试。入库失败会保留已生成的内部 CBZ，重试直接交付，不必重新抓取。任务保存提交时的书库名和目录，后续配置修改或删除不会改变该任务的投递位置。
 
 界面与错误反馈使用中文，支持桌面和移动端。URL 来源限于 `telegra.ph`、`graph.org`。站点解析和下载交给固定版本 [gallery-dl](https://github.com/mikf/gallery-dl)，RAR/7Z 使用 [libarchive](https://www.libarchive.org/) 的 bsdtar；ZIP、XML 和 SQLite 使用 Python 标准库。
 
@@ -15,9 +15,11 @@
 
 ## Komga 连接方式
 
-`komga_url` 是可选的 HTTP/HTTPS 网站链接，用于打开书库；实际交付使用现有、可写、绝对路径的共享书库目录 `komga_dir`。官方 Komga 没有 CBZ 上传 API，因此这里不通过网站 URL 上传，也不要求 API 凭据或承诺触发扫描。
+`komga_url` 是可选的 HTTP/HTTPS 网站链接，用于打开书库；实际交付使用每个书库配置的现有、可写、绝对共享目录。官方 Komga 没有 CBZ 上传 API，因此这里不通过网站 URL 上传，也不要求 API 凭据或承诺触发扫描。
 
-Docker 中先将宿主书库挂到 `/komga`，再在设置页填写容器内路径 `/komga`。目录未配置时提交返回 409。系列名用作子目录，无系列使用 `tankobon`。交付采用目标文件系统中的临时文件和原子发布，同名不同内容不覆盖；短暂的「入库中」阶段不可取消。
+Docker 中先将宿主书库父目录挂到 `/komga`，再在设置页填写容器内路径。单书库可以使用 `/komga`；多个书库可以分别使用 `/komga/日漫`、`/komga/国漫`，并在 Komga 中分别配置映射到相同物理目录的独立书库。目录必须事先存在，书库名称不会自动在 Komga 中创建书库。各根目录不能相同或互为父子，不能同时配置 `/komga` 和 `/komga/日漫`。
+
+目录未配置时提交返回 409，多个书库未选择或选择未知书库时拒绝提交。系列名用作目标书库下的子目录，无系列使用 `tankobon`。交付采用目标文件系统中的临时文件和原子发布，同名不同内容不覆盖；短暂的「入库中」阶段不可取消。任务记录显示提交时选择的书库，入库后的可见时间取决于 Komga 扫描。
 
 ## Docker 启动
 
@@ -36,7 +38,7 @@ bash scripts/start_local.sh
 | `KOMGA_DIR_HOST` | `./data/komga` | 挂载到 `/komga` 的宿主共享书库 |
 | `KOMGA_DIR` | 空 | 尚未保存设置时的初始目录，可设为 `/komga` |
 
-在 `.env` 设置 `KOMGA_DIR_HOST` 指向实际书库；首次启动可在设置页保存 `/komga`，也可设置初始 `KOMGA_DIR=/komga`。数据库中已保存的设置优先于环境默认值。
+在 `.env` 设置 `KOMGA_DIR_HOST` 指向实际书库父目录；首次启动可在设置页保存一个或多个书库，也可设置初始 `KOMGA_DIR=/komga` 作为「默认书库」。数据库中已保存的书库列表优先于环境默认值。
 
 直接使用 Compose 时，先为 APP_UID/GID 创建可写目录：
 
@@ -88,17 +90,18 @@ bash scripts/verify_release_gates.sh
 bash scripts/smoke_container.sh
 ```
 
-容器 smoke 使用唯一 project、临时挂载、随机本地端口和空 env-file。它保存测试 Komga 设置，上传两张不同 PNG 的 ZIP，校验书库 CBZ 页序、图片字节、中文 XML 与本地缓存清理，并确认旧下载/手动复制接口不存在。测试不读取生产目录，也不依赖公网图集。
+容器 smoke 使用唯一 project、临时挂载、随机本地端口和空 env-file。它配置「日漫」「国漫」两个目录，将两张不同 PNG 的 ZIP 投递到「国漫」，校验只有所选书库收到 CBZ，以及页序、图片字节、中文 XML 和本地缓存清理，并确认旧下载/手动复制接口不存在。测试不读取生产目录，也不依赖公网图集。
 
 静态源文件直接进入镜像，没有 Node/Vite 构建。外部下载器的超时、取消和临时磁盘预算不等于操作系统硬配额。只报告实际检查；浏览器或 Docker 不可用时注明未运行。
 
 ## API
 
-- `POST /api/jobs/url`：JSON 或表单，提交 URL 与元数据。
-- `POST /api/jobs/upload`：multipart，一次提交 `file` 与元数据。
-- `GET /api/jobs`、`GET /api/jobs/{id}`：任务列表和详情，公开文件名字段为 `filename`。
+- `POST /api/jobs/url`：JSON 或表单，提交 `url`、`library_id` 与元数据。
+- `POST /api/jobs/upload`：multipart，一次提交 `file`、`library_id` 与元数据。`library_id` 不属于漫画元数据。
+- `GET /api/jobs`、`GET /api/jobs/{id}`：任务列表和详情，公开 `filename`、`library_id`、`library_name`，不公开内部目标路径。
 - `POST /api/jobs/{id}/cancel`、`/retry`：取消或重试；可用动作只有 cancel/retry。
-- `GET/POST /api/settings`：`{komga_url, komga_dir, configured}`。
+- `GET /api/settings`：`{komga_url, libraries: [{id, name, path}], komga_dir, configured}`，`komga_dir` 为首项路径的旧客户端兼容字段。
+- `POST /api/settings`：`{komga_url, libraries: [{id?, name, path}]}`；新条目省略或留空 ID，由服务器生成。仍兼容旧单目录 `{komga_url, komga_dir}` 请求。书库 ID 由本应用维护，不是 Komga 服务端 ID。
 - `GET /healthz`：健康检查。
 
 没有浏览器产物下载或手动 Komga 复制接口。新版本不兼容历史 `/download`、`/api/tasks`、`/v2/settings` 协议。
@@ -106,5 +109,7 @@ bash scripts/smoke_container.sh
 ## 切换与备份
 
 新版本不自动读取、迁移或删除旧 PostgreSQL、下载目录和已有 CBZ。切换前保留旧不可变镜像、Compose/env、数据库与文件备份；步骤见 [单机版切换说明](docs/runbooks/2026-10-24-single-host-cutover.md)。
+
+单机版 SQLite 从版本 1 升级到版本 2 时保留任务和缓存，将原单目录识别为「默认书库」，并为旧任务固定升级时能确定的目标目录。旧版本没有保存更早的投递配置，无法还原过去的目标变更。升级后的新任务始终保存自身目标，重试不会重新选择当前配置；原目标不可用时明确失败，不会转投其他书库。
 
 排队任务重启后保留，运行/入库中任务标为中断失败，用户手动重试。备份同时考虑应用 DATA_DIR 和独立的 Komga 书库。当前约束见 [模块边界](docs/development/module-boundaries.md)、[测试策略](docs/development/testing-strategy.md) 和 [系统概览](docs/architecture/current-system-overview.md)；旧 plans/runbooks 仅作历史追溯。

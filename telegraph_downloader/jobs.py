@@ -35,7 +35,7 @@ class Runner:
             self.lock.close()
             raise RuntimeError("此数据目录已有运行实例，请只启动一个进程") from exc
         try:
-            self.store.initialize()
+            self.store.initialize(str(self.config.komga_dir or ""))
             self.store.recover()
             self.task = asyncio.create_task(self.run(), name="comic-archive-runner")
         except BaseException:
@@ -82,10 +82,10 @@ class Runner:
             cancel.set()
         artifact = None
         try:
-            settings = self.store.settings(str(self.config.komga_dir or ""))
-            destination = Path(settings["komga_dir"]) if settings["komga_dir"] else None
-            if destination is None or not destination.is_dir():
-                raise MediaError("请先在设置中配置可写的 Komga 书库目录")
+            saved = job.get("destination", {})
+            destination = Path(saved["path"]) if saved.get("path") else None
+            if destination is None or not destination.is_dir() or destination.resolve() != destination:
+                raise MediaError("任务原目标书库不可用，请恢复原目录；没有目标的旧任务请重新提交")
             if job.get("artifact_path"):
                 try:
                     cached = validate_artifact(self.config, job["artifact_path"])
@@ -103,6 +103,8 @@ class Runner:
                                   "服务停止中断，请重试" if self.stopping else None)
                 return
             # Delivery is a short commit phase: cancellation is closed before publishing outside DATA_DIR.
+            if not destination.is_dir() or destination.resolve() != destination:
+                raise MediaError("任务原目标书库路径已改变，请恢复原目录后重试")
             target = await asyncio.to_thread(
                 copy_to_komga, replace(self.config, komga_dir=destination), artifact.path,
                 artifact.filename, job["metadata"].get("series_name", ""),

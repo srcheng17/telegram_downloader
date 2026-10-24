@@ -7,7 +7,8 @@ SQLite via Python sqlite3 is the current local persistence backend. Use short pe
 - Startup recovery runs only after acquiring the exclusive DATA_DIR instance lock.
 - Preserve queued rows; mark interrupted running/delivering rows failed for manual retry.
 - Do not hold a database transaction while downloading, unpacking or copying files.
-- Store komga_url/komga_dir and jobs here. Saved settings override the initial environment directory; do not add another queue/database.
+- Store komga_url and the libraries JSON list in settings; retain komga_dir as the legacy single-library input/first-path alias. Saved settings override the initial environment directory; do not add another queue/database.
+- Schema version 2 adds a per-job destination JSON snapshot {id,name,path}. Resolve an allowed library on submission, persist it separately from metadata, and never remap it on retry or execution. Version-1 migration freezes the existing sole target once; a missing target must not be guessed after later configuration changes.
 - Preserve internal artifact_path/filename after delivery failure for retry without re-fetching. Successful Komga delivery clears the internal cache reference before cleanup.
 - Schema changes need an explicit version/compatibility decision and regression test; do not silently discard existing rows.
 - Use temporary test databases, never the application's persistent file.

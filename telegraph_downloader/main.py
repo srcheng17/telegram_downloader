@@ -41,12 +41,31 @@ class Metadata(BaseModel):
 
 class URLInput(Metadata):
     url: str = Field(min_length=1, max_length=2048)
+    library_id: str = Field(default="", max_length=80)
+
+
+class LibraryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(default="", max_length=80)
+    name: str = Field(min_length=1, max_length=100)
+    path: str = Field(min_length=1, max_length=4096)
 
 
 class KomgaSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    komga_dir: str = Field(min_length=1, max_length=4096)
+    komga_dir: str | None = Field(default=None, min_length=1, max_length=4096)
     komga_url: str = Field(default="", max_length=2048)
+    libraries: list[LibraryInput] | None = Field(default=None, max_length=20)
+
+
+def writable_directory(value: str) -> Path | None:
+    try:
+        directory = Path(value)
+        if directory.is_absolute() and directory.is_dir() and os.access(directory, os.W_OK | os.X_OK):
+            return directory.resolve()
+    except (OSError, ValueError):
+        pass
+    return None
 
 
 class RequestGuard:
@@ -110,12 +129,32 @@ def create_app(config: Config | None = None, executor=execute) -> FastAPI:
 
     def current_settings() -> dict:
         value = store.settings(str(config.komga_dir or ""))
-        value["configured"] = bool(value["komga_dir"] and Path(value["komga_dir"]).is_dir())
+        value["configured"] = any(writable_directory(library["path"]) for library in value["libraries"])
         return value
 
-    def require_destination() -> None:
+    def require_configuration() -> None:
         if not current_settings()["configured"]:
             raise HTTPException(409, "请先在 Komga 设置中配置共享书库目录")
+
+    def select_destination(library_id: str) -> dict:
+        if not isinstance(library_id, str) or len(library_id) > 80:
+            raise HTTPException(422, "请选择有效的目标书库")
+        settings = current_settings()
+        if not settings["configured"]:
+            raise HTTPException(409, "请先在 Komga 设置中配置共享书库目录")
+        library_id = library_id.strip()
+        libraries = settings["libraries"]
+        if not library_id and len(libraries) == 1:
+            library_id = libraries[0]["id"]
+        library = next((entry for entry in libraries if entry["id"] == library_id), None)
+        if library is None:
+            raise HTTPException(400, "请选择已配置的目标书库；书库变更后请刷新页面")
+        directory = writable_directory(library["path"])
+        if directory is None:
+            raise HTTPException(409, "所选书库目录不可写，请检查目录或挂载")
+        if directory != Path(library["path"]):
+            raise HTTPException(409, "所选书库根目录已改变，请恢复原目录或重新保存配置")
+        return {"id": library["id"], "name": library["name"], "path": library["path"]}
 
     def require_job(job_id: str) -> dict:
         job = store.get(job_id)
@@ -144,10 +183,12 @@ def create_app(config: Config | None = None, executor=execute) -> FastAPI:
         )}
         result["status_label"] = STATUS_LABELS.get(job["status"], "未知状态")
         result["source_label"] = "Telegraph 图集" if job["kind"] == "url" else "上传压缩包"
+        result["library_id"] = job["destination"].get("id", "")
+        result["library_name"] = job["destination"].get("name", "")
         actions = []
         if job["status"] in {"queued", "running"} and not job["cancel_requested"]:
             actions.append("cancel")
-        if job["status"] in {"failed", "cancelled"} and source_available(job):
+        if job["status"] in {"failed", "cancelled"} and job["destination"].get("path") and source_available(job):
             actions.append("retry")
         result["available_actions"] = actions
         return result
@@ -200,7 +241,7 @@ def create_app(config: Config | None = None, executor=execute) -> FastAPI:
 
     @app.post("/api/jobs/url", status_code=202)
     async def submit_url(request: Request):
-        require_destination()
+        require_configuration()
         try:
             data = URLInput.model_validate(await payload(request))
         except ValidationError:
@@ -209,14 +250,15 @@ def create_app(config: Config | None = None, executor=execute) -> FastAPI:
             url = canonical_url(data.url)
         except MediaError as exc:
             raise HTTPException(400, str(exc)) from exc
-        job = store.create("url", url, data.model_dump(exclude={"url"}))
+        destination = select_destination(data.library_id)
+        job = store.create("url", url, data.model_dump(exclude={"url", "library_id"}), destination=destination)
         runner.notify()
         return public(job)
 
     @app.post("/api/jobs/upload", status_code=202)
     async def submit_upload(request: Request):
-        require_destination()
-        async with request.form(max_files=1, max_fields=7, max_part_size=65536) as form:
+        require_configuration()
+        async with request.form(max_files=1, max_fields=8, max_part_size=65536) as form:
             upload = form.get("file")
             if not isinstance(upload, UploadFile):
                 raise HTTPException(400, "请选择 ZIP、RAR 或 7Z 压缩包")
@@ -224,9 +266,11 @@ def create_app(config: Config | None = None, executor=execute) -> FastAPI:
             if extension not in {".zip", ".rar", ".7z"}:
                 raise HTTPException(400, "仅支持 ZIP、RAR 和 7Z 压缩包")
             try:
-                metadata = Metadata.model_validate({key: value for key, value in form.items() if key != "file"})
+                metadata = Metadata.model_validate({key: value for key, value in form.items()
+                                                    if key not in {"file", "library_id"}})
             except ValidationError:
                 raise HTTPException(422, "请检查元数据的填写长度") from None
+            destination = select_destination(form.get("library_id", ""))
             job_id = uuid.uuid4().hex
             source_dir = config.data_dir / "inputs" / job_id
             source_dir.mkdir()
@@ -241,7 +285,8 @@ def create_app(config: Config | None = None, executor=execute) -> FastAPI:
                         target.write(chunk)
                 if not total:
                     raise HTTPException(400, "压缩包为空，请重新选择文件")
-                job = store.create("upload", str(source.resolve()), metadata.model_dump(), job_id)
+                job = store.create("upload", str(source.resolve()), metadata.model_dump(), job_id,
+                                   destination=destination)
             except BaseException:
                 shutil.rmtree(source_dir)
                 raise
@@ -259,6 +304,8 @@ def create_app(config: Config | None = None, executor=execute) -> FastAPI:
     @app.post("/api/jobs/{job_id}/retry")
     async def retry_job(job_id: str):
         job = require_job(job_id)
+        if not job["destination"].get("path"):
+            raise HTTPException(409, "旧任务没有已保存的目标书库，请重新提交并选择书库")
         if not source_available(job):
             raise HTTPException(409, "原始文件已不可用，请重新上传")
         try:
@@ -278,14 +325,39 @@ def create_app(config: Config | None = None, executor=execute) -> FastAPI:
             value = KomgaSettings.model_validate(await payload(request))
         except ValidationError:
             raise HTTPException(422, "请填写有效的 Komga 地址和共享书库目录") from None
-        directory = Path(value.komga_dir.strip())
-        try:
-            writable = (directory.is_absolute() and directory.is_dir()
-                        and os.access(directory, os.W_OK | os.X_OK))
-        except (OSError, ValueError):
-            writable = False
-        if not writable:
-            raise HTTPException(400, "共享书库目录必须是本应用已挂载、可写的绝对目录")
+        if value.libraries is None:
+            if value.komga_dir is None:
+                raise HTTPException(422, "请填写书库列表或共享书库目录")
+            entries = [LibraryInput(id="default", name="默认书库", path=value.komga_dir)]
+        elif value.komga_dir is not None:
+            raise HTTPException(422, "书库列表与旧版共享目录不能同时填写")
+        else:
+            entries = value.libraries
+        libraries, roots, ids, names = [], [], set(), set()
+        for entry in entries:
+            library_id, name = entry.id.strip() or uuid.uuid4().hex, entry.name.strip()
+            if not name:
+                raise HTTPException(400, "书库名称不能为空")
+            if any(ord(character) < 32 for character in library_id + name):
+                raise HTTPException(400, "书库编号和名称不能包含控制字符")
+            if library_id in ids or name in names:
+                raise HTTPException(400, "书库编号和名称不能重复")
+            directory = writable_directory(entry.path.strip())
+            if directory is None:
+                raise HTTPException(400, "共享书库目录必须是本应用已挂载、可写的绝对目录")
+            try:
+                # Physical ancestry also catches aliases on case-insensitive filesystems.
+                overlaps = any(directory.samefile(root)
+                               or any(directory.samefile(parent) for parent in root.parents)
+                               or any(root.samefile(parent) for parent in directory.parents) for root in roots)
+            except OSError:
+                raise HTTPException(400, "无法核对书库目录，请检查挂载") from None
+            if overlaps:
+                raise HTTPException(400, "书库目录不能相同或互相包含，请使用独立的书库目录")
+            ids.add(library_id)
+            names.add(name)
+            roots.append(directory)
+            libraries.append({"id": library_id, "name": name, "path": str(directory)})
         url = value.komga_url.strip()
         if url:
             try:
@@ -298,7 +370,7 @@ def create_app(config: Config | None = None, executor=execute) -> FastAPI:
                 url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
             except ValueError:
                 raise HTTPException(400, "Komga 网页地址应为不含账号密码的 HTTP 或 HTTPS 地址") from None
-        store.save_settings(str(directory.resolve()), url)
+        store.save_settings(libraries, url)
         return current_settings()
 
     return app

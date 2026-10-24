@@ -222,6 +222,24 @@ def test_komga_sanitizes_directories_and_does_not_overwrite(config):
         copy_to_komga(config, artifact.path, artifact.filename, "unsafe")
 
 
+@pytest.mark.parametrize("replace_ancestor", [False, True])
+def test_komga_saved_root_cannot_redirect_through_symlink(config, tmp_path, replace_ancestor):
+    artifact = run(upload_job(config, [("image.png", PNG)]), config)
+    saved = (tmp_path / "libraries" / "japanese").resolve()
+    saved.mkdir(parents=True)
+    other = tmp_path / "other-library"
+    other.mkdir()
+    changed = saved.parent if replace_ancestor else saved
+    changed.rename(changed.with_name(changed.name + "-original"))
+    if replace_ancestor:
+        (other / saved.name).mkdir()
+    changed.symlink_to(other, target_is_directory=True)
+    with pytest.raises(MediaError, match="符号链接"):
+        copy_to_komga(replace(config, komga_dir=saved), artifact.path, artifact.filename, "系列")
+    assert not list(other.rglob("*.cbz"))
+    assert artifact.path.is_file()
+
+
 def test_komga_io_failure_preserves_download(config, monkeypatch):
     artifact = run(upload_job(config, [("image.png", PNG)]), config)
 

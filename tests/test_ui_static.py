@@ -21,7 +21,7 @@ class Page(HTMLParser):
         if tag == "form":
             self.current_form = attrs.get("id")
             self.form_fields[self.current_form] = []
-        if tag in {"input", "textarea"} and self.current_form and "disabled" not in attrs:
+        if tag in {"input", "textarea", "select"} and self.current_form and "disabled" not in attrs:
             self.form_fields[self.current_form].append(attrs.get("name"))
 
     def handle_endtag(self, tag):
@@ -38,7 +38,8 @@ def render(name, jobs=None, **context):
     )
     values = {
         "active_page": {"index.html": "home", "tasks.html": "tasks"}.get(name, "settings"),
-        "settings": {}, "komga_enabled": True, "jobs": jobs or [], **context,
+        "settings": {"libraries": [{"id": "default", "name": "默认书库", "path": "/komga"}]},
+        "komga_enabled": True, "jobs": jobs or [], **context,
     }
     return Page(env.get_template(name).render(**values))
 
@@ -103,9 +104,9 @@ def test_komga_configuration_is_required_and_url_is_optional():
     assert "disabled" in submit
     settings = render("settings.html")
     fields = {attrs.get("name"): attrs for tag, attrs in settings.elements if tag == "input"}
-    assert set(fields) == {"komga_url", "komga_dir"}
+    assert set(fields) == {"komga_url", "library_name", "library_path"}
     assert fields["komga_url"]["type"] == "url" and "required" not in fields["komga_url"]
-    assert "required" in fields["komga_dir"]
+    assert "required" in fields["library_name"] and "required" in fields["library_path"]
 
 
 def test_metadata_is_optional_and_inputs_have_visible_labels():
@@ -118,7 +119,7 @@ def test_metadata_is_optional_and_inputs_have_visible_labels():
     labels = {attrs.get("for") for tag, attrs in page.elements if tag == "label"}
     assert {attrs["name"] for attrs in optional} == metadata
     assert all("required" not in attrs and attrs["id"] in labels for attrs in optional)
-    assert set(page.form_fields["archive-form"]) == metadata | {"url"}
+    assert set(page.form_fields["archive-form"]) == metadata | {"url", "library_id"}
     assert any(tag == "html" and attrs.get("lang") == "zh-CN" for tag, attrs in page.elements)
 
 
@@ -133,3 +134,35 @@ def test_empty_pages_render_without_invented_tasks():
             or attrs.get("href", "").startswith("https://")
         ]
         assert external_assets == []
+
+
+def test_library_selection_is_automatic_only_with_one_library():
+    libraries = [
+        {"id": "japan", "name": "日漫", "path": "/komga/日漫"},
+        {"id": "china", "name": "国漫", "path": "/komga/国漫"},
+    ]
+    for count in [1, 2]:
+        page = render("index.html", settings={"libraries": libraries[:count]})
+        select = next(attrs for tag, attrs in page.elements if tag == "select")
+        assert select["name"] == "library_id" and "required" in select
+        options = [attrs for tag, attrs in page.elements if tag == "option"]
+        selected = [attrs.get("value") for attrs in options if "selected" in attrs]
+        assert selected == (["japan"] if count == 1 else [""])
+
+
+def test_settings_preserves_ids_and_escapes_library_text():
+    attack = '<img src=x onerror="alert(1)">'
+    page = render("settings.html", settings={"libraries": [
+        {"id": "japan", "name": "日漫", "path": "/komga/日漫"},
+        {"id": "china", "name": attack, "path": "/komga/国漫"},
+    ]})
+    ids = [attrs.get("data-library-id") for _, attrs in page.elements if attrs.get("data-library-id")]
+    assert ids == ["japan", "china"]
+    assert not any(tag == "img" for tag, _ in page.elements)
+    assert any(attrs.get("value") == attack for tag, attrs in page.elements if tag == "input")
+
+
+def test_task_records_its_target_library_name():
+    page = render("tasks.html", [job([], library_id="china", library_name="国漫")])
+    assert any("data-job-library" in attrs for _, attrs in page.elements)
+    assert "国漫" in "".join(page.text)

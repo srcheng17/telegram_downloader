@@ -1,4 +1,11 @@
 {% extends 'base.html' %}
+{% macro library_row(library, key) %}
+<div class="library-row" data-library-row data-library-id="{{ library.id | default('') }}" data-testid="library-row">
+  <div class="field library-name-field"><label for="library-name-{{ key }}" data-library-name-label>书库名称</label><input id="library-name-{{ key }}" name="library_name" type="text" maxlength="100" value="{{ library.name | default('') }}" placeholder="例如：日漫" required data-library-name data-testid="library-name"></div>
+  <div class="field library-path-field"><label for="library-path-{{ key }}" data-library-path-label>共享目录</label><input id="library-path-{{ key }}" name="library_path" type="text" maxlength="4096" value="{{ library.path | default('') }}" placeholder="例如：/komga/日漫" required aria-describedby="library-path-hint" data-library-path data-testid="library-path"></div>
+  <button class="button button-quiet library-remove" type="button" aria-label="移除{{ library.name | default('此', true) }}书库配置" data-remove-library data-testid="remove-library">移除</button>
+</div>
+{% endmacro %}
 {% block title %}书库设置{% endblock %}
 {% block content %}
 <header class="page-heading"><div><h1>书库设置</h1><p>把图页归档，接入你的 Komga 书库。</p></div><span class="page-corner" aria-hidden="true"></span></header>
@@ -7,11 +14,17 @@
     <fieldset class="komga-fields"><legend>Komga 配置</legend>
       <p class="settings-description">文件通过共享目录入库；网页地址用于打开书库。</p>
       <div class="field"><label for="komga-url">Komga 网页地址 <span class="label-optional">选填</span></label><input id="komga-url" name="komga_url" type="url" maxlength="2048" value="{{ settings.komga_url | default('') }}" placeholder="https://komga.example.com" aria-describedby="komga-url-hint" data-testid="komga-url"><p id="komga-url-hint" class="field-hint">仅支持 HTTP 或 HTTPS。网页地址本身不能接收 CBZ 文件。</p></div>
-      <div class="field"><label for="komga-dir">共享书库目录</label><input id="komga-dir" name="komga_dir" type="text" maxlength="4096" value="{{ settings.komga_dir | default('') }}" placeholder="例如：/komga" required aria-describedby="komga-dir-hint" data-testid="komga-dir"><p id="komga-dir-hint" class="field-hint">填写本应用可写的绝对目录，并确保它与 Komga 的书库映射到同一位置。</p></div>
+      <div class="library-settings"><div class="library-heading"><h2>目标书库</h2><button class="button button-small button-outline" type="button" data-add-library data-testid="add-library">添加书库</button></div>
+        <p id="library-path-hint" class="field-hint">填写已存在、可写的绝对目录。每条对应 Komga 中单独配置的书库，各目录不能相同或互相包含；最多 20 个。</p>
+        {% set libraries = settings.libraries | default([], true) %}
+        <div data-library-list>{% for library in libraries or [{}] %}{{ library_row(library, loop.index) }}{% endfor %}</div>
+        <template data-library-template>{{ library_row({}, 'new') }}</template>
+        <p class="field-hint">修改或移除配置不会改变已提交任务的目标书库。</p>
+      </div>
     </fieldset>
     <div class="form-bottom"><p>归档完成后自动入库。</p><button class="button button-primary" type="submit" data-testid="save-settings">保存 Komga 配置</button></div>
     <p class="form-feedback" role="status" aria-live="polite" data-settings-feedback data-testid="settings-feedback"></p>
   </form>
-  <aside class="settings-notes"><h2>共享同一份书库</h2><p>墨渡把文件写入共享目录，Komga 从对应的书库目录发现漫画。</p><dl class="archive-facts"><div><dt>入库配置</dt><dd data-komga-state>{{ '已配置共享目录' if komga_enabled else '尚未配置' }}</dd></div><div><dt>归档方式</dt><dd>生成 CBZ 后自动放入书库</dd></div><div><dt>原图与书目</dt><dd>一并保存在漫画文件中</dd></div></dl><p class="availability-note">入库后，Komga 会在扫描书库时发现新漫画。也可以在 Komga 中手动扫描。</p><a class="text-link" href="{{ settings.komga_url | default('#') }}" target="_blank" rel="noopener noreferrer" data-open-komga{% if not settings.komga_url %} hidden{% endif %}>打开 Komga</a></aside>
+  <aside class="settings-notes"><h2>接入各自的书库</h2><p>例如，将日漫和国漫分别配置为 /komga/日漫 与 /komga/国漫，并在 Komga 中建立对应的独立书库。这里的名称用于提交时选择，不会替你创建 Komga 书库。</p><dl class="archive-facts"><div><dt>入库配置</dt><dd data-komga-state>{{ '已配置书库目录' if komga_enabled else '尚未配置' }}</dd></div><div><dt>归档方式</dt><dd>生成 CBZ 后自动送入所选书库</dd></div><div><dt>原图与书目</dt><dd>一并保存在漫画文件中</dd></div></dl><p class="availability-note">入库后，Komga 会在扫描书库时发现新漫画。也可以在 Komga 中手动扫描。</p><a class="text-link" href="{{ settings.komga_url | default('#') }}" target="_blank" rel="noopener noreferrer" data-open-komga{% if not settings.komga_url %} hidden{% endif %}>打开 Komga</a></aside>
 </div>
 {% endblock %}

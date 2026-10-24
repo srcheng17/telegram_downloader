@@ -2,9 +2,11 @@
 
 ## 应用设置
 
-GET/POST /api/settings 返回 `{komga_url: str, komga_dir: str, configured: bool}`。komga_dir 必须是现有、可写、应用内可见的绝对共享书库目录；komga_url 是可选 HTTP/HTTPS 网站链接，不是上传 API。无 API 凭据或自动扫描配置。
+GET /api/settings 返回 `{komga_url, libraries: [{id, name, path}], komga_dir, configured}`。每个 path 必须是现有、可写、应用内可见的绝对共享书库目录，名称和 ID 唯一，各根目录不能相同或互为父子。POST 保存完整 libraries 列表，新条目不传 ID 或留空，由服务端生成；仍兼容旧单 komga_dir 输入，GET 的 komga_dir 是首项路径别名。komga_url 是可选 HTTP/HTTPS 网站链接，不是上传 API。无 API 凭据或自动扫描配置。
 
-SQLite 中保存的设置优先于初始 KOMGA_DIR 环境值。未配置目录时任务提交返回 409。Docker 推荐将宿主书库挂到 /komga，再在页面保存 /komga；宿主路径与容器路径不要混填。
+SQLite 中保存的书库列表优先于初始 KOMGA_DIR 环境值；旧单目录识别为「默认书库」。未配置目录时任务提交返回 409。多个书库时，提交必须带已配置的 library_id；只有一个可省略。任务保存目标名和路径快照，之后编辑或删除书库配置不会重定向排队任务或重试。
+
+Docker 推荐将宿主书库父目录挂到 /komga，再在页面保存 /komga/日漫、/komga/国漫 等并列现有目录；单库可直接使用 /komga。Komga 内须分别建立映射到相同物理位置的独立书库，本应用不创建 Komga 书库。宿主路径与容器路径不要混填。
 
 ## Compose 变量
 

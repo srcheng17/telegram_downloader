@@ -26,25 +26,45 @@ class Store:
         finally:
             connection.close()
 
-    def initialize(self) -> None:
+    def initialize(self, default_dir: str = "") -> None:
         if self.path.is_symlink():
             raise RuntimeError("数据库文件不能是符号链接")
         with self.connection() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
-            db.executescript("""
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version > 2:
+                raise RuntimeError("数据库版本较新，请使用对应版本的应用")
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
                     id TEXT PRIMARY KEY, kind TEXT NOT NULL, source TEXT NOT NULL,
                     metadata TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued',
                     phase TEXT NOT NULL DEFAULT '等待处理', error TEXT,
                     cancel_requested INTEGER NOT NULL DEFAULT 0,
                     artifact_path TEXT, filename TEXT, page_count INTEGER, size INTEGER, komga_path TEXT,
+                    destination TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS jobs_status_created ON jobs(status, created_at);
-                CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+                )
             """)
-            db.execute("PRAGMA user_version=1")
+            db.execute("CREATE INDEX IF NOT EXISTS jobs_status_created ON jobs(status, created_at)")
+            db.execute("CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            if "destination" not in {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}:
+                db.execute("ALTER TABLE jobs ADD COLUMN destination TEXT NOT NULL DEFAULT '{}'")
+            if version < 2:
+                saved = {row["name"]: row["value"] for row in db.execute("SELECT name,value FROM settings")}
+                if "libraries" not in saved and ("komga_dir" in saved or default_dir):
+                    directory = saved.get("komga_dir", default_dir)
+                    libraries = ([{"id": "default", "name": "默认书库", "path": str(Path(directory).resolve())}]
+                                 if directory else [])
+                    db.execute("INSERT INTO settings(name,value) VALUES('libraries',?)",
+                               (json.dumps(libraries, ensure_ascii=False),))
+                else:
+                    libraries = json.loads(saved.get("libraries", "[]"))
+                if len(libraries) == 1:
+                    db.execute("UPDATE jobs SET destination=? WHERE destination='{}'",
+                               (json.dumps(libraries[0], ensure_ascii=False),))
+            db.execute("PRAGMA user_version=2")
 
     @staticmethod
     def decode(row) -> dict | None:
@@ -52,16 +72,19 @@ class Store:
             return None
         result = dict(row)
         result["metadata"] = json.loads(result["metadata"])
+        result["destination"] = json.loads(result["destination"])
         result["cancel_requested"] = bool(result["cancel_requested"])
         return result
 
-    def create(self, kind: str, source: str, metadata: dict, job_id: str | None = None) -> dict:
+    def create(self, kind: str, source: str, metadata: dict, job_id: str | None = None,
+               *, destination: dict | None = None) -> dict:
         job_id = job_id or uuid.uuid4().hex
         timestamp = now()
         with self.connection() as db:
             db.execute(
-                "INSERT INTO jobs(id,kind,source,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                (job_id, kind, source, json.dumps(metadata, ensure_ascii=False), timestamp, timestamp),
+                "INSERT INTO jobs(id,kind,source,metadata,destination,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (job_id, kind, source, json.dumps(metadata, ensure_ascii=False),
+                 json.dumps(destination or {}, ensure_ascii=False), timestamp, timestamp),
             )
         return self.get(job_id)
 
@@ -160,19 +183,24 @@ class Store:
 
     def settings(self, default_dir: str = "") -> dict:
         with self.connection() as db:
-            result = {"komga_dir": default_dir, "komga_url": ""}
-            result.update({row["name"]: row["value"] for row in db.execute(
-                "SELECT name,value FROM settings WHERE name IN ('komga_dir','komga_url')"
-            )})
-            return result
+            saved = {row["name"]: row["value"] for row in db.execute(
+                "SELECT name,value FROM settings WHERE name IN ('libraries','komga_dir','komga_url')"
+            )}
+        if "libraries" in saved:
+            libraries = json.loads(saved["libraries"])
+        else:
+            directory = saved.get("komga_dir", default_dir)
+            libraries = ([{"id": "default", "name": "默认书库", "path": str(Path(directory).resolve())}]
+                         if directory else [])
+        return {"libraries": libraries, "komga_dir": libraries[0]["path"] if libraries else "",
+                "komga_url": saved.get("komga_url", "")}
 
-    def save_settings(self, komga_dir: str, komga_url: str) -> dict:
-        if not isinstance(komga_dir, str) or not isinstance(komga_url, str):
-            raise ValueError("Komga 配置必须是文字")
+    def save_settings(self, libraries: list[dict], komga_url: str) -> dict:
         with self.connection() as db:
             db.executemany(
                 "INSERT INTO settings(name,value) VALUES(?,?) "
                 "ON CONFLICT(name) DO UPDATE SET value=excluded.value",
-                (("komga_dir", komga_dir), ("komga_url", komga_url)),
+                (("libraries", json.dumps(libraries, ensure_ascii=False)),
+                 ("komga_dir", libraries[0]["path"] if libraries else ""), ("komga_url", komga_url)),
             )
         return self.settings()

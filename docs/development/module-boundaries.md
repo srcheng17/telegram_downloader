@@ -9,8 +9,8 @@
 - config.py：共享限制、数据目录和初始 Komga 默认值。
 - templates/static：中文交互、状态展示与任务轮询，使用后端 available_actions。
 
-交付配置来自保存设置，覆盖环境默认。komga_url 只是网站链接，实际传输使用共享目录。不要添加下载/手动复制路由、上传 API 凭据或扫描承诺。
+书库列表来自保存设置，覆盖环境默认。提交时由服务端解析 library_id 并保存目标快照，交付和重试只使用任务快照，不能重新读取当前配置选目标。komga_url 只是网站链接，实际传输使用所选共享目录。不要添加下载/手动复制路由、上传 API 凭据或扫描承诺。
 
-跨层追踪：元数据 -> SQLite -> ComicInfo/filename -> Komga 子目录；running -> delivering -> succeeded/failed -> 页面；失败缓存 -> retry；成功提交 -> 本地缓存/输入清理。
+跨层追踪：书库配置 -> library_id -> 服务端目标快照 -> SQLite -> 对应书库；元数据 -> SQLite -> ComicInfo/filename -> 系列子目录；running -> delivering -> succeeded/failed -> 页面；失败缓存和原目标 -> retry；成功提交 -> 本地缓存/输入清理。
 
 复用小函数，不预设额外 repository/service/plugin 包。路径/资源验证、进程取消、交付原子性必须保留。

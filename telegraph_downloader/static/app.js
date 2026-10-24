@@ -51,6 +51,7 @@ function updateRow(row, job) {
   row.querySelector('[data-job-title]').textContent = metadata.comic_name || job.filename || (job.kind === 'upload' ? '上传的漫画' : 'Telegraph 图集');
   row.querySelector('[data-job-status]').textContent = job.status_label || '状态待更新';
   row.querySelector('[data-job-source]').textContent = job.source_label || (job.kind === 'upload' ? '上传压缩包' : 'Telegraph 图集');
+  row.querySelector('[data-job-library]').textContent = job.library_name || '未指定书库';
   row.querySelector('[data-job-series]').textContent = [metadata.series_name, metadata.series_number].filter(Boolean).join(' · ') || '未填写系列';
   row.querySelector('[data-job-facts]').textContent = [Number(job.page_count) > 0 ? `${job.page_count} 页` : '', formatSize(job.size)].filter(Boolean).join(' / ');
   const time = row.querySelector('[data-job-time]');
@@ -113,6 +114,7 @@ async function refreshJobs() {
 if (archiveForm) {
   const url = archiveForm.elements.url;
   const file = archiveForm.elements.file;
+  const library = archiveForm.elements.library_id;
   const modes = [...document.querySelectorAll('[name="input_mode"]')];
   const configured = document.body.dataset.komgaEnabled === 'true';
   let submitting = false;
@@ -125,6 +127,7 @@ if (archiveForm) {
     url.required = !upload;
     file.disabled = submitting || !upload;
     file.required = upload;
+    library.disabled = submitting || !configured;
     for (const mode of modes) mode.disabled = submitting;
   }
   for (const mode of modes) mode.addEventListener('change', applyMode);
@@ -238,23 +241,77 @@ if (list) {
 }
 
 if (settingsForm) {
+  const libraryList = settingsForm.querySelector('[data-library-list]');
+  const libraryTemplate = settingsForm.querySelector('[data-library-template]');
+  const addButton = settingsForm.querySelector('[data-add-library]');
+  const fields = settingsForm.querySelector('.komga-fields');
+  const status = settingsForm.querySelector('[data-settings-feedback]');
+  let nextLibraryIndex = libraryList.children.length;
+
+  function addLibrary(library = {}) {
+    const row = libraryTemplate.content.firstElementChild.cloneNode(true);
+    const index = ++nextLibraryIndex;
+    row.dataset.libraryId = library.id || '';
+    for (const name of ['name', 'path']) {
+      const input = row.querySelector(`[data-library-${name}]`);
+      input.id = `library-${name}-${index}`;
+      input.value = library[name] || '';
+      row.querySelector(`[data-library-${name}-label]`).htmlFor = input.id;
+    }
+    row.querySelector('[data-remove-library]').setAttribute('aria-label', `移除${library.name || '此'}书库配置`);
+    libraryList.append(row);
+    addButton.disabled = libraryList.children.length >= 20;
+    return row;
+  }
+
+  addButton.disabled = libraryList.children.length >= 20;
+  addButton.addEventListener('click', () => {
+    if (libraryList.children.length >= 20) return;
+    addLibrary().querySelector('[data-library-name]').focus();
+    feedback(status, '已添加书库，请填写名称和目录后保存。');
+  });
+  libraryList.addEventListener('input', event => {
+    if (!event.target.matches('[data-library-name]')) return;
+    const row = event.target.closest('[data-library-row]');
+    row.querySelector('[data-remove-library]').setAttribute('aria-label', `移除${event.target.value.trim() || '此'}书库配置`);
+  });
+  libraryList.addEventListener('click', event => {
+    const button = event.target.closest('[data-remove-library]');
+    if (!button) return;
+    const row = button.closest('[data-library-row]');
+    const index = [...libraryList.children].indexOf(row);
+    row.remove();
+    if (!libraryList.children.length) addLibrary();
+    addButton.disabled = libraryList.children.length >= 20;
+    libraryList.children[Math.min(index, libraryList.children.length - 1)].querySelector('[data-library-name]').focus();
+    feedback(status, '已移除书库配置，保存后生效。');
+  });
+
   settingsForm.addEventListener('submit', async event => {
     event.preventDefault();
     const button = settingsForm.querySelector('[type="submit"]');
     if (button.disabled) return;
-    const status = settingsForm.querySelector('[data-settings-feedback]');
     const data = new FormData(settingsForm);
-    const values = { komga_url: data.get('komga_url').trim(), komga_dir: data.get('komga_dir').trim() };
+    const libraries = [...libraryList.children].map(row => ({
+      id: row.dataset.libraryId || '',
+      name: row.querySelector('[data-library-name]').value.trim(),
+      path: row.querySelector('[data-library-path]').value.trim(),
+    }));
+    const values = { komga_url: data.get('komga_url').trim(), libraries };
     button.disabled = true;
+    fields.disabled = true;
     button.textContent = '正在保存…';
     feedback(status, '正在保存书库配置…');
     try {
       const payload = await requestJSON('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) });
-      if (typeof payload.configured !== 'boolean' || typeof payload.komga_url !== 'string' || typeof payload.komga_dir !== 'string') throw new Error('未收到已保存的配置，请刷新后确认。');
+      const validLibraries = Array.isArray(payload.libraries) && payload.libraries.length <= 20 && payload.libraries.every(library => library && typeof library.id === 'string' && library.id && typeof library.name === 'string' && typeof library.path === 'string');
+      if (typeof payload.configured !== 'boolean' || typeof payload.komga_url !== 'string' || !validLibraries) throw new Error('未收到已保存的配置，请刷新后确认。');
       settingsForm.elements.komga_url.value = payload.komga_url;
-      settingsForm.elements.komga_dir.value = payload.komga_dir;
+      libraryList.replaceChildren();
+      for (const library of payload.libraries) addLibrary(library);
+      if (!libraryList.children.length) addLibrary();
       document.body.dataset.komgaEnabled = String(payload.configured);
-      document.querySelector('[data-komga-state]').textContent = payload.configured ? '已配置共享目录' : '尚未配置';
+      document.querySelector('[data-komga-state]').textContent = payload.configured ? `已配置 ${payload.libraries.length} 个书库` : '尚未配置';
       const link = document.querySelector('[data-open-komga]');
       link.hidden = !payload.komga_url;
       link.href = payload.komga_url || '#';
@@ -263,6 +320,7 @@ if (settingsForm) {
       feedback(status, error.message || '保存失败，请重试。', true);
     } finally {
       button.disabled = false;
+      fields.disabled = false;
       button.textContent = '保存 Komga 配置';
     }
   });

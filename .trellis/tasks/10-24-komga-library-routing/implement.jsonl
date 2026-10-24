@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/task-runtime-contract.md", "reason": "Submission, delivery, retry and instance contracts"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQLite migration and durable destination snapshots"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Chinese accessible safe native UI"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Keep form state and task actions separate"}
+{"file": ".trellis/tasks/10-24-komga-library-routing/research/library-rules.md", "reason": "Official library root and series constraints"}

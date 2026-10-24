@@ -110,7 +110,7 @@ def page(live_app):
         browser.close()
 
 
-def test_desktop_upload_download_and_komga(page, live_app):
+def test_desktop_upload_automatically_delivers_to_komga(page, live_app):
     url, root = live_app
     page.goto(url)
     page.wait_for_load_state("networkidle")
@@ -162,16 +162,16 @@ def test_mobile_layout_settings_and_error_recovery(page, live_app):
     page.screenshot(path=str(ARTIFACTS / "mobile-home.png"), full_page=True)
     page.get_by_test_id("nav-settings").click()
     page.get_by_test_id("komga-url").fill("http://komga.example:25600")
-    page.get_by_test_id("komga-dir").fill("/missing/library")
+    page.get_by_test_id("library-path").fill("/missing/library")
     page.get_by_test_id("save-settings").click()
     expect(page.get_by_test_id("settings-feedback")).to_contain_text("绝对目录")
     expect(page.get_by_test_id("save-settings")).to_be_enabled()
-    page.get_by_test_id("komga-dir").fill(str(root / "komga"))
+    page.get_by_test_id("library-path").fill(str(root / "komga"))
     page.get_by_test_id("save-settings").click()
     expect(page.get_by_test_id("settings-feedback")).to_contain_text("已保存")
     page.reload()
     expect(page.get_by_test_id("komga-url")).to_have_value("http://komga.example:25600")
-    expect(page.get_by_test_id("komga-dir")).to_have_value(str(root / "komga"))
+    expect(page.get_by_test_id("library-path")).to_have_value(str(root / "komga"))
     page.get_by_test_id("nav-tasks").click()
     expect(page.get_by_test_id("nav-tasks")).to_have_attribute("aria-current", "page")
     expect(page.get_by_test_id("open-komga")).to_have_attribute("href", "http://komga.example:25600")
@@ -203,3 +203,84 @@ def test_real_url_import_failure_retry_and_cancel(page, live_app):
     cancelled.get_by_test_id("cancel-job").click()
     expect(cancelled.locator("[data-job-status]")).to_have_text("已取消", timeout=10000)
     assert not any("缺页图集" in p.name or "取消图集" in p.name for p in (root / "komga").rglob("*.cbz"))
+
+
+def test_choose_between_two_libraries_for_upload_and_url(page, live_app):
+    url, root = live_app
+    japanese, chinese = root / "libraries" / "japanese", root / "libraries" / "chinese"
+    japanese.mkdir(parents=True)
+    chinese.mkdir()
+    page.goto(url + "/settings")
+    first = page.get_by_test_id("library-row").first
+    first.get_by_test_id("library-name").fill("日漫")
+    first.get_by_test_id("library-path").fill(str(japanese))
+    page.get_by_test_id("add-library").click()
+    second = page.get_by_test_id("library-row").nth(1)
+    second.get_by_test_id("library-name").fill("国漫")
+    second.get_by_test_id("library-path").fill(str(chinese))
+    page.get_by_test_id("save-settings").click()
+    expect(page.get_by_test_id("settings-feedback")).to_contain_text("已保存")
+    saved = httpx.get(url + "/api/settings").json()["libraries"]
+    assert [(library["name"], library["path"]) for library in saved] == [
+        ("日漫", str(japanese)), ("国漫", str(chinese)),
+    ]
+    assert len({library["id"] for library in saved}) == 2
+    assert all(library["id"] for library in saved)
+    page.reload()
+    expect(page.get_by_test_id("library-name").nth(1)).to_have_value("国漫")
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    ARTIFACTS.mkdir(exist_ok=True)
+    page.screenshot(path=str(ARTIFACTS / "mobile-libraries.png"), full_page=True)
+
+    submissions, list_requests = [], []
+
+    def observe(request):
+        if request.method == "POST" and request.url.endswith("/api/jobs/upload"):
+            submissions.append(request)
+        if request.method == "GET" and request.url.endswith("/api/jobs"):
+            list_requests.append(request)
+
+    page.on("request", observe)
+    page.goto(url)
+    page.wait_for_load_state("networkidle")
+    selection = page.get_by_test_id("library-select")
+    expect(selection).to_have_value("")
+    page.get_by_test_id("mode-upload").check()
+    page.get_by_test_id("source-file").set_input_files({
+        "name": "comic.zip", "mimeType": "application/zip", "buffer": archive_bytes(),
+    })
+    page.get_by_test_id("comic-name").fill("国漫分流验证")
+    page.get_by_test_id("series-name").fill("同名系列")
+    page.get_by_test_id("submit-job").click()
+    assert selection.evaluate("element => element.validity.valueMissing")
+    assert submissions == []
+    selection.select_option(label="国漫")
+    page.get_by_test_id("submit-job").click()
+    expect(page.get_by_test_id("view-submitted-job")).to_be_visible()
+    assert len(submissions) == 1
+    assert list_requests == []
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=str(ARTIFACTS / "mobile-library-selection.png"), full_page=True)
+    page.get_by_test_id("view-submitted-job").click()
+    row = page.get_by_test_id("job-row").filter(has=page.get_by_text("国漫分流验证", exact=True))
+    expect(row.locator("[data-job-status]")).to_have_text("已入库", timeout=15000)
+    expect(row.locator("[data-job-library]")).to_contain_text("国漫")
+    assert len(list((chinese / "同名系列").glob("*.cbz"))) == 1
+    assert not list(japanese.rglob("*.cbz"))
+
+    page.set_viewport_size({"width": 1440, "height": 1080})
+    page.goto(url)
+    page.get_by_test_id("library-select").select_option(label="日漫")
+    page.get_by_test_id("source-url").fill("https://telegra.ph/book")
+    page.get_by_test_id("comic-name").fill("日漫链接分流")
+    page.get_by_test_id("series-name").fill("同名系列")
+    page.screenshot(path=str(ARTIFACTS / "desktop-library-selection.png"), full_page=True)
+    page.get_by_test_id("submit-job").click()
+    page.get_by_test_id("view-submitted-job").click()
+    row = page.get_by_test_id("job-row").filter(has=page.get_by_text("日漫链接分流", exact=True))
+    expect(row.locator("[data-job-status]")).to_have_text("已入库", timeout=15000)
+    expect(row.locator("[data-job-library]")).to_contain_text("日漫")
+    assert len(list((japanese / "同名系列").glob("*.cbz"))) == 1
+    assert len(list((chinese / "同名系列").glob("*.cbz"))) == 1
+    page.screenshot(path=str(ARTIFACTS / "tasks-libraries.png"), full_page=True)

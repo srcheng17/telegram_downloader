@@ -4,7 +4,7 @@
 <li class="job-row" data-job-id="{{ job.id | default('') }}" data-status="{{ job.status | default('') }}" data-testid="job-row">
   <div class="job-main"><div class="job-heading"><h3 data-job-title>{{ metadata.get('comic_name') or job.get('filename') or ('上传的漫画' if job.kind == 'upload' else 'Telegraph 图集') }}</h3><span class="job-status" data-job-status>{{ job.status_label | default('') }}</span></div>
     <p class="job-source" data-job-source>{{ job.source_label | default('上传压缩包' if job.kind == 'upload' else 'Telegraph 图集') }}</p>
-    <div class="job-details"><span data-job-series>{{ metadata.get('series_name') or '未填写系列' }}</span><span data-job-facts>{% if job.page_count %}{{ job.page_count }} 页{% endif %}</span><time data-job-time>{{ job.created_at | default('') }}</time></div>
+    <div class="job-details"><span class="job-library" data-job-library>{{ job.library_name | default('未指定书库', true) }}</span><span data-job-series>{{ metadata.get('series_name') or '未填写系列' }}</span><span data-job-facts>{% if job.page_count %}{{ job.page_count }} 页{% endif %}</span><time data-job-time>{{ job.created_at | default('') }}</time></div>
     <p class="job-phase" data-job-phase{% if not job.phase %} hidden{% endif %}>{{ job.phase | default('') }}</p>
     <p class="job-error" data-job-error{% if not job.error %} hidden{% endif %}>{{ job.error | default('') }}</p>
     <p class="job-feedback" role="status" aria-live="polite" data-job-feedback></p>
