@@ -116,3 +116,39 @@ Configured named shared libraries, added submission selection and task destinati
 ### Next Steps
 
 - Review branch refactor/single-host-workspace and temporary preview http://127.0.0.1:49360; configure matching independent libraries in real Komga before production use.
+
+
+## Session 6: Fix frontend alignment with real geometry checks
+<!-- trellis-session: v=2 fp=1ba06bfef240c85c -->
+
+**Date**: 2026-10-24
+**Task**: Fix frontend alignment with real geometry checks
+**Branch**: `refactor/single-host-workspace`
+
+### Summary
+
+Correct the user-reported screenshot misalignment across home/settings/tasks and mobile/tablet/wide viewports. Commit locally, archive and preserve the user ignore edit; no production changes.
+
+### Main Changes
+
+- Replace hard-coded wide centering offsets with a shared sidebar frame and automatic content centering; share panel gutters across forms and tasks.
+- Move library remove controls beside labels, align stacked name/path fields and clear native legend padding.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `332312e` | fix(ui): align page gutters and library form controls |
+
+### Testing
+
+- [OK] Reproduced old 320px navigation mismatch in the new regression before fixing. Final 95 non-e2e and 12 browser cases passed, including eight breakpoint widths across all three pages.
+- [OK] Ruff, JS syntax and git whitespace passed; root and independent reviewer inspected fresh mobile/tablet/wide screenshots.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- User review of local preview http://127.0.0.1:49360 and new alignment screenshots. No production deployment, push or merge.

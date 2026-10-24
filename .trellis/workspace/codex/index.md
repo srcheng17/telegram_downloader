@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-10-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~118 | Active |
+| `journal-1.md` | ~154 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-10-24 | Fix frontend alignment with real geometry checks | `332312e` | `refactor/single-host-workspace` |
 | 5 | 2026-10-24 | Choose and preserve a target Komga library per submission | `8ef4530` | `refactor/single-host-workspace` |
 | 4 | 2026-10-24 | Commit and archive the PanelPort rebuild | `17eafbe` | `refactor/single-host-workspace` |
 | 3 | 2026-10-24 | Complete PanelPort single-host rebuild and automatic Komga delivery | - | `refactor/single-host-workspace` |
