@@ -188,3 +188,25 @@ Correct the independently confirmed full-page sidebar truncation after the user 
 ### Next Steps
 
 - User review of columns-preview-home.png and local preview; menu/title starting baseline remains unchanged pending optional clarification. No push, merge or production deployment.
+
+
+## Session 8: Refresh the PanelPort workspace design
+<!-- trellis-session: v=2 fp=030635e08ab4273e -->
+
+**Date**: 2026-10-25
+**Task**: Refresh the PanelPort workspace design
+**Branch**: `refactor/single-host-workspace`
+
+### Summary
+
+Rebuilt all three pages around inspected shadcn Dashboard and Vercel Geist references. Preserved native interactions, separate pages and full-height alignment. Verified 95 non-e2e tests, 15 Chromium cases, Ruff, JS syntax and whitespace; independent visual/keyboard/mobile review passed. Isolated local preview only, no production or remote writes.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c103d5` | refactor(ui): adopt a restrained light workspace design |
+
+### Status
+
+[OK] **Completed**
