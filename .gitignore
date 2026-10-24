@@ -13,6 +13,7 @@ temp_downloads/
 *.zip
 
 # Runtime state
+/progress/
 data/*.db
 data/*.db-shm
 data/*.db-wal
