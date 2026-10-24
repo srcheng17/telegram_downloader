@@ -78,3 +78,41 @@ User approved the commit plan. Work committed on refactor/single-host-workspace 
 ### Next Steps
 
 - User review of the local branch; production cutover, remote push and merge remain separate actions.
+
+
+## Session 5: Choose and preserve a target Komga library per submission
+<!-- trellis-session: v=2 fp=1f66b2081dc340e1 -->
+
+**Date**: 2026-10-24
+**Task**: Choose and preserve a target Komga library per submission
+**Branch**: `refactor/single-host-workspace`
+
+### Summary
+
+Configured named shared libraries, added submission selection and task destination names, migrated SQLite v1 data, and fixed destination drift including symlink rebinding. Work committed locally; no push, merge or production deployment.
+
+### Main Changes
+
+- Settings manage libraries with stable local IDs, names and existing writable non-overlapping paths; single-directory clients remain compatible.
+- URL and upload submissions resolve library_id on the server and save destination snapshots used through queueing/retry/settings changes.
+- Reject canonical root or ancestor symlink rebinding without wrong-library publication; preserve generated cache for retry after restoring the original root.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8ef4530` | feat(komga): route comic submissions to a chosen library |
+
+### Testing
+
+- [OK] 95 non-e2e tests and 4 live browser scenarios passed; Ruff, JS syntax, shell syntax and whitespace checks passed.
+- [OK] Final arm64 container smoke verified real ZIP delivery only into selected 国漫 root with exact image/XML bytes, SQLite, retired routes and success cleanup; temporary resources removed.
+- [OK] Independent review reproduced original root/ancestor issue, verified fixed rejection and successful cache-only retry after restoration; no confirmed issues remain.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Review branch refactor/single-host-workspace and temporary preview http://127.0.0.1:49360; configure matching independent libraries in real Komga before production use.
