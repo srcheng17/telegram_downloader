@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
 {% macro library_row(library, key) %}
 <div class="library-row" data-library-row data-library-id="{{ library.id | default('') }}" data-testid="library-row">
-  <div class="field library-name-field"><label for="library-name-{{ key }}" data-library-name-label>书库名称</label><input id="library-name-{{ key }}" name="library_name" type="text" maxlength="100" value="{{ library.name | default('') }}" placeholder="例如：日漫" required data-library-name data-testid="library-name"></div>
+  <div class="field library-name-field"><div class="library-name-heading"><label for="library-name-{{ key }}" data-library-name-label>书库名称</label><button class="button button-quiet library-remove" type="button" aria-label="移除{{ library.name | default('此', true) }}书库配置" data-remove-library data-testid="remove-library">移除</button></div><input id="library-name-{{ key }}" name="library_name" type="text" maxlength="100" value="{{ library.name | default('') }}" placeholder="例如：日漫" required data-library-name data-testid="library-name"></div>
   <div class="field library-path-field"><label for="library-path-{{ key }}" data-library-path-label>共享目录</label><input id="library-path-{{ key }}" name="library_path" type="text" maxlength="4096" value="{{ library.path | default('') }}" placeholder="例如：/komga/日漫" required aria-describedby="library-path-hint" data-library-path data-testid="library-path"></div>
-  <button class="button button-quiet library-remove" type="button" aria-label="移除{{ library.name | default('此', true) }}书库配置" data-remove-library data-testid="remove-library">移除</button>
 </div>
 {% endmacro %}
 {% block title %}书库设置{% endblock %}

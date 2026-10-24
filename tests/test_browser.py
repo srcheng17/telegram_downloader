@@ -14,7 +14,7 @@ import httpx
 import pytest
 from playwright.sync_api import expect, sync_playwright
 
-from tests.test_api import PNG, archive_bytes
+from tests.test_api import PNG, archive_bytes, wait_job
 
 pytestmark = pytest.mark.e2e
 ARTIFACTS = Path("test-results")
@@ -284,3 +284,85 @@ def test_choose_between_two_libraries_for_upload_and_url(page, live_app):
     assert len(list((japanese / "同名系列").glob("*.cbz"))) == 1
     assert len(list((chinese / "同名系列").glob("*.cbz"))) == 1
     page.screenshot(path=str(ARTIFACTS / "tasks-libraries.png"), full_page=True)
+
+
+@pytest.mark.parametrize("width", [320, 390, 650, 768, 1024, 1440, 1536, 1920])
+def test_page_alignment_across_breakpoints(page, live_app, width):
+    url, _ = live_app
+    with httpx.Client(base_url=url) as client:
+        if not client.get("/api/jobs").json()["jobs"]:
+            library = client.get("/api/settings").json()["libraries"][0]
+            response = client.post("/api/jobs/upload", files={"file": ("layout.zip", archive_bytes())},
+                                   data={"library_id": library["id"], "comic_name": "排版验收"})
+            assert response.status_code == 202
+            assert wait_job(client, response.json()["id"])["status"] == "succeeded"
+        if not any(job["available_actions"] for job in client.get("/api/jobs").json()["jobs"]):
+            library = client.get("/api/settings").json()["libraries"][0]
+            response = client.post("/api/jobs/upload", files={"file": ("invalid.zip", b"invalid archive")},
+                                   data={"library_id": library["id"], "comic_name": "失败布局样本"})
+            assert response.status_code == 202
+            assert wait_job(client, response.json()["id"])["status"] == "failed"
+    page.set_viewport_size({"width": width, "height": 1000})
+    insets = []
+
+    def aligned(left, right, description):
+        assert abs(left - right) <= 1, f"{width}px {description}: {left} versus {right}"
+
+    for path in ("/", "/settings", "/tasks"):
+        page.goto(url + path, wait_until="networkidle")
+        geometry = page.evaluate('''() => {
+            const rect = selector => {
+                const node = document.querySelector(selector);
+                if (!node) return null;
+                const value = node.getBoundingClientRect();
+                return {left:value.left, right:value.right, top:value.top, bottom:value.bottom};
+            };
+            const legend = document.querySelector('legend');
+            const range = document.createRange();
+            if (legend) range.selectNodeContents(legend);
+            return {
+                viewport:document.documentElement.clientWidth,
+                overflow:document.documentElement.scrollWidth > document.documentElement.clientWidth,
+                sidebar:rect('.sidebar'), navigation:rect('.main-nav a'), main:rect('main'),
+                top:rect('.workspace-topline'), heading:rect('.page-heading'),
+                content:rect('.editor-layout,.settings-layout,.jobs-section'), footer:rect('.page-footer'),
+                panel:rect('.editor-layout,.settings-form'),
+                input:rect('#source-url,[data-testid="komga-url"]'),
+                name:rect('[data-library-name]'), directory:rect('[data-library-path]'),
+                job:rect('.job-list .job-row'), jobText:rect('.job-list [data-job-title]'),
+                jobAction:rect('.job-list .job-actions:not([hidden])'),
+                legend:legend ? range.getBoundingClientRect().left : null
+            };
+        }''')
+        assert not geometry["overflow"], (width, path)
+        for edge in ("left", "right"):
+            for item in ("heading", "content", "footer"):
+                aligned(geometry["top"][edge], geometry[item][edge], f"{path} {item} {edge}")
+        if width > 650:
+            aligned(geometry["main"]["left"] - geometry["sidebar"]["right"],
+                    geometry["viewport"] - geometry["main"]["right"], f"{path} main gutters")
+        else:
+            aligned(geometry["navigation"]["left"], geometry["top"]["left"], f"{path} mobile gutter")
+        if geometry["input"]:
+            insets.append(geometry["input"]["left"] - geometry["panel"]["left"])
+        if path == "/settings":
+            aligned(geometry["legend"], geometry["input"]["left"], "settings legend text")
+            aligned(geometry["name"]["left"], geometry["input"]["left"], "library name left")
+            aligned(geometry["directory"]["right"], geometry["input"]["right"], "library path right")
+            if width <= 650:
+                aligned(geometry["name"]["right"], geometry["input"]["right"], "mobile library name right")
+                aligned(geometry["directory"]["left"], geometry["input"]["left"], "mobile library path left")
+            else:
+                aligned(geometry["name"]["top"], geometry["directory"]["top"], "library input top")
+                aligned(geometry["name"]["bottom"], geometry["directory"]["bottom"], "library input bottom")
+        if path == "/tasks":
+            aligned(geometry["jobText"]["left"] - geometry["job"]["left"], insets[0], "task text inset")
+            if geometry["jobAction"]:
+                aligned(geometry["job"]["right"] - geometry["jobAction"]["right"],
+                        insets[0], "task action inset")
+        if width in {390, 1024, 1920}:
+            page.locator("h1").click()
+            ARTIFACTS.mkdir(exist_ok=True)
+            name = {"/": "home", "/settings": "settings", "/tasks": "tasks"}[path]
+            page.screenshot(path=str(ARTIFACTS / f"alignment-{width}-{name}.png"), full_page=True)
+    aligned(insets[0], insets[1], "home/settings form inset")
